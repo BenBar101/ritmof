@@ -229,9 +229,18 @@ const DEV_PREFIX = "ritmof_dev_";
 // Set VITE_SYNC_FILE_PATH=/Users/you/Syncthing/ritmof-data.json in .env (display only — browser cannot open paths directly).
 const SYNC_FILE_PATH_HINT = (import.meta.env.VITE_SYNC_FILE_PATH || "").trim();
 
+// Fix #3: prefix every key that belongs to this app in dev mode so dev and prod
+// environments never share storage — not just keys that start with "jv_".
+// Keys that are NOT app-owned (e.g. third-party libraries) are passed through unchanged;
+// we identify app-owned keys by the "jv_" prefix OR by being one of the known constant keys.
+const APP_CONSTANT_KEYS = new Set([
+  DATA_DISCLOSURE_SEEN_KEY,
+  THEME_KEY,
+  GATE_SESSION_KEY,
+]);
 function storageKey(k) {
   if (!IS_DEV) return k;
-  if (k.startsWith("jv_")) return DEV_PREFIX + k;
+  if (k.startsWith("jv_") || APP_CONSTANT_KEYS.has(k)) return DEV_PREFIX + k;
   return k;
 }
 
@@ -330,8 +339,14 @@ export const SyncManager = {
     const handle = await this.getHandle();
     if (!handle) throw new Error("NO_HANDLE");
     const file   = await handle.getFile();
+    // Fix #6: reject oversized files before reading into memory
+    const MAX_SYNC_FILE_BYTES = 10 * 1024 * 1024; // 10 MB
+    if (file.size > MAX_SYNC_FILE_BYTES) throw new Error("SYNC_FILE_TOO_LARGE");
     const text   = await file.text();
-    const remote = JSON.parse(text);
+    // Fix #1: wrap JSON.parse — a corrupt/partially-written file must not crash the tab
+    let remote;
+    try { remote = JSON.parse(text); }
+    catch { throw new Error("CORRUPT_FILE"); }
     applySyncPayload(remote);
     return remote._syncedAt ?? Date.now();
   },
@@ -356,8 +371,14 @@ export const SyncManager = {
 
   // Fallback: import a JSON file via file input.
   async importFile(file) {
+    // Fix #6: reject oversized files before reading into memory
+    const MAX_SYNC_FILE_BYTES = 10 * 1024 * 1024; // 10 MB
+    if (file.size > MAX_SYNC_FILE_BYTES) throw new Error("SYNC_FILE_TOO_LARGE");
     const text   = await file.text();
-    const remote = JSON.parse(text);
+    // Fix #1: wrap JSON.parse — a corrupt file must not crash the tab
+    let remote;
+    try { remote = JSON.parse(text); }
+    catch { throw new Error("CORRUPT_FILE"); }
     applySyncPayload(remote);
     return remote._syncedAt ?? Date.now();
   },
@@ -440,7 +461,21 @@ const SYNC_VALIDATORS = {
   jv_habit_log:  (v) => v !== null && typeof v === "object" && !Array.isArray(v),
   jv_sleep_log:  (v) => v !== null && typeof v === "object" && !Array.isArray(v),
   jv_screen_log: (v) => v !== null && typeof v === "object" && !Array.isArray(v),
-  jv_profile:    (v) => v !== null && typeof v === "object" && !Array.isArray(v),
+  jv_profile:    (v) => {
+    // Fix #10: validate that the profile object has the expected shape; reject unexpected keys
+    // that could smuggle in data. geminiKey is stripped in applySyncPayload so not checked here.
+    if (v === null || typeof v !== "object" || Array.isArray(v)) return false;
+    const ALLOWED_PROFILE_KEYS = new Set(["name","major","books","interests","semesterGoal","university","year"]);
+    const keys = Object.keys(v);
+    if (keys.length > 20) return false; // sanity cap
+    for (const k of keys) {
+      if (!ALLOWED_PROFILE_KEYS.has(k) && k !== "geminiKey") return false; // reject unknown keys
+      const val = v[k];
+      if (val !== null && val !== undefined && typeof val !== "string" && typeof val !== "number" && typeof val !== "boolean") return false;
+      if (typeof val === "string" && val.length > 1000) return false;
+    }
+    return true;
+  },
   jv_token_usage:(v) => v !== null && typeof v === "object" && !Array.isArray(v),
   jv_daily_goal: (v) => typeof v === "string" && v.length <= 500,
   jv_last_login: (v) => typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v),
@@ -538,9 +573,10 @@ function AuthGate({ onAccessGranted }) {
   const MAX_RETRIES = 5;
   const isRateLimited = retryCount >= MAX_RETRIES;
 
-  async function handleSignIn() {
+  // Fix #11: wrap in useCallback so the onClick button always gets a stable, fresh reference
+  // and does not close over a stale `status` or `retryCount` from a prior render.
+  const handleSignIn = useCallback(async (isAutoAttempt = false) => {
     if (misconfigured || status === "loading" || isRateLimited) return;
-    setRetryCount((c) => c + 1);
     setStatus("loading");
     setErrMsg("");
     try {
@@ -626,12 +662,18 @@ function AuthGate({ onAccessGranted }) {
           setStatus("idle");
           return;
         }
-        // Store a signed session token (not a plain boolean) so console injection is rejected
-        const token = await makeSessionToken(ALLOWED_EMAIL);
+        // Fix #4 / #5: wrap makeSessionToken; reset retry counter on success so it
+        // only burns slots for actual failures, not successful sign-ins.
+        let token;
+        try { token = await makeSessionToken(ALLOWED_EMAIL); }
+        catch { throw new Error("Token derivation failed — ensure the page is served over HTTPS."); }
         try { sessionStorage.setItem(GATE_SESSION_KEY, token); } catch {}
+        setRetryCount(0); // fix #5: clear failure counter on success
         onAccessGranted();
       });
     } catch (e) {
+      // Fix #5: only charge a retry slot for a genuine failure — increment here, not at call start
+      if (!isAutoAttempt) setRetryCount((c) => c + 1);
       if (e.message === "access_denied") {
         setStatus("denied");
       } else {
@@ -641,9 +683,10 @@ function AuthGate({ onAccessGranted }) {
         setErrMsg(safe || "Sign-in failed. Check your configuration.");
       }
     }
-  }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [misconfigured, status, isRateLimited]);
 
-  useEffect(() => { handleSignIn(); }, []);
+  useEffect(() => { handleSignIn(true); }, []);
 
   if (misconfigured) {
     // In production: both vars must be set — show a clear deployment error.
@@ -894,6 +937,8 @@ function sanitizeForPrompt(str, maxLen = 200) {
     .replace(/\$\{/g, "$(")                         // template literal escape
     .replace(/[{}]/g, "")                            // strip braces — prevents pre-formed JSON injection
     .replace(/[<>]/g, "")                            // strip angle brackets — prevents </HUNTER_DATA> tag breakout
+    .replace(/["]/g, "'")                            // fix #8: double-quote → apostrophe — prevents JSON key/value injection
+    .replace(/[\[\]]/g, "")                          // fix #8: strip square brackets — prevents array injection
     .slice(0, maxLen);
 }
 
@@ -1001,6 +1046,21 @@ You are not here to make them feel good. You are here to make them better. The d
 // ═══════════════════════════════════════════════════════════════
 async function fetchDailyQuote(apiKey, profile, onTokens) {
   const key = storageKey(`jv_quote_${today()}`);
+
+  // Fix #13: prune stale daily-quote keys so they don't accumulate indefinitely in localStorage.
+  // We keep only today's key; any other jv_quote_YYYY-MM-DD (or dev-prefixed variant) is removed.
+  try {
+    const quotePrefix = IS_DEV ? `${DEV_PREFIX}jv_quote_` : "jv_quote_";
+    const todayKey = key; // already computed above
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k.startsWith(quotePrefix) && k !== todayKey) {
+        localStorage.removeItem(k);
+        i--; // removeItem shifts indices
+      }
+    }
+  } catch {}
+
   const cached = LS.get(key);
   if (cached) return cached;
 
@@ -1094,8 +1154,8 @@ export default function App() {
   const [isLoading, setIsLoading] = useState(false);
   const [syncStatus, setSyncStatus] = useState("idle");
   const [lastSynced, setLastSynced] = useState(LS.get(storageKey("jv_last_synced"), null));
-  const [theme, setThemeState] = useState(() => LS.get(THEME_KEY, "dark"));
-  const setTheme = (t) => { LS.set(THEME_KEY, t); setThemeState(t); };
+  const [theme, setThemeState] = useState(() => LS.get(storageKey(THEME_KEY), "dark"));
+  const setTheme = (t) => { LS.set(storageKey(THEME_KEY), t); setThemeState(t); };
   const toastTimer = useRef(null);
   const bannerTimer = useRef(null);
 
@@ -1253,6 +1313,10 @@ export default function App() {
       setSyncStatus("error");
       if (e.message === "NO_HANDLE") {
         showBanner("No sync file selected. Pick one in Profile → Settings.", "alert");
+      } else if (e.message === "CORRUPT_FILE") {
+        showBanner("Sync file is corrupt or not valid JSON. Re-export from another device.", "alert");
+      } else if (e.message === "SYNC_FILE_TOO_LARGE") {
+        showBanner("Sync file exceeds 10 MB — this is unexpected. Check the file.", "alert");
       } else {
         showBanner(`Pull failed: ${(e.message || "").slice(0, 80)}`, "alert");
       }
@@ -1271,8 +1335,17 @@ export default function App() {
   }
 
   // ── Forget sync file ──
+  // Fix #12: window.confirm() is blocked in some PWA/embedded contexts; use app-native confirmation.
+  const [confirmForgetSync, setConfirmForgetSync] = useState(false);
   async function forgetSyncFile() {
-    if (!window.confirm("Unlink sync file? Your local data is safe.")) return;
+    if (!confirmForgetSync) {
+      // First click: arm the confirmation — button will change label
+      setConfirmForgetSync(true);
+      // Auto-disarm after 4s so an accidental click doesn't leave the button permanently armed
+      setTimeout(() => setConfirmForgetSync(false), 4000);
+      return;
+    }
+    setConfirmForgetSync(false);
     await SyncManager.forget();
     setSyncFileConnected(false);
     setSyncStatus("idle");
@@ -1300,10 +1373,12 @@ export default function App() {
   // ── Token tracker ──
   // Thresholds at which we warn the user (as fraction of DAILY_TOKEN_LIMIT).
   const TOKEN_WARN_THRESHOLDS = [0.5, 0.8, 0.99];
+  // Fix #9: hard cap on total XP the AI can award in a single day to prevent runaway accumulation.
+  const DAILY_AI_XP_LIMIT = 5000;
   function trackTokens(amount) {
     setState((s) => {
       const usage = s.tokenUsage || { date: today(), tokens: 0 };
-      const fresh = usage.date !== today() ? { date: today(), tokens: 0, warnedAt: [] } : usage;
+      const fresh = usage.date !== today() ? { date: today(), tokens: 0, warnedAt: [], aiXpToday: 0 } : usage;
       const prevTokens = fresh.tokens;
       const newTokens = prevTokens + amount;
       const updated = { ...fresh, tokens: newTokens };
@@ -1336,6 +1411,27 @@ export default function App() {
     const usage = (latestStateRef.current ?? state).tokenUsage;
     if (!usage || usage.date !== today()) return true; // new day, budget reset
     return usage.tokens < DAILY_TOKEN_LIMIT;
+  }
+
+  // Fix #9: gate and account for AI-awarded XP so the AI cannot grant more than DAILY_AI_XP_LIMIT per day.
+  // Returns the actual amount that can be awarded (0 if budget exhausted).
+  function consumeAiXpBudget(requested) {
+    const usage = (latestStateRef.current ?? state).tokenUsage;
+    const todayUsage = (!usage || usage.date !== today()) ? { date: today(), tokens: 0, aiXpToday: 0 } : usage;
+    const alreadyAwarded = todayUsage.aiXpToday || 0;
+    const remaining = Math.max(0, DAILY_AI_XP_LIMIT - alreadyAwarded);
+    const allowed = Math.min(requested, remaining);
+    if (allowed > 0) {
+      // Update the aiXpToday counter in state so subsequent calls in the same batch see the updated value
+      setState((s) => {
+        const u = s.tokenUsage || { date: today(), tokens: 0 };
+        const fresh = u.date !== today() ? { date: today(), tokens: 0, warnedAt: [], aiXpToday: 0 } : u;
+        const updated = { ...fresh, aiXpToday: (fresh.aiXpToday || 0) + allowed };
+        LS.set(storageKey("jv_token_usage"), updated);
+        return { ...s, tokenUsage: updated };
+      });
+    }
+    return allowed;
   }
 
   // ── Fetch daily quote ──
@@ -1640,7 +1736,9 @@ export default function App() {
           break;
         case "award_xp": {
           const amount = Math.min(Math.max(0, Number(cmd.amount) || 0), MAX_XP_PER_CMD);
-          const allowed = Math.min(amount, Math.max(0, MAX_XP_PER_RESPONSE - totalXPThisRun));
+          // Fix #9: apply per-response cap then the daily AI XP ceiling
+          const cappedByResponse = Math.min(amount, Math.max(0, MAX_XP_PER_RESPONSE - totalXPThisRun));
+          const allowed = consumeAiXpBudget(cappedByResponse);
           if (allowed <= 0) break;
           totalXPThisRun += allowed;
           awardXP(allowed, null, true);
@@ -1671,7 +1769,9 @@ export default function App() {
           break;
         case "unlock_achievement": {
           const achXP = Math.min(Math.max(0, Number(cmd.xp) || 50), MAX_XP_PER_CMD);
-          const allowedAchXP = Math.min(achXP, Math.max(0, MAX_XP_PER_RESPONSE - totalXPThisRun));
+          // Fix #9: apply per-response cap then the daily AI XP ceiling
+          const cappedAchXP = Math.min(achXP, Math.max(0, MAX_XP_PER_RESPONSE - totalXPThisRun));
+          const allowedAchXP = consumeAiXpBudget(cappedAchXP);
           totalXPThisRun += allowedAchXP;
           // Build explicitly — never spread cmd directly so unexpected AI keys can't pollute the stored object
           unlockAchievement({
@@ -1822,6 +1922,7 @@ export default function App() {
             syncFileConnected={syncFileConnected}
             onPush={syncPush} onPull={syncPull}
             onPickSyncFile={pickSyncFile} onForgetSyncFile={forgetSyncFile}
+            confirmForgetSync={confirmForgetSync}
             theme={theme} setTheme={setTheme}
             trackTokens={trackTokens}
           />
@@ -3024,7 +3125,7 @@ function ChatTab({ state, setState, profile, apiKey, executeCommands, showBanner
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [isListening, setIsListening] = useState(false);
-  const [disclosureDismissed, setDisclosureDismissed] = useState(() => !!localStorage.getItem(DATA_DISCLOSURE_SEEN_KEY));
+  const [disclosureDismissed, setDisclosureDismissed] = useState(() => !!LS.get(storageKey(DATA_DISCLOSURE_SEEN_KEY)));
   const chatEndRef = useRef(null);
   const recognitionRef = useRef(null);
 
@@ -3146,7 +3247,7 @@ function ChatTab({ state, setState, profile, apiKey, executeCommands, showBanner
           </span>
           <button
             type="button"
-            onClick={() => { try { localStorage.setItem(DATA_DISCLOSURE_SEEN_KEY, "1"); } catch {} setDisclosureDismissed(true); }}
+            onClick={() => { LS.set(storageKey(DATA_DISCLOSURE_SEEN_KEY), "1"); setDisclosureDismissed(true); }}
             style={{ padding: "2px 8px", border: "1px solid #444", background: "transparent", color: "#666", cursor: "pointer", flexShrink: 0 }}
           >
             Got it
@@ -3261,7 +3362,7 @@ function ChatMessage({ msg }) {
 // ═══════════════════════════════════════════════════════════════
 // PROFILE TAB
 // ═══════════════════════════════════════════════════════════════
-function ProfileTab({ state, setState, profile, level, rank, xpPerLevel, awardXP, showBanner, showToast, unlockAchievement, executeCommands, apiKey, buildSystemPrompt, syncStatus, lastSynced, syncFileConnected, onPush, onPull, onPickSyncFile, onForgetSyncFile, theme, setTheme, streakShieldCost, gachaCost, trackTokens }) {
+function ProfileTab({ state, setState, profile, level, rank, xpPerLevel, awardXP, showBanner, showToast, unlockAchievement, executeCommands, apiKey, buildSystemPrompt, syncStatus, lastSynced, syncFileConnected, onPush, onPull, onPickSyncFile, onForgetSyncFile, confirmForgetSync, theme, setTheme, streakShieldCost, gachaCost, trackTokens }) {
   const [section, setSection] = useState("overview");
   const [showGacha, setShowGacha] = useState(false);
 
@@ -3311,7 +3412,7 @@ function ProfileTab({ state, setState, profile, level, rank, xpPerLevel, awardXP
       {section === "achievements" && <AchievementsSection state={state} />}
       {section === "calendar" && <CalendarSection state={state} setState={setState} profile={profile} apiKey={apiKey} buildSystemPrompt={buildSystemPrompt} showBanner={showBanner} executeCommands={executeCommands} />}
       {section === "gacha" && <GachaSection state={state} setState={setState} profile={profile} apiKey={apiKey} gachaCost={gachaCost} showBanner={showBanner} showToast={showToast} trackTokens={trackTokens} />}
-      {section === "settings" && <SettingsSection profile={profile} setState={setState} showBanner={showBanner} syncStatus={syncStatus} lastSynced={lastSynced} syncFileConnected={syncFileConnected} onPush={onPush} onPull={onPull} onPickSyncFile={onPickSyncFile} onForgetSyncFile={onForgetSyncFile} theme={theme} setTheme={setTheme} />}
+      {section === "settings" && <SettingsSection profile={profile} setState={setState} showBanner={showBanner} syncStatus={syncStatus} lastSynced={lastSynced} syncFileConnected={syncFileConnected} onPush={onPush} onPull={onPull} onPickSyncFile={onPickSyncFile} onForgetSyncFile={onForgetSyncFile} confirmForgetSync={confirmForgetSync} theme={theme} setTheme={setTheme} />}
     </div>
   );
 }
@@ -3762,7 +3863,7 @@ function GachaCard({ card, compact }) {
   );
 }
 
-function SettingsSection({ profile, setState, showBanner, syncStatus, lastSynced, syncFileConnected, onPush, onPull, onPickSyncFile, onForgetSyncFile, theme, setTheme }) {
+function SettingsSection({ profile, setState, showBanner, syncStatus, lastSynced, syncFileConnected, onPush, onPull, onPickSyncFile, onForgetSyncFile, confirmForgetSync, theme, setTheme }) {
   const [gcalId, setGcalId] = useState(profile?.googleClientId || "");
   const importRef = useRef(null);
 
@@ -3891,9 +3992,15 @@ function SettingsSection({ profile, setState, showBanner, syncStatus, lastSynced
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <span style={{ fontSize: "11px", color: "#aaa" }}>✓ SYNC FILE LINKED</span>
             <button onClick={onForgetSyncFile} style={{
-              background: "none", border: "1px solid #333", color: "#555",
+              background: confirmForgetSync ? "#3a1111" : "none",
+              border: `1px solid ${confirmForgetSync ? "#c44" : "#333"}`,
+              color: confirmForgetSync ? "#c44" : "#555",
               fontFamily: "'Share Tech Mono', monospace", fontSize: "9px", padding: "2px 8px", cursor: "pointer",
-            }}>UNLINK</button>
+              transition: "none",
+            }}>
+              {/* Fix #12: two-step confirm replaces window.confirm() which is blocked in some PWA contexts */}
+              {confirmForgetSync ? "CONFIRM?" : "UNLINK"}
+            </button>
           </div>
           <div style={{ display: "flex", gap: "8px" }}>
             <button onClick={onPush} style={{

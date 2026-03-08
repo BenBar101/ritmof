@@ -10,7 +10,7 @@ The app is designed for one person running it on multiple devices using a static
 
 Because the app runs entirely in the browser and is open source, some API keys (such as the Gemini key) are included in the frontend build via environment variables. This is **acceptable for the intended use case** because:
 
-* each user provides **their own API keys**
+* the **deployer** (repo owner) sets the Gemini key in **GitHub repository Variables** — end users do not enter API keys in the app
 * keys are **not committed to the repository**
 * the app is **not a public multi-user service**
 
@@ -37,7 +37,7 @@ Therefore:
 When cloning or deploying:
 
 1. **Never commit `.env` files or API keys**
-2. Provide your own **Gemini API key** (`VITE_GEMINI_API_KEY`) for AI features
+2. For AI features, set the **Gemini API key** (`VITE_GEMINI_API_KEY`) in **GitHub repo Variables** (deploy) or in `.env` (local dev) — it is never entered in the app UI
 3. Optionally restrict the key in [Google AI Studio](https://aistudio.google.com/apikey) (API restrictions → Gemini only; optionally add an HTTP referrer for your domain)
 
 ### Non-Goals
@@ -57,7 +57,7 @@ Contributors and automated tools should **not** add server components or cloud s
 
 **Access control:** The app is single-user. In **production** the Google sign-in gate is always on (fail-closed). Only the Google account set in `VITE_ALLOWED_EMAIL` can use the app. The sign-in session is stored in **sessionStorage** (tab-scoped); closing the tab logs you out. Set **both** `VITE_ALLOWED_EMAIL` and `VITE_GOOGLE_CLIENT_ID` in your environment (e.g. GitHub Actions Variables or `.env`); never commit secrets. In **local dev**, leave both empty to run without the gate; if you set either one, you must set both or the app shows a configuration error. After too many failed sign-in attempts the gate asks you to refresh the page.
 
-**API keys:** The app expects **Gemini API key** (`VITE_GEMINI_API_KEY`) from the environment (GitHub repo Variables or `.env`). It is not entered in the UI. See `.env.example` and the deploy section below. The app enforces a **daily token budget** for Gemini (shown as “neural energy” in the UI); when exhausted, AI features (chat, gacha, daily quote, etc.) are disabled until the next day.
+**API keys:** The Gemini API key (`VITE_GEMINI_API_KEY`) is supplied via **GitHub repository Variables** for the deployed build (set by the repo owner in Settings → Secrets and variables → Actions → Variables). For local dev it comes from `.env`. It is **not** entered by users in the app. See `.env.example` and the deploy section below. The app enforces a **daily token budget** for Gemini (shown as “neural energy” in the UI); when exhausted, AI features (chat, gacha, daily quote, etc.) are disabled until the next day.
 
 ---
 
@@ -99,6 +99,8 @@ Data is stored in **localStorage**. To use the same data on multiple devices, RI
 
 > **Browser support:** File System Access API works in **Chrome and Edge** (desktop). Firefox and iOS Safari do not support it. On unsupported browsers, the app falls back to **Download** (saves a JSON file) and **Import** (loads a JSON file via file picker). You move the downloaded file to your Syncthing folder manually in that case.
 
+The sync file must be **valid JSON** and may not exceed **10 MB**. If you Pull or Import a corrupt or oversized file, the app shows an error and does not overwrite your local data.
+
 ### Onboarding (new device)
 
 The last step of the onboarding wizard prompts you to link your Syncthing file. You can skip this and do it later in **Profile → Settings**.
@@ -107,9 +109,9 @@ The last step of the onboarding wizard prompts you to link your Syncthing file. 
 
 ## Deploy: GitHub Pages (recommended, free)
 
-**Checklist:** Push repo → enable Pages from GitHub Actions → add **GitHub repo Variables** for `VITE_ALLOWED_EMAIL`, `VITE_GOOGLE_CLIENT_ID`, and `VITE_GEMINI_API_KEY`. Optionally add a JWT verification endpoint URL if you use a backend.
+**Checklist:** Push repo → enable Pages from GitHub Actions → add **GitHub repo Variables** for `VITE_ALLOWED_EMAIL`, `VITE_GOOGLE_CLIENT_ID`, and `VITE_GEMINI_API_KEY` (the Gemini key is configured here, not by end users). Optionally add a JWT verification endpoint URL if you use a backend.
 
-**Live site config:** Set the variables above under **Settings → Secrets and variables → Actions → Variables**. No `.env` file is used for the deployed build. In production the sign-in gate is always enforced.
+**Live site config:** Set the variables above under **Settings → Secrets and variables → Actions → Variables**. No `.env` file is used for the deployed build; the workflow reads the Gemini key (and other secrets) from GitHub Variables. In production the sign-in gate is always enforced.
 
 ### 1 — Push to GitHub
 
@@ -142,7 +144,7 @@ Only the Google account in `VITE_ALLOWED_EMAIL` can use the app. In production t
 1. Add **GitHub repository variables** (Settings → Secrets and variables → Actions → Variables):
    - `VITE_ALLOWED_EMAIL`: your Google account email
    - `VITE_GOOGLE_CLIENT_ID`: your Google OAuth Client ID (Web application, with your GitHub Pages URL in Authorized JavaScript origins)
-   - `VITE_GEMINI_API_KEY`: your Gemini API key from [Google AI Studio](https://aistudio.google.com/apikey)
+   - `VITE_GEMINI_API_KEY`: your Gemini API key from [Google AI Studio](https://aistudio.google.com/apikey) — the deployed app gets this from GitHub Variables; users do not enter it in the app
    - No `VITE_DROPBOX_APP_KEY` needed — sync is handled via Syncthing directly.
 
 2. Push a commit so the workflow rebuilds. The app will show the Google sign-in gate; only the configured email can continue.
@@ -162,4 +164,4 @@ npm run dev   # → http://localhost:5173
 
 For **single-account access**, create a `.env` from `.env.example` and set `VITE_ALLOWED_EMAIL`, `VITE_GOOGLE_CLIENT_ID`, and `VITE_GEMINI_API_KEY`. To run **without the sign-in gate**, leave `VITE_ALLOWED_EMAIL` and `VITE_GOOGLE_CLIENT_ID` empty; you still need the Gemini key.
 
-**Dev mode protects your real data:** When you run `npm run dev`, the app uses a **separate localStorage copy** (all keys prefixed with `ritmof_dev_`). Caches and app data are isolated from production. A yellow **DEV MODE** bar at the top reminds you.
+**Dev mode protects your real data:** When you run `npm run dev`, the app uses a **separate localStorage copy** for all its own keys (prefixed with `ritmof_dev_`). Caches and app data are isolated from production. A yellow **DEV MODE** bar at the top reminds you.
