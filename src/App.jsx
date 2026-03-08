@@ -49,17 +49,28 @@ const ACHIEVEMENT_RARITIES = {
   legendary: { label: "LEGENDARY", glow: "#fff",   border: "██", weight: 3  },
 };
 
-// Single-account gate: set at build time (e.g. .env or GitHub repo env)
-const ALLOWED_EMAIL = (import.meta.env.VITE_ALLOWED_EMAIL || "benbar101@gmail.com").trim().toLowerCase();
+// Single-account gate: set at build time via .env (VITE_ALLOWED_EMAIL, VITE_GOOGLE_CLIENT_ID)
+// No hardcoded fallback — gate is disabled if env vars are absent, keeping the secret out of source.
+const ALLOWED_EMAIL = (import.meta.env.VITE_ALLOWED_EMAIL || "").trim().toLowerCase();
 const GATE_GOOGLE_CLIENT_ID = (import.meta.env.VITE_GOOGLE_CLIENT_ID || "").trim();
 const GATE_SESSION_KEY = "ritmof_allowed";
 const THEME_KEY = "jv_theme";
 
-// Device lock: PBKDF2-SHA256 hash of the master password (same salt/iterations as hashPasswordForDeviceLock)
-const DEVICE_LOCK_STORAGE_KEY = "ritmof_device_unlock";
+// Device lock: PBKDF2-SHA256 hash of the master password.
+// Set VITE_DEVICE_LOCK_HASH in your .env — NEVER commit the hash to source.
+// Generate it once in the browser console:
+//   hashPasswordForDeviceLock("yourpassword").then(console.log)
+// then paste the output into .env as VITE_DEVICE_LOCK_HASH.
+const DEVICE_LOCK_STORAGE_KEY = "ritmof_device_unlock_token"; // renamed — old key stored the hash directly
 const DEVICE_LOCK_SALT = "ritmof-device-lock-v1";
 const DEVICE_LOCK_ITERATIONS = 100000;
-const EXPECTED_PASSWORD_HASH = "REMOVED";
+const EXPECTED_PASSWORD_HASH = (import.meta.env.VITE_DEVICE_LOCK_HASH || "").trim();
+
+// Brute-force lockout: 5 failed attempts -> 5-minute cooldown
+const LOCK_FAIL_KEY = "ritmof_lock_fails";
+const LOCK_UNTIL_KEY = "ritmof_lock_until";
+const MAX_LOCK_ATTEMPTS = 5;
+const LOCK_DURATION_MS = 5 * 60 * 1000;
 
 async function hashPasswordForDeviceLock(password) {
   const keyMaterial = await crypto.subtle.importKey(
@@ -80,6 +91,22 @@ async function hashPasswordForDeviceLock(password) {
     .join("");
 }
 
+// Generate a random session token (stored instead of the hash — not reversible to password)
+function generateUnlockToken() {
+  return Array.from(crypto.getRandomValues(new Uint8Array(32)))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+// Returns true when a valid unlock token exists for this session
+function isDeviceUnlocked() {
+  try {
+    const token = sessionStorage.getItem(DEVICE_LOCK_STORAGE_KEY);
+    // Token must be a 64-char hex string written by this session
+    return typeof token === "string" && /^[0-9a-f]{64}$/.test(token);
+  } catch { return false; }
+}
+
 // ═══════════════════════════════════════════════════════════════
 // LOCAL STORAGE HELPERS
 // ═══════════════════════════════════════════════════════════════
@@ -91,7 +118,9 @@ const LS = {
   del: (k) => { try { localStorage.removeItem(k); } catch {} },
 };
 
-const today = () => new Date().toISOString().split("T")[0];
+// Returns today's date in YYYY-MM-DD using LOCAL time (not UTC).
+// Using toISOString() would return UTC and cause the "day" to reset at 3am for UTC+3 users.
+const today = () => new Date().toLocaleDateString("en-CA"); // en-CA locale gives YYYY-MM-DD
 const nowHour = () => new Date().getHours();
 const nowMin = () => new Date().getMinutes();
 
@@ -360,11 +389,30 @@ function buildSyncPayload() {
   return payload;
 }
 
+// Validate that a value coming from Dropbox is safe to write to localStorage.
+// Rejects anything that isn't a string, number, boolean, plain object, or array,
+// and caps size to avoid storage-bombing attacks.
+const MAX_SYNC_VALUE_SIZE = 500_000; // 500 KB per key
+function isSafeSyncValue(v) {
+  if (v === null || v === undefined) return false;
+  const type = typeof v;
+  if (type === "string") return v.length <= MAX_SYNC_VALUE_SIZE;
+  if (type === "number" || type === "boolean") return true;
+  if (Array.isArray(v) || (type === "object")) {
+    try { return JSON.stringify(v).length <= MAX_SYNC_VALUE_SIZE; } catch { return false; }
+  }
+  return false;
+}
+
 function applySyncPayload(payload) {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return;
   Object.entries(payload).forEach(([k, v]) => {
-    if (k.startsWith("jv_") && v !== undefined) {
-      localStorage.setItem(storageKey(k), typeof v === "string" ? v : JSON.stringify(v));
-    }
+    // Only write known jv_ keys — never overwrite auth/lock/session tokens
+    const blocklist = [DEVICE_LOCK_STORAGE_KEY, GATE_SESSION_KEY, LOCK_FAIL_KEY, LOCK_UNTIL_KEY];
+    if (!k.startsWith("jv_")) return;
+    if (blocklist.includes(k)) return;
+    if (!isSafeSyncValue(v)) return;
+    localStorage.setItem(storageKey(k), typeof v === "string" ? v : JSON.stringify(v));
   });
 }
 
@@ -375,22 +423,67 @@ function DeviceLockGate({ onUnlock }) {
   const [password, setPassword] = useState("");
   const [status, setStatus] = useState("idle");
   const [errorMsg, setErrorMsg] = useState("");
+  const [lockUntil, setLockUntil] = useState(() => parseInt(localStorage.getItem(LOCK_UNTIL_KEY) || "0", 10));
+
+  // If the hash wasn't compiled in, skip the gate entirely
+  useEffect(() => {
+    if (!EXPECTED_PASSWORD_HASH) {
+      console.warn("VITE_DEVICE_LOCK_HASH not set — device lock disabled.");
+      onUnlock();
+    }
+  }, [onUnlock]);
+
+  // Countdown display while locked out
+  const [remaining, setRemaining] = useState(0);
+  useEffect(() => {
+    if (!lockUntil) return;
+    const iv = setInterval(() => {
+      const r = Math.max(0, Math.ceil((lockUntil - Date.now()) / 1000));
+      setRemaining(r);
+      if (r === 0) { setLockUntil(0); clearInterval(iv); }
+    }, 500);
+    return () => clearInterval(iv);
+  }, [lockUntil]);
 
   async function handleSubmit(e) {
     e.preventDefault();
     if (!password.trim()) return;
+
+    // Check lockout
+    const until = parseInt(localStorage.getItem(LOCK_UNTIL_KEY) || "0", 10);
+    if (Date.now() < until) {
+      setErrorMsg(`Too many attempts. Try again in ${Math.ceil((until - Date.now()) / 1000)}s.`);
+      return;
+    }
+
     setStatus("loading");
     setErrorMsg("");
     try {
       const hash = await hashPasswordForDeviceLock(password);
       if (hash === EXPECTED_PASSWORD_HASH) {
+        // Store a random session token — NOT the hash
         try {
-          localStorage.setItem(DEVICE_LOCK_STORAGE_KEY, EXPECTED_PASSWORD_HASH);
+          const token = generateUnlockToken();
+          sessionStorage.setItem(DEVICE_LOCK_STORAGE_KEY, token);
+          // Clear any previous failed-attempt counters
+          localStorage.removeItem(LOCK_FAIL_KEY);
+          localStorage.removeItem(LOCK_UNTIL_KEY);
         } catch {}
         onUnlock();
         return;
       }
-      setErrorMsg("Wrong password.");
+      // Wrong password — increment fail counter
+      const fails = parseInt(localStorage.getItem(LOCK_FAIL_KEY) || "0", 10) + 1;
+      localStorage.setItem(LOCK_FAIL_KEY, String(fails));
+      if (fails >= MAX_LOCK_ATTEMPTS) {
+        const newUntil = Date.now() + LOCK_DURATION_MS;
+        localStorage.setItem(LOCK_UNTIL_KEY, String(newUntil));
+        localStorage.setItem(LOCK_FAIL_KEY, "0");
+        setLockUntil(newUntil);
+        setErrorMsg(`Too many failed attempts. Locked for ${LOCK_DURATION_MS / 60000} minutes.`);
+      } else {
+        setErrorMsg(`Wrong password. ${MAX_LOCK_ATTEMPTS - fails} attempt${MAX_LOCK_ATTEMPTS - fails === 1 ? "" : "s"} remaining.`);
+      }
       setStatus("error");
     } catch (err) {
       setErrorMsg("Could not verify. Try again.");
@@ -774,7 +867,7 @@ export default function App() {
   const [tab, setTab] = useState("home");
   const [showOnboarding, setShowOnboarding] = useState(!LS.get(storageKey("jv_profile")));
   const [gatePassed, setGatePassed] = useState(() => typeof sessionStorage !== "undefined" && sessionStorage.getItem(GATE_SESSION_KEY) === "true");
-  const [deviceLockPassed, setDeviceLockPassed] = useState(() => typeof localStorage !== "undefined" && localStorage.getItem(DEVICE_LOCK_STORAGE_KEY) === EXPECTED_PASSWORD_HASH);
+  const [deviceLockPassed, setDeviceLockPassed] = useState(isDeviceUnlocked);
   const [modal, setModal] = useState(null); // { type, data }
   const [toast, setToast] = useState(null);
   const [banner, setBanner] = useState(null);
@@ -799,6 +892,10 @@ export default function App() {
   }, [theme]);
 
   const profile = state.profile;
+  // SECURITY NOTE: The Gemini API key is stored in the user's profile in localStorage
+  // and synced to Dropbox in plaintext. It is never sent to any server other than
+  // Google's Gemini API directly. Users should treat it like a password and be aware
+  // it is visible to any browser extension or code with localStorage access.
   const apiKey = profile?.geminiKey;
   const dropboxAppKey = state.dropboxAppKey || LS.get(DB_APPKEY_KEY, "");
   const dropboxConnected = state.dropboxConnected || !!localStorage.getItem(DB_REFRESH_KEY);
@@ -856,7 +953,7 @@ LS.set(storageKey("jv_habits_init"), state.habitsInitialized);
         const localTs = parseInt(LS.get(storageKey("jv_last_synced"), "0") || "0", 10);
         if ((remote._syncedAt || 0) > localTs) {
           applySyncPayload(remote);
-          setState(initState());
+          setState(initState);
           LS.set(storageKey("jv_last_synced"), String(remote._syncedAt));
           setLastSynced(remote._syncedAt);
           showBanner("Data restored from Dropbox.", "success");
@@ -884,7 +981,7 @@ LS.set(storageKey("jv_habits_init"), state.habitsInitialized);
         const localTs = parseInt(LS.get(storageKey("jv_last_synced"), "0") || "0", 10);
         if ((remote._syncedAt || 0) > localTs) {
           applySyncPayload(remote);
-          setState(initState());
+          setState(initState);
           LS.set(storageKey("jv_last_synced"), String(remote._syncedAt));
           setLastSynced(remote._syncedAt);
           showBanner(IS_DEV ? "Dev copy synced from Dropbox." : "Data synced from Dropbox.", "success");
@@ -908,7 +1005,7 @@ LS.set(storageKey("jv_habits_init"), state.habitsInitialized);
         .then((token) => dropboxUpload(token, buildSyncPayload()))
         .then(() => {
           const ts = Date.now();
-          LS.set("jv_last_synced", String(ts));
+          LS.set(storageKey("jv_last_synced"), String(ts));
           setLastSynced(ts);
           setSyncStatus("synced");
         })
@@ -939,7 +1036,7 @@ LS.set(storageKey("jv_habits_init"), state.habitsInitialized);
           const localTs = parseInt(LS.get(storageKey("jv_last_synced"), "0") || "0", 10);
           if ((remote._syncedAt || 0) > localTs) {
             applySyncPayload(remote);
-            setState(initState());
+            setState(initState);
             LS.set(storageKey("jv_last_synced"), String(remote._syncedAt));
             setLastSynced(remote._syncedAt);
           }
@@ -948,7 +1045,7 @@ LS.set(storageKey("jv_habits_init"), state.habitsInitialized);
       } else {
         await dropboxUpload(token, buildSyncPayload());
         const ts = Date.now();
-        LS.set("jv_last_synced", String(ts));
+        LS.set(storageKey("jv_last_synced"), String(ts));
         setLastSynced(ts);
         showBanner("Synced to Dropbox.", "success");
       }
@@ -3524,7 +3621,7 @@ function AchievementToast({ toast, onClose }) {
       if (pct === 0) { clearInterval(iv); onClose(); }
     }, 50);
     return () => clearInterval(iv);
-  }, []);
+  }, [onClose]);
 
   return (
     <div style={{

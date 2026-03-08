@@ -16,6 +16,8 @@ git remote add origin https://github.com/YOUR_USERNAME/ritmof.git
 git push -u origin main
 ```
 
+**If you rewrote history** (e.g. to remove a committed secret): use `git push --force origin main` so the remote matches your cleaned history. Only force-push when you’re sure no one else is building on the old history.
+
 ### 2 — Enable GitHub Pages
 
 1. Go to your repo → **Settings → Pages**
@@ -36,10 +38,26 @@ The workflow sets `VITE_BASE_PATH` from your repo name automatically, so the app
 
 The app can show a password screen on first open. The password is never stored; only a hash is kept. Users enter the password once per device; access is remembered until you change the hash (e.g. when you set a new password).
 
+**Security:** The device-lock hash is read from **environment variables**, not from source code. This keeps the hash out of the repo and avoids leaking it in git history. **Never commit the hash** — use a `.env` file (see below) and ensure `.env` is in `.gitignore` (it is in this repo).
+
 **How to set or change the password:**
 
-1. Generate the hash with Node (same algorithm as the app: PBKDF2-SHA256, 100k iterations, salt `ritmof-device-lock-v1`):
+1. Create a `.env` file in the project root (if you don’t have one). `.env` is in `.gitignore` so it is never committed.
 
+2. Generate the hash. In the browser console on your deployed app (or any page with the app’s script), run:
+   ```js
+   hashPasswordForDeviceLock("yourpassword").then(console.log)
+   ```
+   Copy the printed hex string.
+
+3. In `.env`, set:
+   ```
+   VITE_DEVICE_LOCK_HASH=paste_the_hex_string_here
+   ```
+
+4. Rebuild and redeploy. When the hash changes, all devices will be asked for the (new) password again.
+
+**Alternative (Node, same algorithm — PBKDF2-SHA256, 100k iterations, salt `ritmof-device-lock-v1`):**
    ```bash
    node -e "
    const crypto = require('crypto');
@@ -49,14 +67,7 @@ The app can show a password screen on first open. The password is never stored; 
    console.log(hash);
    "
    ```
-
-2. In `src/App.jsx`, find `EXPECTED_PASSWORD_HASH` and set it to the printed hex string.
-
-   Example: for the dumb password `changeme`, the hash is  
-   `3d94f22119c5691913e7fe6ba413c62362fca1233cd2bf729c1dd9842cc2d5bb`.  
-   Replace the current value of `EXPECTED_PASSWORD_HASH` with that to use `changeme` as the device password.
-
-3. Rebuild/redeploy. When the hash in code changes, all devices will be asked for the (new) password again.
+   Then set `VITE_DEVICE_LOCK_HASH=<that hex>` in your `.env`.
 
 ---
 
@@ -71,6 +82,8 @@ The app can show a password screen on first open. The password is never stored; 
 ---
 
 ## Local Dev
+
+Create a `.env` file in the project root for secrets (e.g. `VITE_DEVICE_LOCK_HASH`, `VITE_GOOGLE_CLIENT_ID`, `VITE_ALLOWED_EMAIL`). `.env` is in `.gitignore` — never commit it.
 
 ```bash
 npm install
