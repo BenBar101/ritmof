@@ -1,8 +1,8 @@
 # RITMOF
 
-A gamified life companion PWA for STEM university students. Solo Leveling RPG aesthetic. Black and white. No server — runs entirely in your browser. Data lives in **localStorage**; optional **Dropbox** sync backs it up and can sync across devices.
+A gamified life companion PWA for STEM university students. Solo Leveling RPG aesthetic. Black and white. No server — runs entirely in your browser. **Stack:** React, Vite; data lives in **localStorage**; optional **Dropbox** sync backs it up and can sync across devices.
 
-**Access control:** The app is single-user. In **production** the Google sign-in gate is always on (fail-closed). Only the Google account set in `VITE_ALLOWED_EMAIL` can use the app. You must set **both** `VITE_ALLOWED_EMAIL` and `VITE_GOOGLE_CLIENT_ID` in your environment (e.g. GitHub Actions Variables or `.env`) and never commit secrets. In **local dev**, you can leave both empty to run without the gate; if you set either one, you must set both or the app shows a configuration error.
+**Access control:** The app is single-user. In **production** the Google sign-in gate is always on (fail-closed). Only the Google account set in `VITE_ALLOWED_EMAIL` can use the app. You must set **both** `VITE_ALLOWED_EMAIL` and `VITE_GOOGLE_CLIENT_ID` in your environment (e.g. GitHub Actions Variables or `.env`) and never commit secrets. In **local dev**, you can leave both empty to run without the gate; if you set either one, you must set both or the app shows a configuration error. After too many failed sign-in attempts the gate asks you to refresh the page before trying again.
 
 **API keys:** The app expects **Gemini API key** (`VITE_GEMINI_API_KEY`) and **Dropbox App Key** (`VITE_DROPBOX_APP_KEY`) from the environment (GitHub repo Variables or `.env`). These are not entered in the UI. See `.env.example` and the deploy section below. Restrict the Gemini key in [Google AI Studio](https://aistudio.google.com/apikey) (API restrictions → Gemini only; optionally add an HTTP referrer for your domain) since it is embedded in the browser bundle at build time. The app enforces a **daily token budget** for Gemini (shown as “neural energy” in the UI); when the budget is exhausted, AI features (chat, gacha, daily quote, etc.) are disabled until the next day.
 
@@ -87,7 +87,7 @@ Only the Google account in `VITE_ALLOWED_EMAIL` can use the app. In production t
 3. Settings → Redirect URIs → add your deployed URL (and `http://localhost:5173` for local testing)
 4. Copy the **App Key** and set **`VITE_DROPBOX_APP_KEY`** in GitHub repo Variables (or `.env` locally). The app reads the key only from the environment, not from the UI. In the app: Profile → Settings → **CONNECT DROPBOX** to complete OAuth and enable sync.
 
-**Token storage:** OAuth tokens are kept in **sessionStorage** (tab-scoped). Closing the browser clears them, so you’ll need to click **CONNECT DROPBOX** again after a full browser restart. App data (habits, tasks, XP, etc.) stays in localStorage and is unchanged; only the Dropbox connection is re-established.
+**Token storage:** OAuth tokens and OAuth state (e.g. PKCE verifier) are kept in **sessionStorage** (tab-scoped). Closing the browser or tab clears them, so you’ll need to click **CONNECT DROPBOX** again after a full browser restart. App data (habits, tasks, XP, etc.) stays in localStorage and is unchanged; only the Dropbox connection is re-established.
 
 ---
 
@@ -102,4 +102,4 @@ npm run dev   # → http://localhost:5173
 
 To run with **single-account access** and **sync**, create a `.env` from `.env.example` and set all four: `VITE_ALLOWED_EMAIL`, `VITE_GOOGLE_CLIENT_ID`, `VITE_GEMINI_API_KEY`, `VITE_DROPBOX_APP_KEY`. To run **without the sign-in gate**, leave `VITE_ALLOWED_EMAIL` and `VITE_GOOGLE_CLIENT_ID` empty; you still need the Gemini and Dropbox keys.
 
-**Dev mode protects your real data:** When you run `npm run dev`, the app uses a **separate localStorage copy** (keys prefixed with `ritmof_dev_`). It will **pull** from Dropbox on launch (if connected) and store that data in this local copy. The app **never pushes to Dropbox** in dev, so you can experiment without affecting your real synced data. A yellow "DEV MODE" bar at the top reminds you. Use the sync button in dev to **refresh** the local copy from Dropbox (pull only).
+**Dev mode protects your real data:** When you run `npm run dev`, the app uses a **separate localStorage copy** (all app keys prefixed with `ritmof_dev_`). Caches (e.g. daily quote) and app data are fully isolated from production. The app **never pushes to Dropbox** in dev; use the sync button to **pull** from Dropbox and refresh the local copy. A yellow "DEV MODE" bar at the top reminds you.

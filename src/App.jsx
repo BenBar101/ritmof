@@ -230,7 +230,8 @@ const IS_DEV = import.meta.env.DEV;
 const DEV_PREFIX = "ritmof_dev_";
 // Keys that are shared between dev and prod (Dropbox OAuth state — these should never be prefixed
 // because the OAuth flow always writes to the same key names regardless of mode).
-const DROPBOX_KEYS_NO_PREFIX = [DB_APPKEY_KEY, DB_TOKEN_KEY, DB_REFRESH_KEY, DB_EXPIRES_KEY, DB_PKCE_VERIFIER];
+// DB_PKCE_VERIFIER is intentionally excluded — it lives in sessionStorage now.
+const DROPBOX_KEYS_NO_PREFIX = [DB_APPKEY_KEY, DB_TOKEN_KEY, DB_REFRESH_KEY, DB_EXPIRES_KEY];
 // THEME_KEY intentionally shares between dev/prod (cosmetic). API keys come from env only.
 function storageKey(k) {
   if (!IS_DEV) return k;
@@ -269,7 +270,7 @@ async function startDropboxOAuth(appKey) {
     throw new Error("Invalid Dropbox App Key format. Expected alphanumeric string.");
   }
   const { verifier, challenge } = await generatePKCE();
-  localStorage.setItem(DB_PKCE_VERIFIER, verifier);
+  sessionStorage.setItem(DB_PKCE_VERIFIER, verifier);
   const redirectUri = encodeURIComponent(window.location.origin);
   const url = `https://www.dropbox.com/oauth2/authorize`
     + `?client_id=${appKey}`
@@ -282,7 +283,7 @@ async function startDropboxOAuth(appKey) {
 }
 
 async function exchangeDropboxCode(appKey, code) {
-  const verifier = localStorage.getItem(DB_PKCE_VERIFIER) || "";
+  const verifier = sessionStorage.getItem(DB_PKCE_VERIFIER) || "";
   const params = new URLSearchParams({
     code,
     grant_type: "authorization_code",
@@ -301,7 +302,7 @@ async function exchangeDropboxCode(appKey, code) {
   }
   const data = await res.json();
   storeDropboxTokens(data);
-  localStorage.removeItem(DB_PKCE_VERIFIER);
+  sessionStorage.removeItem(DB_PKCE_VERIFIER);
   return data.access_token;
 }
 
@@ -550,12 +551,19 @@ function loadGoogleGIS() {
 function AuthGate({ onAccessGranted }) {
   const [status, setStatus] = useState("idle");
   const [errMsg, setErrMsg] = useState("");
+  const [retryCount, setRetryCount] = useState(0);
+  const retryTimeoutRef = useRef(null);
 
   // Fail-closed: if misconfigured, show an explicit error rather than letting the user in.
   const misconfigured = !ALLOWED_EMAIL || !GATE_GOOGLE_CLIENT_ID;
 
+  // Rate limit: max 5 attempts, 10s cooldown after each failure
+  const MAX_RETRIES = 5;
+  const isRateLimited = retryCount >= MAX_RETRIES;
+
   async function handleSignIn() {
-    if (misconfigured) return;
+    if (misconfigured || status === "loading" || isRateLimited) return;
+    setRetryCount((c) => c + 1);
     setStatus("loading");
     setErrMsg("");
     try {
@@ -699,7 +707,10 @@ function AuthGate({ onAccessGranted }) {
         <div style={{ color: "#c44", marginBottom: "16px", fontSize: "11px", maxWidth: "320px" }}>{errMsg}</div>
       )}
       <div id="gsi-button-container" style={{ marginBottom: "16px" }} />
-      {status !== "idle" && (
+      {isRateLimited && (
+        <div style={{ color: "#c44", marginBottom: "16px", fontSize: "11px" }}>Too many attempts. Refresh the page to try again.</div>
+      )}
+      {status !== "idle" && !isRateLimited && (
         <button
           onClick={handleSignIn}
           disabled={status === "loading"}
@@ -908,6 +919,7 @@ function sanitizeForPrompt(str, maxLen = 200) {
     .replace(/[`]/g, "'")                           // backtick → apostrophe
     .replace(/\$\{/g, "$(")                         // template literal escape
     .replace(/[{}]/g, "")                            // strip braces — prevents pre-formed JSON injection
+    .replace(/[<>]/g, "")                            // strip angle brackets — prevents </HUNTER_DATA> tag breakout
     .slice(0, maxLen);
 }
 
@@ -1014,7 +1026,7 @@ You are not here to make them feel good. You are here to make them better. The d
 // DAILY QUOTE
 // ═══════════════════════════════════════════════════════════════
 async function fetchDailyQuote(apiKey, profile, onTokens) {
-  const key = `jv_quote_${today()}`;
+  const key = storageKey(`jv_quote_${today()}`);
   const cached = LS.get(key);
   if (cached) return cached;
 
@@ -1409,8 +1421,10 @@ export default function App() {
   }
 
   // Returns true if the daily token budget has not been exhausted.
+  // Reads from latestStateRef so callers inside useEffect always see the current value
+  // without needing to add state to their dependency arrays.
   function canCallGemini() {
-    const usage = state.tokenUsage;
+    const usage = (latestStateRef.current ?? state).tokenUsage;
     if (!usage || usage.date !== today()) return true; // new day, budget reset
     return usage.tokens < DAILY_TOKEN_LIMIT;
   }
@@ -1486,7 +1500,11 @@ export default function App() {
     // even if the clock crosses midnight between the two evaluations.
     setState((s) => {
       const effectiveDate = t; // use the date captured at call-time — avoids midnight race
-      const yesterday = new Date(Date.now() - 86400000).toLocaleDateString("en-CA");
+      // Compute yesterday by manipulating the date component, not subtracting ms.
+      // Subtracting 86400000ms breaks during DST transitions (clocks going back create a 25hr day).
+      const d = new Date(effectiveDate);
+      d.setDate(d.getDate() - 1);
+      const yesterday = d.toLocaleDateString("en-CA");
       let newStreak = s.streak;
       let newShields = s.streakShields;
       let bannerMsg = null;
@@ -1575,7 +1593,7 @@ export default function App() {
       }
       return { ...s, xp: newXP };
     });
-    if (!silent && event) {
+    if (!silent && event?.clientX != null) {
       spawnParticles(event.clientX, event.clientY);
       spawnXPFloat(event.clientX, event.clientY - 20, amount);
     }
@@ -1654,10 +1672,12 @@ export default function App() {
 
     // Sanitize for AI command injection and length; strips control/zero-width chars and common HTML.
     // Not a full XSS layer — avoid using output in dangerouslySetInnerHTML.
+    // Note: apostrophe (') is intentionally kept — it appears in natural language and poses
+    // no XSS risk since output is never passed to dangerouslySetInnerHTML.
     const sanitizeStr = (s, max = MAX_STR_LEN) => {
       if (typeof s !== "string") return "";
       const noControl = s.replace(/[\u0000-\u001F\u007F-\u009F\u200B-\u200D\uFEFF]/g, "");
-      return noControl.slice(0, max).replace(/[<>"'`&]/g, "");
+      return noControl.slice(0, max).replace(/[<>"`&]/g, "");
     };
 
     commands.forEach((cmd) => {
@@ -1697,7 +1717,9 @@ export default function App() {
         case "complete_task":
           setState((s) => {
             const tasks = [...(s.tasks || [])];
-            const idx = typeof cmd.id === "string" ? tasks.findIndex(t => t.id === cmd.id) : -1;
+            // Validate: task IDs are always "t_<digits>_<alphanumeric>" and under 40 chars
+            const isValidId = typeof cmd.id === "string" && cmd.id.length <= 40 && /^[a-zA-Z0-9_]+$/.test(cmd.id);
+            const idx = isValidId ? tasks.findIndex(t => t.id === cmd.id) : -1;
             if (idx >= 0 && idx < tasks.length) {
               tasks[idx] = { ...tasks[idx], done: true, doneDate: today() };
             }
@@ -1742,15 +1764,15 @@ export default function App() {
           const achXP = Math.min(Math.max(0, Number(cmd.xp) || 50), MAX_XP_PER_CMD);
           const allowedAchXP = Math.min(achXP, Math.max(0, MAX_XP_PER_RESPONSE - totalXPThisRun));
           totalXPThisRun += allowedAchXP;
+          // Build explicitly — never spread cmd directly so unexpected AI keys can't pollute the stored object
           unlockAchievement({
-            ...cmd,
-            id: sanitizeStr(cmd.id, 100),
-            title: sanitizeStr(cmd.title),
-            desc: sanitizeStr(cmd.desc),
+            id:         sanitizeStr(cmd.id, 100),
+            title:      sanitizeStr(cmd.title),
+            desc:       sanitizeStr(cmd.desc),
             flavorText: sanitizeStr(cmd.flavorText),
-            icon: typeof cmd.icon === "string" ? cmd.icon.slice(0, 2) : "◈",
-            xp: allowedAchXP,
-            rarity: ["common","rare","epic","legendary"].includes(cmd.rarity) ? cmd.rarity : "common",
+            icon:       typeof cmd.icon === "string" ? cmd.icon.slice(0, 2) : "◈",
+            xp:         allowedAchXP,
+            rarity:     ["common","rare","epic","legendary"].includes(cmd.rarity) ? cmd.rarity : "common",
           });
           break;
         }
