@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>JARVIS</title>
+  <script>
+    // GitHub Pages SPA redirect trick.
+    // Redirects any 404 back to index.html preserving the query string,
+    // so the Dropbox OAuth ?code= param survives the redirect.
+    const l = window.location;
+    l.replace(
+      l.protocol + '//' + l.hostname + (l.port ? ':' + l.port : '') +
+      l.pathname.split('/').slice(0, 2).join('/') +   // keep /repo-name
+      '/?p=/' + l.pathname.slice(1).replace(/&/g, '~and~') +
+      (l.search ? '&q=' + l.search.slice(1).replace(/&/g, '~and~') : '') +
+      l.hash
+    );
+  </script>
+</head>
+<body></body>
+</html>

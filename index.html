@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#0a0a0a" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="JARVIS" />
+  <link rel="manifest" href="manifest.json" />
+  <link rel="apple-touch-icon" href="icon-192.png" />
+  <title>JARVIS</title>
+  <!-- GitHub Pages SPA: decode redirect from 404.html -->
+  <script>
+    (function() {
+      var l = window.location;
+      if (l.search[1] === 'p') {
+        var decoded = l.search.slice(1).split('&').reduce(function(a, b) {
+          var kv = b.split('='); a[kv[0]] = kv.slice(1).join('='); return a;
+        }, {});
+        var path = decoded.p ? decoded.p.replace(/~and~/g, '&') : '';
+        var query = decoded.q ? '?' + decoded.q.replace(/~and~/g, '&') : '';
+        window.history.replaceState(null, null, l.pathname.split('/').slice(0, 2).join('/') + '/' + path + query + l.hash);
+      }
+    })();
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=IM+Fell+English:ital@0;1&family=Special+Elite&family=Courier+Prime:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body, #root { height: 100%; width: 100%; overflow: hidden; }
+    body {
+      background: #0a0a0a;
+      color: #e8e8e8;
+      font-family: 'Share Tech Mono', monospace;
+      -webkit-font-smoothing: antialiased;
+      overscroll-behavior: none;
+    }
+    #root { display: flex; flex-direction: column; }
+    ::-webkit-scrollbar { width: 2px; }
+    ::-webkit-scrollbar-track { background: #111; }
+    ::-webkit-scrollbar-thumb { background: #444; }
+    input, textarea, button { font-family: inherit; }
+    button { cursor: pointer; border: none; background: none; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="module" src="/src/App.jsx"></script>
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        var base = document.querySelector('base')?.getAttribute('href') || '/';
+        navigator.serviceWorker.register(base.replace(/\/$/, '') + '/sw.js').catch(function() {});
+      });
+    }
+  </script>
+</body>
+</html>
