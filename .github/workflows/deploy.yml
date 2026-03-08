@@ -33,6 +33,7 @@ jobs:
           VITE_BASE_PATH: /${{ github.event.repository.name }}/
           VITE_ALLOWED_EMAIL: ${{ vars.VITE_ALLOWED_EMAIL }}
           VITE_GOOGLE_CLIENT_ID: ${{ vars.VITE_GOOGLE_CLIENT_ID }}
+          VITE_VERIFY_GOOGLE_ID_URL: ${{ vars.VITE_VERIFY_GOOGLE_ID_URL }}
           VITE_GEMINI_API_KEY: ${{ vars.VITE_GEMINI_API_KEY }}
         run: npm run build
 

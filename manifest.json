@@ -1,8 +1,8 @@
 {
-  "name": "RITMOF",
-  "short_name": "RITMOF",
+  "name": "RITMOL",
+  "short_name": "RITMOL",
   "description": "Your personal RPG life system",
-  "start_url": "/",
+  "start_url": "./",
   "display": "standalone",
   "background_color": "#0a0a0a",
   "theme_color": "#0a0a0a",

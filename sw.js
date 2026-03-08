@@ -1,7 +1,13 @@
-const CACHE_NAME = 'ritmof-v1';
-const STATIC_ASSETS = ['/', '/index.html'];
+const CACHE_NAME = 'ritmol-v1';
+
+// Use registration scope so cached URLs match the app's base path (e.g. GitHub Pages /repo/).
+function getStaticAssets() {
+  const base = self.registration?.scope || self.location.origin + '/';
+  return [base, base + 'index.html'];
+}
 
 self.addEventListener('install', (e) => {
+  const STATIC_ASSETS = getStaticAssets();
   e.waitUntil(
     caches.open(CACHE_NAME).then((cache) => cache.addAll(STATIC_ASSETS))
   );
