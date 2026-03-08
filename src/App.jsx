@@ -56,8 +56,7 @@ const ACHIEVEMENT_RARITIES = {
 const ALLOWED_EMAIL = (import.meta.env.VITE_ALLOWED_EMAIL || "").trim().toLowerCase();
 const GATE_GOOGLE_CLIENT_ID = (import.meta.env.VITE_GOOGLE_CLIENT_ID || "").trim();
 const VERIFY_GOOGLE_ID_URL = (import.meta.env.VITE_VERIFY_GOOGLE_ID_URL || "").trim();
-// Optional: Dropbox App Key from env (e.g. GitHub Variables). When set, used for OAuth/sync; else use key from Profile → Settings (localStorage).
-const VITE_DROPBOX_APP_KEY = (import.meta.env.VITE_DROPBOX_APP_KEY || "").trim();
+
 // Required: Gemini API key from env. App assumes it is set in GitHub repo Variables or .env.
 // SECURITY: This key is embedded in the browser bundle by Vite at build time — it is visible
 // to anyone who reads the page source. Mitigate this by restricting the key in Google AI Studio:
@@ -216,175 +215,153 @@ function detectEventType(title) {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// DROPBOX PKCE OAUTH + SYNC
+// SYNCTHING FILE SYNC (File System Access API)
 // ═══════════════════════════════════════════════════════════════
-const DROPBOX_FILE = "/ritmof-data.json";
-const DB_TOKEN_KEY = "jv_dropbox_token";
-const DB_REFRESH_KEY = "jv_dropbox_refresh";
-const DB_EXPIRES_KEY = "jv_dropbox_expires";
-const DB_APPKEY_KEY = "jv_dropbox_appkey";
-const DB_PKCE_VERIFIER = "jv_pkce_verifier";
+// Strategy: user picks ritmof-data.json inside their Syncthing folder once.
+// The FileSystemFileHandle is persisted in IndexedDB so permission survives
+// page reloads (on Chromium — the user may need to re-grant once per browser session).
+// On browsers that don't support the API (Firefox, Safari iOS) we fall back to
+// manual Download + Import.
 
-// Local dev: use a separate localStorage copy so we never push to Dropbox
 const IS_DEV = import.meta.env.DEV;
 const DEV_PREFIX = "ritmof_dev_";
-// Keys that are shared between dev and prod (Dropbox OAuth state — these should never be prefixed
-// because the OAuth flow always writes to the same key names regardless of mode).
-// DB_PKCE_VERIFIER is intentionally excluded — it lives in sessionStorage now.
-const DROPBOX_KEYS_NO_PREFIX = [DB_APPKEY_KEY, DB_TOKEN_KEY, DB_REFRESH_KEY, DB_EXPIRES_KEY];
-// THEME_KEY intentionally shares between dev/prod (cosmetic). API keys come from env only.
+// Optional: hint shown in the UI so the user knows where their sync file lives.
+// Set VITE_SYNC_FILE_PATH=/Users/you/Syncthing/ritmof-data.json in .env (display only — browser cannot open paths directly).
+const SYNC_FILE_PATH_HINT = (import.meta.env.VITE_SYNC_FILE_PATH || "").trim();
+
 function storageKey(k) {
   if (!IS_DEV) return k;
-  if (k.startsWith("jv_") && !DROPBOX_KEYS_NO_PREFIX.includes(k)) return DEV_PREFIX + k;
+  if (k.startsWith("jv_")) return DEV_PREFIX + k;
   return k;
-}
-
-function getDropboxAppKey() {
-  return VITE_DROPBOX_APP_KEY;
 }
 
 function getGeminiApiKey() {
   return VITE_GEMINI_API_KEY;
 }
 
-function b64url(buf) {
-  // Chunked to avoid call-stack overflow on large buffers (spread of large Uint8Array can throw)
-  const bytes = new Uint8Array(buf);
-  let str = "";
-  const chunkSize = 0x8000;
-  for (let i = 0; i < bytes.length; i += chunkSize) {
-    str += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
-  }
-  return btoa(str).replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
-}
-async function generatePKCE() {
-  const verifier = b64url(crypto.getRandomValues(new Uint8Array(32)));
-  const hash = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier));
-  const challenge = b64url(hash);
-  return { verifier, challenge };
-}
+// IndexedDB helpers for persisting the FileSystemFileHandle.
+// Dev and prod use separate IDB keys so each environment remembers its own file —
+// prod points to ~/Syncthing/ritmof-data.json, dev points to a local test copy.
+const IDB_DB_NAME = "ritmof_sync";
+const IDB_STORE   = "handles";
+const IDB_KEY     = IS_DEV ? "syncFile_dev" : "syncFile";  // never share handles between envs
 
-async function startDropboxOAuth(appKey) {
-  // Validate: Dropbox App Keys are alphanumeric only. Reject anything else to prevent URL injection.
-  if (!/^[a-zA-Z0-9]{5,64}$/.test(appKey)) {
-    throw new Error("Invalid Dropbox App Key format. Expected alphanumeric string.");
-  }
-  const { verifier, challenge } = await generatePKCE();
-  sessionStorage.setItem(DB_PKCE_VERIFIER, verifier);
-  const redirectUri = encodeURIComponent(window.location.origin);
-  const url = `https://www.dropbox.com/oauth2/authorize`
-    + `?client_id=${appKey}`
-    + `&response_type=code`
-    + `&code_challenge=${challenge}`
-    + `&code_challenge_method=S256`
-    + `&redirect_uri=${redirectUri}`
-    + `&token_access_type=offline`;
-  window.location.href = url;
-}
-
-async function exchangeDropboxCode(appKey, code) {
-  const verifier = sessionStorage.getItem(DB_PKCE_VERIFIER) || "";
-  const params = new URLSearchParams({
-    code,
-    grant_type: "authorization_code",
-    client_id: appKey,
-    code_verifier: verifier,
-    redirect_uri: window.location.origin,
+function openIDB() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(IDB_DB_NAME, 1);
+    req.onupgradeneeded = (e) => e.target.result.createObjectStore(IDB_STORE);
+    req.onsuccess  = (e) => resolve(e.target.result);
+    req.onerror    = (e) => reject(e.target.error);
   });
-  const res = await fetch("https://api.dropboxapi.com/oauth2/token", {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: params.toString(),
-  });
-  if (!res.ok) {
-    const err = await res.text();
-    throw new Error(`Token exchange failed: ${err.slice(0, 200)}`);
-  }
-  const data = await res.json();
-  storeDropboxTokens(data);
-  sessionStorage.removeItem(DB_PKCE_VERIFIER);
-  return data.access_token;
 }
 
-async function refreshDropboxToken(appKey) {
-  const refreshToken = sessionStorage.getItem(DB_REFRESH_KEY);
-  if (!refreshToken) throw new Error("No refresh token stored.");
-  const params = new URLSearchParams({
-    grant_type: "refresh_token",
-    refresh_token: refreshToken,
-    client_id: appKey,
+async function idbGet(key) {
+  const db = await openIDB();
+  return new Promise((resolve, reject) => {
+    const tx  = db.transaction(IDB_STORE, "readonly");
+    const req = tx.objectStore(IDB_STORE).get(key);
+    req.onsuccess = () => resolve(req.result ?? null);
+    req.onerror   = () => reject(req.error);
   });
-  const res = await fetch("https://api.dropboxapi.com/oauth2/token", {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: params.toString(),
-  });
-  if (!res.ok) {
-    const err = await res.text();
-    throw new Error(`Token refresh failed: ${err.slice(0, 200)}`);
-  }
-  const data = await res.json();
-  storeDropboxTokens(data);
-  return data.access_token;
 }
 
-// SECURITY NOTE: Both the short-lived access token and the refresh token are stored in
-// sessionStorage (tab-scoped, cleared on close). This means Dropbox sync requires
-// re-authorization when the browser is fully closed — an intentional tradeoff that keeps
-// OAuth credentials out of the persistent localStorage where any JS (including extensions)
-// could read them indefinitely. For a personal app on a trusted device, this is the right
-// balance between convenience and security.
-// If you need persistence across browser restarts, move DB_REFRESH_KEY to localStorage
-// and acknowledge that the token will survive until manually revoked.
-function storeDropboxTokens(data) {
-  if (data.access_token) sessionStorage.setItem(DB_TOKEN_KEY, data.access_token);
-  if (data.refresh_token) sessionStorage.setItem(DB_REFRESH_KEY, data.refresh_token);
-  if (data.expires_in) {
-    sessionStorage.setItem(DB_EXPIRES_KEY, String(Date.now() + data.expires_in * 1000 - 60000));
-  }
-}
-
-async function getDropboxToken(appKey) {
-  const token = sessionStorage.getItem(DB_TOKEN_KEY);
-  const expires = parseInt(sessionStorage.getItem(DB_EXPIRES_KEY) || "0", 10);
-  if (token && Date.now() < expires) return token;
-  return refreshDropboxToken(appKey || getDropboxAppKey());
-}
-
-async function dropboxUpload(token, data) {
-  const res = await fetch("https://content.dropboxapi.com/2/files/upload", {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${token}`,
-      "Content-Type": "application/octet-stream",
-      "Dropbox-API-Arg": JSON.stringify({
-        path: DROPBOX_FILE, mode: "overwrite", autorename: false, mute: true,
-      }),
-    },
-    body: JSON.stringify({ ...data, _syncedAt: Date.now() }),
+async function idbSet(key, value) {
+  const db = await openIDB();
+  return new Promise((resolve, reject) => {
+    const tx  = db.transaction(IDB_STORE, "readwrite");
+    const req = tx.objectStore(IDB_STORE).put(value, key);
+    req.onsuccess = () => resolve();
+    req.onerror   = () => reject(req.error);
   });
-  if (!res.ok) {
-    const err = await res.text().catch(() => "");
-    throw new Error(`Upload failed: ${res.status} ${err.slice(0, 100)}`);
-  }
-  return res.json();
 }
 
-async function dropboxDownload(token) {
-  const res = await fetch("https://content.dropboxapi.com/2/files/download", {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${token}`,
-      "Dropbox-API-Arg": JSON.stringify({ path: DROPBOX_FILE }),
-    },
+async function idbDel(key) {
+  const db = await openIDB();
+  return new Promise((resolve, reject) => {
+    const tx  = db.transaction(IDB_STORE, "readwrite");
+    const req = tx.objectStore(IDB_STORE).delete(key);
+    req.onsuccess = () => resolve();
+    req.onerror   = () => reject(req.error);
   });
-  if (res.status === 409) return null;
-  if (!res.ok) {
-    const err = await res.text().catch(() => "");
-    throw new Error(`Download failed: ${res.status} ${err.slice(0, 100)}`);
-  }
-  return res.json();
 }
+
+export const FSAPI_SUPPORTED = typeof window !== "undefined" && "showOpenFilePicker" in window;
+
+// SyncManager — all file operations go through here.
+export const SyncManager = {
+  // Returns the stored handle, or null if none saved yet.
+  async getHandle() {
+    try { return await idbGet(IDB_KEY); } catch { return null; }
+  },
+
+  // Prompt the user to pick a file; stores the handle; returns it.
+  async pickFile() {
+    if (!FSAPI_SUPPORTED) throw new Error("FILE_API_UNSUPPORTED");
+    const [handle] = await window.showOpenFilePicker({
+      id: "ritmof-sync",
+      startIn: "documents",
+      types: [{ description: "RITMOF data", accept: { "application/json": [".json"] } }],
+    });
+    await idbSet(IDB_KEY, handle);
+    return handle;
+  },
+
+  // Ask for write permission (Chrome requires a gesture the first time after page load).
+  async ensureWritePermission(handle) {
+    if ((await handle.queryPermission({ mode: "readwrite" })) === "granted") return true;
+    return (await handle.requestPermission({ mode: "readwrite" })) === "granted";
+  },
+
+  // Write current localStorage data to the sync file (dev writes to its own test copy).
+  async push() {
+    const handle = await this.getHandle();
+    if (!handle) throw new Error("NO_HANDLE");
+    const ok = await this.ensureWritePermission(handle);
+    if (!ok) throw new Error("PERMISSION_DENIED");
+    const payload = buildSyncPayload();
+    const writable = await handle.createWritable();
+    await writable.write(JSON.stringify(payload, null, 2));
+    await writable.close();
+    return payload._syncedAt;
+  },
+
+  // Read the file that Syncthing has placed/updated and apply it to localStorage.
+  async pull() {
+    const handle = await this.getHandle();
+    if (!handle) throw new Error("NO_HANDLE");
+    const file   = await handle.getFile();
+    const text   = await file.text();
+    const remote = JSON.parse(text);
+    applySyncPayload(remote);
+    return remote._syncedAt ?? Date.now();
+  },
+
+  // Forget the saved handle (e.g. user wants to pick a different file).
+  async forget() {
+    try { await idbDel(IDB_KEY); } catch {}
+  },
+
+  // Fallback: trigger browser download of JSON file.
+  download() {
+    const payload = buildSyncPayload();
+    const blob    = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    const url     = URL.createObjectURL(blob);
+    const a       = document.createElement("a");
+    a.href     = url;
+    a.download = "ritmof-data.json";
+    a.click();
+    URL.revokeObjectURL(url);
+    return payload._syncedAt;
+  },
+
+  // Fallback: import a JSON file via file input.
+  async importFile(file) {
+    const text   = await file.text();
+    const remote = JSON.parse(text);
+    applySyncPayload(remote);
+    return remote._syncedAt ?? Date.now();
+  },
+};
 
 const SYNC_KEYS = [
   "jv_profile","jv_xp","jv_streak","jv_shields","jv_last_login",
@@ -393,7 +370,7 @@ const SYNC_KEYS = [
   "jv_sleep_log","jv_screen_log","jv_missions","jv_mission_date",
   "jv_chronicles","jv_gcal_connected","jv_habits_init","jv_token_usage",
   "jv_dynamic_costs","jv_last_shield_use_date",
-  // NOTE: DB_APPKEY_KEY is intentionally NOT synced
+  // NOTE: geminiKey is intentionally NOT synced
 ];
 
 const SYNC_SCHEMA_VERSION = 1; // bump this when making breaking data model changes
@@ -403,13 +380,13 @@ function buildSyncPayload() {
   SYNC_KEYS.forEach((k) => {
     const raw = localStorage.getItem(storageKey(k));
     if (raw === null) return;
-    // Store parsed values so the Dropbox file contains clean JSON, not double-encoded strings.
+    // Store parsed values so the file contains clean JSON, not double-encoded strings.
     try { payload[k] = JSON.parse(raw); } catch { payload[k] = raw; }
   });
   return payload;
 }
 
-// Validate that a value coming from Dropbox is safe to write to localStorage.
+// Validate that a value coming from a sync file is safe to write to localStorage.
 // Rejects anything that isn't a string, number, boolean, plain object, or array,
 // and caps size to avoid storage-bombing attacks.
 const MAX_SYNC_VALUE_SIZE = 500_000; // 500 KB per key
@@ -435,7 +412,7 @@ function isSafeSyncValue(v) {
   return false;
 }
 
-// Schema validators for keys that arrive from Dropbox.
+// Schema validators for keys that arrive from a sync file.
 // Keeps sync data trustworthy without rejecting the whole payload on one bad key.
 // Payload values are usually strings (localStorage form); we parse before validating.
 const SYNC_VALIDATORS = {
@@ -486,7 +463,7 @@ const SYNC_VALIDATORS = {
   jv_last_shield_use_date: (v) => v === null || (typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v)),
 };
 
-// Parse sync value from string form (Dropbox sends localStorage strings). Returns parsed or original.
+// Parse sync value from string form. Returns parsed or original.
 function parseSyncValue(k, v) {
   if (typeof v !== "string") return v;
   if (!SYNC_VALIDATORS[k]) return v;
@@ -527,7 +504,7 @@ function applySyncPayload(payload) {
         value = rest;
       }
     }
-    // Use LS.set so stored format matches rest of app (JSON); avoids dropbox app key breaking LS.get after sync
+    // Use LS.set so stored format matches rest of app (JSON)
     LS.set(storageKey(k), value);
   });
 }
@@ -727,11 +704,9 @@ function AuthGate({ onAccessGranted }) {
 }
 
 // Required API keys must be set as environment variables (GitHub repo Variables or .env).
-// The app does not use in-app or localStorage for Gemini or Dropbox keys.
 function KeysConfigGate() {
   const missing = [];
   if (!getGeminiApiKey()) missing.push("VITE_GEMINI_API_KEY");
-  if (!getDropboxAppKey()) missing.push("VITE_DROPBOX_APP_KEY");
   if (missing.length === 0) return null;
   return (
     <div style={{
@@ -896,8 +871,7 @@ function initState() {
     habitsInitialized: LS.get(storageKey("jv_habits_init"), false),
     dynamicCosts: LS.get(storageKey("jv_dynamic_costs"), null) || { xpPerLevel: DEFAULT_XP_PER_LEVEL, gachaCost: DEFAULT_GACHA_COST, streakShieldCost: DEFAULT_STREAK_SHIELD_COST },
     lastShieldUseDate: LS.get(storageKey("jv_last_shield_use_date"), null),
-    dropboxAppKey: getDropboxAppKey(),
-    dropboxConnected: !!sessionStorage.getItem(DB_REFRESH_KEY),
+    syncFileConnected: false, // updated async after mount by SyncManager.getHandle()
   };
 }
 
@@ -1128,14 +1102,19 @@ export default function App() {
   // Apply theme to document (dark default)
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
-    const meta = document.querySelector('meta[name="theme-color"]');
-    if (meta) meta.setAttribute("content", theme === "light" ? "#f0f0f0" : "#0a0a0a");
+    let meta = document.querySelector('meta[name="theme-color"]');
+    if (!meta) { meta = document.createElement("meta"); meta.setAttribute("name", "theme-color"); document.head.appendChild(meta); }
+    meta.setAttribute("content", theme === "light" ? "#f0f0f0" : "#0a0a0a");
   }, [theme]);
 
   const profile = state.profile;
   const apiKey = getGeminiApiKey();
-  const dropboxAppKey = getDropboxAppKey();
-  const dropboxConnected = state.dropboxConnected || !!sessionStorage.getItem(DB_REFRESH_KEY);
+
+  // ── Sync file state ──
+  const [syncFileConnected, setSyncFileConnected] = useState(false);
+  useEffect(() => {
+    SyncManager.getHandle().then((h) => setSyncFileConnected(!!h));
+  }, []);
   // Legacy: strip geminiKey from profile if present (from old sync or localStorage)
   useEffect(() => {
     if (profile?.geminiKey) {
@@ -1184,121 +1163,53 @@ export default function App() {
   useEffect(() => { if (state.dynamicCosts) LS.set(storageKey("jv_dynamic_costs"), state.dynamicCosts); }, [state.dynamicCosts]);
   useEffect(() => { if (state.lastShieldUseDate) LS.set(storageKey("jv_last_shield_use_date"), state.lastShieldUseDate); }, [state.lastShieldUseDate]);
 
-  // ── Handle Dropbox OAuth callback (?code=... in URL) ──
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const code = params.get("code");
-    const appKey = getDropboxAppKey();
-    if (!code || !appKey) return;
-    window.history.replaceState({}, "", window.location.pathname);
-    setSyncStatus("syncing");
-    exchangeDropboxCode(appKey, code)
-      .then(() => {
-        setState((s) => ({ ...s, dropboxConnected: true }));
-        setSyncStatus("synced");
-        showBanner("Dropbox connected. Pulling data...", "success");
-        return getDropboxToken(appKey).then((token) => dropboxDownload(token));
-      })
-      .then((remote) => {
-        if (!remote) return;
-        const localTs = parseInt(LS.get(storageKey("jv_last_synced"), "0") || "0", 10);
-        if ((remote._syncedAt || 0) > localTs) {
-          applySyncPayload(remote);
-          setState(initState);
-          LS.set(storageKey("jv_last_synced"), String(remote._syncedAt));
-          setLastSynced(remote._syncedAt);
-          showBanner("Data restored from Dropbox.", "success");
-        }
-        setSyncStatus("synced");
-      })
-      .catch((e) => {
-        console.warn("Dropbox OAuth callback failed:", e.message);
-        setSyncStatus("error");
-        const safeMsg = (e.message || "Unknown error").replace(/eyJ[\w.-]+/g, "[token]").slice(0, 80);
-        showBanner(`Dropbox connect failed: ${safeMsg}`, "alert");
-      });
-  }, []);
-
-  // ── Dropbox: pull on launch (if already connected) ──
-  useEffect(() => {
-    const appKey = getDropboxAppKey();
-    const hasRefresh = !!sessionStorage.getItem(DB_REFRESH_KEY);
-    if (!appKey || !hasRefresh) return;
-    if (!IS_DEV && !state.profile) return;
-    setSyncStatus("syncing");
-    getDropboxToken(appKey)
-      .then((token) => dropboxDownload(token))
-      .then((remote) => {
-        if (!remote) { setSyncStatus("idle"); return; }
-        const localTs = parseInt(LS.get(storageKey("jv_last_synced"), "0") || "0", 10);
-        if ((remote._syncedAt || 0) > localTs) {
-          applySyncPayload(remote);
-          setState(initState);
-          LS.set(storageKey("jv_last_synced"), String(remote._syncedAt));
-          setLastSynced(remote._syncedAt);
-          showBanner(IS_DEV ? "Dev copy synced from Dropbox." : "Data synced from Dropbox.", "success");
-        }
-        setSyncStatus("synced");
-      })
-      .catch((e) => {
-        console.warn("Dropbox pull failed:", e.message);
-        setSyncStatus("error");
-      });
-  }, [!!state.profile]);
-
-  // ── Dropbox: push on tab hide / window close (skipped in dev to protect real data) ──
+  // ── Syncthing: push on tab hide / window close ──
   // We keep a ref to the latest state so the push can flush it to localStorage
   // synchronously before building the payload — guaranteeing the last update is included.
   const latestStateRef = useRef(null);
   useEffect(() => { latestStateRef.current = state; }, [state]);
 
   useEffect(() => {
-    if (IS_DEV) return;
-    const push = () => {
-      const appKey = getDropboxAppKey();
-      const hasRefresh = !!sessionStorage.getItem(DB_REFRESH_KEY);
-      if (!appKey || !hasRefresh) return;
-      // Flush latest React state to localStorage synchronously before reading the payload
+    const push = async () => {
+      const handle = await SyncManager.getHandle().catch(() => null);
+      if (!handle) return; // no sync file configured — skip silently
       const s = latestStateRef.current;
-      if (s?.profile) {
-        const { geminiKey: _stripped, ...profileToSave } = s.profile;
-        LS.set(storageKey("jv_profile"), profileToSave);
-        LS.set(storageKey("jv_xp"), s.xp);
-        LS.set(storageKey("jv_streak"), s.streak);
-        LS.set(storageKey("jv_shields"), s.streakShields);
-        LS.set(storageKey("jv_last_login"), s.lastLoginDate);
-        LS.set(storageKey("jv_habits"), s.habits);
-        LS.set(storageKey("jv_habit_log"), s.habitLog);
-        LS.set(storageKey("jv_tasks"), s.tasks);
-        LS.set(storageKey("jv_goals"), s.goals);
-        LS.set(storageKey("jv_sessions"), s.sessions);
-        LS.set(storageKey("jv_achievements"), s.achievements);
-        LS.set(storageKey("jv_gacha"), s.gachaCollection);
-        LS.set(storageKey("jv_chat"), s.chatHistory);
-        LS.set(storageKey("jv_daily_goal"), s.dailyGoal);
-        LS.set(storageKey("jv_sleep_log"), s.sleepLog);
-        LS.set(storageKey("jv_screen_log"), s.screenTimeLog);
-        LS.set(storageKey("jv_missions"), s.dailyMissions);
-        LS.set(storageKey("jv_mission_date"), s.lastMissionDate);
-        LS.set(storageKey("jv_chronicles"), s.chronicles);
-        LS.set(storageKey("jv_token_usage"), s.tokenUsage);
-        if (s.dynamicCosts) LS.set(storageKey("jv_dynamic_costs"), s.dynamicCosts);
-        if (s.lastShieldUseDate != null) LS.set(storageKey("jv_last_shield_use_date"), s.lastShieldUseDate);
+      if (!s?.profile) return;
+      // Flush latest React state to localStorage synchronously before reading the payload
+      const { geminiKey: _stripped, ...profileToSave } = s.profile;
+      LS.set(storageKey("jv_profile"), profileToSave);
+      LS.set(storageKey("jv_xp"), s.xp);
+      LS.set(storageKey("jv_streak"), s.streak);
+      LS.set(storageKey("jv_shields"), s.streakShields);
+      LS.set(storageKey("jv_last_login"), s.lastLoginDate);
+      LS.set(storageKey("jv_habits"), s.habits);
+      LS.set(storageKey("jv_habit_log"), s.habitLog);
+      LS.set(storageKey("jv_tasks"), s.tasks);
+      LS.set(storageKey("jv_goals"), s.goals);
+      LS.set(storageKey("jv_sessions"), s.sessions);
+      LS.set(storageKey("jv_achievements"), s.achievements);
+      LS.set(storageKey("jv_gacha"), s.gachaCollection);
+      LS.set(storageKey("jv_chat"), s.chatHistory);
+      LS.set(storageKey("jv_daily_goal"), s.dailyGoal);
+      LS.set(storageKey("jv_sleep_log"), s.sleepLog);
+      LS.set(storageKey("jv_screen_log"), s.screenTimeLog);
+      LS.set(storageKey("jv_missions"), s.dailyMissions);
+      LS.set(storageKey("jv_mission_date"), s.lastMissionDate);
+      LS.set(storageKey("jv_chronicles"), s.chronicles);
+      LS.set(storageKey("jv_token_usage"), s.tokenUsage);
+      if (s.dynamicCosts) LS.set(storageKey("jv_dynamic_costs"), s.dynamicCosts);
+      if (s.lastShieldUseDate != null) LS.set(storageKey("jv_last_shield_use_date"), s.lastShieldUseDate);
+      try {
+        const ts = await SyncManager.push();
+        LS.set(storageKey("jv_last_synced"), String(ts));
+        setSyncStatus("synced");
+        setLastSynced(ts);
+      } catch (e) {
+        console.warn("Syncthing push on hide failed:", e.message);
       }
-      getDropboxToken(appKey)
-        .then((token) => dropboxUpload(token, buildSyncPayload()))
-        .then(() => {
-          const ts = Date.now();
-          LS.set(storageKey("jv_last_synced"), String(ts));
-          setSyncStatus("synced");
-        })
-        .catch((e) => { console.warn("Dropbox push failed:", e.message); });
     };
     const handleVisibility = () => { if (document.visibilityState === "hidden") push(); };
-    // pagehide fires reliably on mobile when a tab is killed/backgrounded (beforeunload does not).
-    // visibilitychange covers the desktop tab-switch / minimize case.
-    // We do NOT use beforeunload because browsers cancel in-flight async fetches during that event.
-    const handlePageHide = () => push();
+    const handlePageHide   = () => push();
     document.addEventListener("visibilitychange", handleVisibility);
     window.addEventListener("pagehide", handlePageHide);
     return () => {
@@ -1307,67 +1218,65 @@ export default function App() {
     };
   }, []);
 
-  // ── Manual sync ──
-  async function manualSync() {
-    const appKey = getDropboxAppKey();
-    if (!appKey) { showBanner("Set VITE_DROPBOX_APP_KEY in your environment.", "alert"); return; }
-    if (!sessionStorage.getItem(DB_REFRESH_KEY)) {
-      showBanner("Dropbox not connected. Click 'Connect Dropbox' in Settings.", "alert"); return;
-    }
+  // ── Manual push to Syncthing file ──
+  async function syncPush() {
     setSyncStatus("syncing");
     try {
-      const token = await getDropboxToken(appKey);
-      if (IS_DEV) {
-        const remote = await dropboxDownload(token);
-        if (remote) {
-          const localTs = parseInt(LS.get(storageKey("jv_last_synced"), "0") || "0", 10);
-          if ((remote._syncedAt || 0) > localTs) {
-            applySyncPayload(remote);
-            setState(initState);
-            LS.set(storageKey("jv_last_synced"), String(remote._syncedAt));
-            setLastSynced(remote._syncedAt);
-            showBanner("Dev copy refreshed from Dropbox. Real data not modified.", "success");
-          } else {
-            showBanner("Dev copy is already up to date.", "info");
-          }
-        } else {
-          showBanner("Nothing to pull — no sync file found on Dropbox yet.", "info");
-        }
-      } else {
-        await dropboxUpload(token, buildSyncPayload());
-        const ts = Date.now();
-        LS.set(storageKey("jv_last_synced"), String(ts));
-        setLastSynced(ts);
-        showBanner("Synced to Dropbox.", "success");
-      }
+      const ts = await SyncManager.push();
+      LS.set(storageKey("jv_last_synced"), String(ts));
+      setLastSynced(ts);
       setSyncStatus("synced");
+      showBanner("Pushed to Syncthing file.", "success");
     } catch (e) {
       setSyncStatus("error");
-      const safeMsg = (e.message || "Unknown error").replace(/eyJ[\w.-]+/g, "[token]").slice(0, 80);
-      showBanner(`Sync failed: ${safeMsg}`, "alert");
+      if (e.message === "NO_HANDLE") {
+        showBanner("No sync file selected. Pick one in Profile → Settings.", "alert");
+      } else if (e.message === "PERMISSION_DENIED") {
+        showBanner("Write permission denied. Try again and allow access.", "alert");
+      } else {
+        showBanner(`Push failed: ${(e.message || "").slice(0, 80)}`, "alert");
+      }
     }
   }
 
-  // ── Disconnect Dropbox ──
-  async function disconnectDropbox() {
-    if (!window.confirm("Disconnect Dropbox? Your local data is safe.")) return;
-    // Best-effort token revocation — revoke at Dropbox before clearing local state so the
-    // token cannot be reused even if extracted from sessionStorage before this point.
+  // ── Manual pull from Syncthing file ──
+  async function syncPull() {
+    setSyncStatus("syncing");
     try {
-      const token = sessionStorage.getItem(DB_TOKEN_KEY);
-      if (token) {
-        await fetch("https://api.dropboxapi.com/2/auth/token/revoke", {
-          method: "POST",
-          headers: { Authorization: `Bearer ${token}` },
-        });
+      const ts = await SyncManager.pull();
+      setState(initState);
+      LS.set(storageKey("jv_last_synced"), String(ts));
+      setLastSynced(ts);
+      setSyncStatus("synced");
+      showBanner("Pulled data from Syncthing file.", "success");
+    } catch (e) {
+      setSyncStatus("error");
+      if (e.message === "NO_HANDLE") {
+        showBanner("No sync file selected. Pick one in Profile → Settings.", "alert");
+      } else {
+        showBanner(`Pull failed: ${(e.message || "").slice(0, 80)}`, "alert");
       }
-    } catch { /* ignore — network failure; user can revoke manually in Dropbox Settings */ }
-    [DB_TOKEN_KEY, DB_REFRESH_KEY, DB_EXPIRES_KEY].forEach(k => {
-      sessionStorage.removeItem(k);
-    });
-    setState((s) => ({ ...s, dropboxConnected: false }));
+    }
+  }
+
+  // ── Pick / change sync file ──
+  async function pickSyncFile() {
+    try {
+      await SyncManager.pickFile();
+      setSyncFileConnected(true);
+      showBanner("Sync file linked. Push or Pull to sync.", "success");
+    } catch (e) {
+      if (e.name !== "AbortError") showBanner("Could not pick file.", "alert");
+    }
+  }
+
+  // ── Forget sync file ──
+  async function forgetSyncFile() {
+    if (!window.confirm("Unlink sync file? Your local data is safe.")) return;
+    await SyncManager.forget();
+    setSyncFileConnected(false);
     setSyncStatus("idle");
-    showBanner("Dropbox disconnected.", "success");
+    showBanner("Sync file unlinked.", "success");
   }
 
   // ── Daily login check ──
@@ -1829,7 +1738,7 @@ export default function App() {
     );
   }
 
-  if (!getGeminiApiKey() || !getDropboxAppKey()) {
+  if (!getGeminiApiKey()) {
     return <KeysConfigGate />;
   }
 
@@ -1837,11 +1746,10 @@ export default function App() {
     return (
       <Onboarding
         onComplete={(profile) => {
-          const { geminiKey: _g, dropboxAppKey: _d, ...profileWithoutKey } = profile;
+          const { geminiKey: _g, ...profileWithoutKey } = profile;
           setState((s) => ({ ...s, profile: profileWithoutKey }));
           LS.set(storageKey("jv_profile"), profileWithoutKey);
           setShowOnboarding(false);
-          startDropboxOAuth(getDropboxAppKey());
         }}
       />
     );
@@ -1856,17 +1764,17 @@ export default function App() {
       {/* Banner */}
       {banner && <Banner banner={banner} onClose={() => setBanner(null)} />}
 
-      {/* Dev mode: local copy — no writes to Dropbox */}
+      {/* Dev mode indicator */}
       {IS_DEV && (
         <div style={{ background: "#2a2a0a", color: "#b8b830", fontSize: "10px", letterSpacing: "1px", padding: "4px 12px", textAlign: "center", borderBottom: "1px solid #444" }}>
-          DEV MODE — using local copy; Dropbox will not be updated
+          DEV MODE — separate localStorage (ritmof_dev_*) · link a test copy of ritmof-data.json
         </div>
       )}
 
       {/* Top bar */}
       <TopBar xp={state.xp} xpPerLevel={xpPerLevel} level={level} rank={rank} streak={state.streak} profile={profile}
         syncStatus={syncStatus} lastSynced={lastSynced}
-        onSync={manualSync} hasDropbox={dropboxConnected} />
+        onPush={syncPush} onPull={syncPull} syncFileConnected={syncFileConnected} />
 
       {/* Main content */}
       <div style={{ flex: 1, overflowY: "auto", overflowX: "hidden", paddingBottom: "70px", paddingTop: "56px" }}>
@@ -1910,9 +1818,10 @@ export default function App() {
             unlockAchievement={unlockAchievement}
             executeCommands={executeCommands}
             apiKey={apiKey} buildSystemPrompt={buildSystemPrompt}
-            syncStatus={syncStatus} lastSynced={lastSynced} onSync={manualSync}
-            dropboxConnected={dropboxConnected} dropboxAppKey={dropboxAppKey}
-            onDisconnectDropbox={disconnectDropbox}
+            syncStatus={syncStatus} lastSynced={lastSynced}
+            syncFileConnected={syncFileConnected}
+            onPush={syncPush} onPull={syncPull}
+            onPickSyncFile={pickSyncFile} onForgetSyncFile={forgetSyncFile}
             theme={theme} setTheme={setTheme}
             trackTokens={trackTokens}
           />
@@ -2055,6 +1964,14 @@ function Onboarding({ onComplete }) {
       isCalendarStep: true,
       optional: true,
     },
+    {
+      title: "SYNC SETUP",
+      subtitle: "Link a Syncthing-watched file so your data syncs across devices. You can skip this and do it later in Settings.",
+      field: "_syncStep", label: "", placeholder: "", type: "_syncStep",
+      style: "ascii",
+      isSyncStep: true,
+      optional: true,
+    },
   ];
 
   const current = steps[step];
@@ -2117,25 +2034,32 @@ function Onboarding({ onComplete }) {
         {/* Google Calendar guide */}
         {current.isCalendarStep && <GoogleCalendarGuide />}
 
-        <label style={{ fontSize: "10px", color: "#aaa", letterSpacing: "2px", display: "block", marginBottom: "6px", marginTop: current.isCalendarStep ? "16px" : "0" }}>
-          {current.label} {current.optional && <span style={{ color: "#444" }}>— OPTIONAL</span>}
-        </label>
-        {current.type === "textarea" ? (
-          <textarea
-            value={form[current.field]}
-            onChange={(e) => setForm((f) => ({ ...f, [current.field]: e.target.value }))}
-            placeholder={current.placeholder}
-            rows={3}
-            style={inputStyle(s)}
-          />
+        {/* Syncthing sync step */}
+        {current.isSyncStep ? (
+          <SyncOnboardingStep />
         ) : (
-          <input
-            type={current.type}
-            value={form[current.field]}
-            onChange={(e) => setForm((f) => ({ ...f, [current.field]: e.target.value }))}
-            placeholder={current.placeholder}
-            style={inputStyle(s)}
-          />
+          <>
+            <label style={{ fontSize: "10px", color: "#aaa", letterSpacing: "2px", display: "block", marginBottom: "6px", marginTop: current.isCalendarStep ? "16px" : "0" }}>
+              {current.label} {current.optional && !current.isSyncStep && <span style={{ color: "#444" }}>— OPTIONAL</span>}
+            </label>
+            {current.type === "textarea" ? (
+              <textarea
+                value={form[current.field]}
+                onChange={(e) => setForm((f) => ({ ...f, [current.field]: e.target.value }))}
+                placeholder={current.placeholder}
+                rows={3}
+                style={inputStyle(s)}
+              />
+            ) : (
+              <input
+                type={current.type}
+                value={form[current.field]}
+                onChange={(e) => setForm((f) => ({ ...f, [current.field]: e.target.value }))}
+                placeholder={current.placeholder}
+                style={inputStyle(s)}
+              />
+            )}
+          </>
         )}
 
         {error && <div style={{ color: "#ccc", fontSize: "11px", marginTop: "8px" }}>⚠ {error}</div>}
@@ -2151,6 +2075,52 @@ function Onboarding({ onComplete }) {
     </div>
   );
 
+}
+
+function SyncOnboardingStep() {
+  const [linked, setLinked] = useState(false);
+  const [error, setError] = useState("");
+
+  async function handlePick() {
+    setError("");
+    try {
+      await SyncManager.pickFile();
+      setLinked(true);
+    } catch (e) {
+      if (e.name !== "AbortError") setError("Could not link file. Try again.");
+    }
+  }
+
+  if (!FSAPI_SUPPORTED) {
+    return (
+      <div style={{ fontSize: "11px", color: "#666", lineHeight: "1.8", padding: "8px", border: "1px dashed #333" }}>
+        ⚠ Your browser doesn't support direct file access.<br />
+        Use <strong>Profile → Settings → Download / Import</strong> to sync manually after setup.
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+      <SyncthingSetupGuide />
+      {linked ? (
+        <div style={{ padding: "10px", border: "1px solid #aaa", fontFamily: "'Share Tech Mono', monospace", fontSize: "11px", color: "#aaa" }}>
+          ✓ SYNC FILE LINKED — you can Push/Pull from Profile → Settings.
+        </div>
+      ) : (
+        <button onClick={handlePick} style={{
+          padding: "12px", border: "2px solid #fff", background: "#fff", color: "#000",
+          fontFamily: "'Share Tech Mono', monospace", fontSize: "11px", letterSpacing: "2px", cursor: "pointer",
+        }}>
+          LINK SYNCTHING FILE →
+        </button>
+      )}
+      {error && <div style={{ color: "#888", fontSize: "10px" }}>⚠ {error}</div>}
+      <div style={{ fontSize: "10px", color: "#444" }}>
+        — OPTIONAL — You can do this later in Profile → Settings.
+      </div>
+    </div>
+  );
 }
 
 function inputStyle(s) {
@@ -2242,7 +2212,7 @@ function GoogleCalendarGuide() {
   );
 }
 
-function DropboxSetupGuide() {
+function SyncthingSetupGuide() {
   const [open, setOpen] = useState(false);
   return (
     <div style={{ marginBottom: "12px", border: "1px solid #333", fontFamily: "'Share Tech Mono', monospace" }}>
@@ -2251,33 +2221,29 @@ function DropboxSetupGuide() {
         color: "#888", fontFamily: "'Share Tech Mono', monospace", fontSize: "10px",
         letterSpacing: "1px", display: "flex", justifyContent: "space-between", cursor: "pointer",
       }}>
-        <span>▸ HOW TO SET UP DROPBOX SYNC</span>
+        <span>▸ HOW TO SET UP SYNCTHING SYNC</span>
         <span>{open ? "▲" : "▼"}</span>
       </button>
       {open && (
         <div style={{ padding: "12px", borderTop: "1px solid #222", fontSize: "11px", color: "#666", lineHeight: "2" }}>
-          <div style={{ color: "#aaa", marginBottom: "8px" }}>One-time setup. Free Dropbox account required.</div>
-          <div style={{ color: "#888", fontWeight: "bold", marginBottom: "4px" }}>STEP 1 — Create a Dropbox App</div>
-          <div>1. Go to <span style={{ color: "#ccc" }}>dropbox.com/developers/apps</span></div>
-          <div>2. Click <span style={{ color: "#ccc" }}>Create app</span></div>
-          <div>3. Choose: <span style={{ color: "#ccc" }}>Scoped access → App folder</span></div>
-          <div>4. Name it anything (e.g. <span style={{ color: "#ccc" }}>ritmof-sync</span>) → Create app</div>
-          <div style={{ color: "#888", fontWeight: "bold", marginTop: "10px", marginBottom: "4px" }}>STEP 2 — Set Permissions</div>
-          <div>5. Go to the <span style={{ color: "#ccc" }}>Permissions</span> tab</div>
-          <div>6. Enable: <span style={{ color: "#ccc" }}>files.content.write</span> and <span style={{ color: "#ccc" }}>files.content.read</span></div>
-          <div>7. Click <span style={{ color: "#ccc" }}>Submit</span></div>
-          <div style={{ color: "#888", fontWeight: "bold", marginTop: "10px", marginBottom: "4px" }}>STEP 3 — Add Redirect URI</div>
-          <div>8. Go back to the <span style={{ color: "#ccc" }}>Settings</span> tab</div>
-          <div>9. Under <span style={{ color: "#ccc" }}>OAuth 2 → Redirect URIs</span>, add your app URL:</div>
-          <div style={{ color: "#ccc", paddingLeft: "12px" }}>https://username.github.io/repo-name/</div>
-          <div style={{ color: "#555", fontSize: "10px", paddingLeft: "12px" }}>(also add http://localhost:5173 for local dev)</div>
-          <div>10. Click <span style={{ color: "#ccc" }}>Add</span></div>
-          <div style={{ color: "#888", fontWeight: "bold", marginTop: "10px", marginBottom: "4px" }}>STEP 4 — Get Your App Key</div>
-          <div>11. On the Settings tab, find <span style={{ color: "#ccc" }}>App key</span></div>
-          <div>12. Copy it and paste it below → click <span style={{ color: "#ccc" }}>CONNECT DROPBOX</span></div>
-          <div>13. Authorize RITMOF in the Dropbox popup</div>
+          <div style={{ color: "#aaa", marginBottom: "8px" }}>One-time setup per device. No account needed. Free forever.</div>
+          <div style={{ color: "#888", fontWeight: "bold", marginBottom: "4px" }}>STEP 1 — Install Syncthing</div>
+          <div>1. Download from <span style={{ color: "#ccc" }}>syncthing.net</span> and install on all devices.</div>
+          <div>2. Open the Syncthing UI (usually <span style={{ color: "#ccc" }}>localhost:8384</span>).</div>
+          <div style={{ color: "#888", fontWeight: "bold", marginTop: "10px", marginBottom: "4px" }}>STEP 2 — Create a shared folder</div>
+          <div>3. Click <span style={{ color: "#ccc" }}>Add Folder</span>.</div>
+          <div>4. Set a folder path on your machine, e.g. <span style={{ color: "#ccc" }}>~/ritmof-sync/</span></div>
+          <div>5. Share the folder with your other devices in Syncthing.</div>
+          <div style={{ color: "#888", fontWeight: "bold", marginTop: "10px", marginBottom: "4px" }}>STEP 3 — Link the file in RITMOF</div>
+          <div>6. Come back here and click <span style={{ color: "#ccc" }}>LINK SYNCTHING FILE</span>.</div>
+          <div>7. Navigate to your Syncthing folder and pick <span style={{ color: "#ccc" }}>ritmof-data.json</span>.</div>
+          <div style={{ color: "#555", fontSize: "10px" }}>&nbsp;&nbsp;&nbsp;(If the file doesn't exist yet, Push first — it will be created.)</div>
+          <div style={{ color: "#888", fontWeight: "bold", marginTop: "10px", marginBottom: "4px" }}>STEP 4 — Sync between devices</div>
+          <div>8. On Device A: click <span style={{ color: "#ccc" }}>PUSH ↑</span> to write data to the file.</div>
+          <div>9. Syncthing propagates the file to Device B automatically.</div>
+          <div>10. On Device B: click <span style={{ color: "#ccc" }}>PULL ↓</span> to load the latest data.</div>
           <div style={{ marginTop: "10px", padding: "8px", border: "1px dashed #333", color: "#555", fontSize: "10px" }}>
-            ✓ This uses PKCE OAuth — no client secret, no expiring tokens. Works permanently across all your devices.
+            ✓ No OAuth. No cloud account. No API keys. Your data never leaves your devices.
           </div>
         </div>
       )}
@@ -2288,11 +2254,10 @@ function DropboxSetupGuide() {
 // ═══════════════════════════════════════════════════════════════
 // TOP BAR
 // ═══════════════════════════════════════════════════════════════
-function TopBar({ xp, xpPerLevel, level, rank, streak, profile, syncStatus, lastSynced, onSync, hasDropbox }) {
+function TopBar({ xp, xpPerLevel, level, rank, streak, profile, syncStatus, lastSynced, onPush, onPull, syncFileConnected }) {
   const progress = getLevelProgress(xp, xpPerLevel);
   const pct = (progress / xpPerLevel) * 100;
 
-  const syncIcon = syncStatus === "syncing" ? "↻" : syncStatus === "error" ? "⚠" : syncStatus === "synced" ? "✓" : "⇅";
   const syncColor = syncStatus === "error" ? "#888" : syncStatus === "synced" ? "#aaa" : "#555";
   const syncTitle = lastSynced ? `Last synced: ${new Date(lastSynced).toLocaleTimeString()}` : "Not synced yet";
 
@@ -2322,20 +2287,33 @@ function TopBar({ xp, xpPerLevel, level, rank, streak, profile, syncStatus, last
         </div>
       </div>
 
-      <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-        {hasDropbox && (
-          <button
-            onClick={onSync}
-            title={syncTitle}
-            style={{
-              fontFamily: "'Share Tech Mono', monospace", fontSize: "13px",
-              color: syncColor, background: "none", border: "none", padding: "2px 4px",
-              animation: syncStatus === "syncing" ? "spin 1s linear infinite" : "none",
-              cursor: "pointer",
-            }}
-          >
-            {syncIcon}
-          </button>
+      <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+        {syncFileConnected && (
+          <>
+            <button
+              onClick={onPull}
+              title={`Pull from Syncthing file · ${syncTitle}`}
+              style={{
+                fontFamily: "'Share Tech Mono', monospace", fontSize: "12px",
+                color: syncColor, background: "none", border: "none", padding: "2px 4px",
+                cursor: "pointer",
+              }}
+            >
+              ↓
+            </button>
+            <button
+              onClick={onPush}
+              title={`Push to Syncthing file · ${syncTitle}`}
+              style={{
+                fontFamily: "'Share Tech Mono', monospace", fontSize: "12px",
+                color: syncStatus === "syncing" ? "#aaa" : syncColor, background: "none", border: "none", padding: "2px 4px",
+                animation: syncStatus === "syncing" ? "spin 1s linear infinite" : "none",
+                cursor: "pointer",
+              }}
+            >
+              {syncStatus === "syncing" ? "↻" : "↑"}
+            </button>
+          </>
         )}
         <div style={{
           fontFamily: "'Share Tech Mono', monospace", fontSize: "11px",
@@ -3283,7 +3261,7 @@ function ChatMessage({ msg }) {
 // ═══════════════════════════════════════════════════════════════
 // PROFILE TAB
 // ═══════════════════════════════════════════════════════════════
-function ProfileTab({ state, setState, profile, level, rank, xpPerLevel, awardXP, showBanner, showToast, unlockAchievement, executeCommands, apiKey, buildSystemPrompt, syncStatus, lastSynced, onSync, dropboxConnected, dropboxAppKey, onDisconnectDropbox, theme, setTheme, streakShieldCost, gachaCost, trackTokens }) {
+function ProfileTab({ state, setState, profile, level, rank, xpPerLevel, awardXP, showBanner, showToast, unlockAchievement, executeCommands, apiKey, buildSystemPrompt, syncStatus, lastSynced, syncFileConnected, onPush, onPull, onPickSyncFile, onForgetSyncFile, theme, setTheme, streakShieldCost, gachaCost, trackTokens }) {
   const [section, setSection] = useState("overview");
   const [showGacha, setShowGacha] = useState(false);
 
@@ -3333,7 +3311,7 @@ function ProfileTab({ state, setState, profile, level, rank, xpPerLevel, awardXP
       {section === "achievements" && <AchievementsSection state={state} />}
       {section === "calendar" && <CalendarSection state={state} setState={setState} profile={profile} apiKey={apiKey} buildSystemPrompt={buildSystemPrompt} showBanner={showBanner} executeCommands={executeCommands} />}
       {section === "gacha" && <GachaSection state={state} setState={setState} profile={profile} apiKey={apiKey} gachaCost={gachaCost} showBanner={showBanner} showToast={showToast} trackTokens={trackTokens} />}
-      {section === "settings" && <SettingsSection profile={profile} setState={setState} showBanner={showBanner} syncStatus={syncStatus} lastSynced={lastSynced} onSync={onSync} dropboxConnected={dropboxConnected} dropboxAppKey={dropboxAppKey} onDisconnectDropbox={onDisconnectDropbox} theme={theme} setTheme={setTheme} />}
+      {section === "settings" && <SettingsSection profile={profile} setState={setState} showBanner={showBanner} syncStatus={syncStatus} lastSynced={lastSynced} syncFileConnected={syncFileConnected} onPush={onPush} onPull={onPull} onPickSyncFile={onPickSyncFile} onForgetSyncFile={onForgetSyncFile} theme={theme} setTheme={setTheme} />}
     </div>
   );
 }
@@ -3784,16 +3762,13 @@ function GachaCard({ card, compact }) {
   );
 }
 
-function SettingsSection({ profile, setState, showBanner, syncStatus, lastSynced, onSync, dropboxConnected, dropboxAppKey, onDisconnectDropbox, theme, setTheme }) {
+function SettingsSection({ profile, setState, showBanner, syncStatus, lastSynced, syncFileConnected, onPush, onPull, onPickSyncFile, onForgetSyncFile, theme, setTheme }) {
   const [gcalId, setGcalId] = useState(profile?.googleClientId || "");
+  const importRef = useRef(null);
 
   function save() {
     setState((s) => ({ ...s, profile: { ...s.profile, googleClientId: gcalId } }));
     showBanner("Settings saved.", "success");
-  }
-
-  function connectDropbox() {
-    startDropboxOAuth(dropboxAppKey);
   }
 
   function resetAll() {
@@ -3803,9 +3778,27 @@ function SettingsSection({ profile, setState, showBanner, syncStatus, lastSynced
     }
   }
 
-  const syncLabel = syncStatus === "syncing" ? "SYNCING..." :
-    syncStatus === "synced" && lastSynced ? `SYNCED ${new Date(lastSynced).toLocaleTimeString()}` :
-    syncStatus === "error" ? "⚠ SYNC ERROR" : "SYNC NOW";
+  async function handleImportFile(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const ts = await SyncManager.importFile(file);
+      window.location.reload(); // reload so all state rehydrates from new localStorage
+    } catch {
+      showBanner("Import failed. File may be corrupt.", "alert");
+    }
+    e.target.value = "";
+  }
+
+  const lastSyncedLabel = lastSynced
+    ? new Date(lastSynced).toLocaleString()
+    : "Never";
+
+  const syncStatusLabel =
+    syncStatus === "syncing" ? "SYNCING..." :
+    syncStatus === "error"   ? "⚠ SYNC ERROR" :
+    syncStatus === "synced"  ? `✓ ${lastSyncedLabel}` :
+                               lastSynced ? lastSyncedLabel : "Not synced yet";
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "12px", fontFamily: "'Share Tech Mono', monospace" }}>
@@ -3840,7 +3833,7 @@ function SettingsSection({ profile, setState, showBanner, syncStatus, lastSynced
       <div style={{ height: "1px", background: "var(--border)", margin: "8px 0" }} />
       <div style={{ fontSize: "9px", color: "var(--muted)", letterSpacing: "2px" }}>API CONFIGURATION</div>
       <div style={{ fontSize: "10px", color: "#555", marginBottom: "8px" }}>
-        Gemini API key and Dropbox App Key are set via environment variables (<code>VITE_GEMINI_API_KEY</code>, <code>VITE_DROPBOX_APP_KEY</code>). See .env.example and README.
+        Gemini API key is set via environment variable (<code>VITE_GEMINI_API_KEY</code>). See .env.example and README.
       </div>
       <GoogleCalendarGuide />
       <label style={{ fontSize: "10px", color: "#666" }}>GOOGLE CLIENT ID (optional, for Calendar)</label>
@@ -3854,34 +3847,79 @@ function SettingsSection({ profile, setState, showBanner, syncStatus, lastSynced
       </button>
 
       <div style={{ height: "1px", background: "#1a1a1a", margin: "4px 0" }} />
-      <div style={{ fontSize: "9px", color: "#444", letterSpacing: "2px" }}>DROPBOX SYNC</div>
-      <DropboxSetupGuide />
 
-      {!dropboxConnected ? (
-        <>
-          <button onClick={connectDropbox} style={{
-            padding: "10px", border: "2px solid #fff", background: "#fff", color: "#000",
-            fontFamily: "'Share Tech Mono', monospace", fontSize: "11px", letterSpacing: "2px",
-            cursor: "pointer",
+      {/* ── SYNCTHING SYNC ── */}
+      <div style={{ fontSize: "9px", color: "#444", letterSpacing: "2px" }}>SYNCTHING SYNC</div>
+      <SyncthingSetupGuide />
+
+      <div style={{ fontSize: "10px", color: "#555", lineHeight: "1.8" }}>
+        Last synced: <span style={{ color: syncStatus === "error" ? "#888" : "#aaa" }}>{syncStatusLabel}</span>
+      </div>
+
+      {!FSAPI_SUPPORTED ? (
+        /* Fallback: browsers without File System Access API */
+        <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+          <div style={{ fontSize: "10px", color: "#555", border: "1px dashed #333", padding: "8px", lineHeight: "1.7" }}>
+            ⚠ Your browser does not support direct file access. Use Download + Import below.<br />
+            Place the downloaded file in your Syncthing folder manually.
+          </div>
+          <button onClick={() => SyncManager.download()} style={{
+            padding: "10px", border: "1px solid #555", background: "transparent",
+            color: "#aaa", fontFamily: "'Share Tech Mono', monospace", fontSize: "11px", cursor: "pointer",
           }}>
-            CONNECT DROPBOX →
+            DOWNLOAD DATA FILE ↓
           </button>
-        </>
+          <input ref={importRef} type="file" accept=".json" onChange={handleImportFile} style={{ display: "none" }} />
+          <button onClick={() => importRef.current?.click()} style={{
+            padding: "10px", border: "1px solid #444", background: "transparent",
+            color: "#888", fontFamily: "'Share Tech Mono', monospace", fontSize: "11px", cursor: "pointer",
+          }}>
+            IMPORT DATA FILE ↑
+          </button>
+        </div>
+      ) : !syncFileConnected ? (
+        /* No file linked yet */
+        <button onClick={onPickSyncFile} style={{
+          padding: "12px", border: "2px solid #fff", background: "#fff", color: "#000",
+          fontFamily: "'Share Tech Mono', monospace", fontSize: "11px", letterSpacing: "2px", cursor: "pointer",
+        }}>
+          LINK SYNCTHING FILE →
+        </button>
       ) : (
-        <div style={{ border: "1px solid #333", padding: "12px" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
-            <span style={{ fontSize: "11px", color: "#aaa" }}>✓ DROPBOX CONNECTED</span>
-            <button onClick={onDisconnectDropbox} style={{
+        /* File linked — push / pull controls */
+        <div style={{ border: "1px solid #333", padding: "12px", display: "flex", flexDirection: "column", gap: "8px" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <span style={{ fontSize: "11px", color: "#aaa" }}>✓ SYNC FILE LINKED</span>
+            <button onClick={onForgetSyncFile} style={{
               background: "none", border: "1px solid #333", color: "#555",
               fontFamily: "'Share Tech Mono', monospace", fontSize: "9px", padding: "2px 8px", cursor: "pointer",
-            }}>DISCONNECT</button>
+            }}>UNLINK</button>
           </div>
-          <button onClick={onSync} style={{
-            width: "100%", padding: "8px", border: "1px solid #444",
-            background: "transparent", color: syncStatus === "error" ? "#888" : "#666",
-            fontFamily: "'Share Tech Mono', monospace", fontSize: "10px", letterSpacing: "1px", cursor: "pointer",
+          <div style={{ display: "flex", gap: "8px" }}>
+            <button onClick={onPush} style={{
+              flex: 1, padding: "10px", border: "1px solid #555",
+              background: "transparent", color: "#ccc",
+              fontFamily: "'Share Tech Mono', monospace", fontSize: "11px", cursor: "pointer",
+            }}>
+              PUSH ↑
+            </button>
+            <button onClick={onPull} style={{
+              flex: 1, padding: "10px", border: "1px solid #444",
+              background: "transparent", color: "#888",
+              fontFamily: "'Share Tech Mono', monospace", fontSize: "11px", cursor: "pointer",
+            }}>
+              PULL ↓
+            </button>
+          </div>
+          <div style={{ fontSize: "10px", color: "#444", lineHeight: "1.6" }}>
+            PUSH overwrites the Syncthing file with local data.<br />
+            PULL loads the Syncthing file into local data.
+          </div>
+          <button onClick={onPickSyncFile} style={{
+            padding: "6px", border: "1px solid #222", background: "transparent",
+            color: "#444", fontFamily: "'Share Tech Mono', monospace", fontSize: "9px", cursor: "pointer",
           }}>
-            {syncLabel}
+            CHANGE FILE
           </button>
         </div>
       )}
@@ -3893,9 +3931,9 @@ function SettingsSection({ profile, setState, showBanner, syncStatus, lastSynced
         <div style={{ fontSize: "11px", color: "#555", lineHeight: "1.8" }}>
           1. Push this repo to GitHub<br />
           2. Enable GitHub Pages (Settings → Pages → Source: GitHub Actions)<br />
-          3. Deploy — done. No server needed.<br />
-          4. Add your GitHub Pages URL as redirect URI in your Dropbox app.<br />
-          5. Connect Dropbox above — stays connected permanently.
+          3. Add GitHub repo Variables: VITE_ALLOWED_EMAIL, VITE_GOOGLE_CLIENT_ID, VITE_GEMINI_API_KEY<br />
+          4. Deploy — done. No server needed.<br />
+          5. On each device: link your Syncthing folder file above.
         </div>
       </div>
 
@@ -4213,13 +4251,14 @@ function GeometricCorners({ style, small }) {
 // not at module parse time (which would throw in SSR or test environments).
 // ═══════════════════════════════════════════════════════════════
 const GLOBAL_CSS = `
-  @keyframes slideDown { from { transform: translateY(-20px); } to { transform: translateY(0); } }
-  @keyframes slideUp   { from { transform: translateY(20px);  } to { transform: translateY(0); } }
+  /* ── Animations ───────────────────────────────────────────── */
+  @keyframes slideDown { from { transform: translateY(-20px); opacity:0; } to { transform: translateY(0); opacity:1; } }
+  @keyframes slideUp   { from { transform: translateY(20px);  opacity:0; } to { transform: translateY(0); opacity:1; } }
   @keyframes fadeIn    { from { opacity: 0; } to { opacity: 1; } }
   @keyframes pulse     { 0%, 100% { opacity: 0.5; } 50% { opacity: 1; } }
   @keyframes spin      { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 
-  /* Kill all motion on e-ink / reduced-motion preference */
+  /* ── E-ink / reduced-motion: kill all animation & transition ─ */
   @media (prefers-reduced-motion: reduce), (update: slow) {
     *, *::before, *::after {
       animation-duration: 0.001ms !important;
@@ -4229,22 +4268,105 @@ const GLOBAL_CSS = `
     }
   }
 
-  /* E-ink: remove gradients, shadows, transparency */
+  /* ── E-ink: strip gradients, shadows, opacity layers ─────── */
   @media (update: slow) {
-    * { background-image: none !important; box-shadow: none !important; text-shadow: none !important; }
+    * {
+      background-image: none !important;
+      box-shadow: none !important;
+      text-shadow: none !important;
+      opacity: 1 !important;
+    }
+    /* Force solid borders so decorative chars survive ghosting */
+    [data-eink-border] { border: 2px solid #000 !important; }
   }
 
-  input[type=range] { -webkit-appearance: none; height: 2px; background: #333; outline: none; }
-  input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 16px; height: 16px; background: #fff; cursor: pointer; border: 2px solid #000; }
-  input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(1); }
+  /* ── Base reset ──────────────────────────────────────────── */
+  *, *::before, *::after { box-sizing: border-box; }
+
+  html, body, #root {
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;           /* root handles its own scroll */
+    background: #0a0a0a;
+    color: #e8e8e8;
+  }
+
+  /* ── Mobile: prevent text-size bump on rotation ─────────── */
+  html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+
+  /* ── iOS PWA: respect notch/home-bar safe areas ─────────── */
+  body {
+    padding-top:    env(safe-area-inset-top,    0px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+    padding-left:   env(safe-area-inset-left,   0px);
+    padding-right:  env(safe-area-inset-right,  0px);
+  }
+
+  /* ── Touch: no 300ms tap delay, no highlight flash ─────── */
+  * {
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+  }
+
+  /* ── Scrollbars: thin, dark ─────────────────────────────── */
+  ::-webkit-scrollbar { width: 3px; height: 3px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #333; border-radius: 0; }
+  * { scrollbar-width: thin; scrollbar-color: #333 transparent; }
+
+  /* ── Inputs ─────────────────────────────────────────────── */
+  input, textarea, select {
+    /* prevent iOS Safari zoom on focus (font-size must be ≥16px or use this) */
+    font-size: max(16px, 1em);
+    border-radius: 0;
+  }
+  input[type=range] { -webkit-appearance: none; height: 2px; background: #333; outline: none; width: 100%; }
+  input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 24px; height: 24px; background: #fff; cursor: pointer; border: 2px solid #000; }
+  input[type=range]::-moz-range-thumb     { width: 24px; height: 24px; background: #fff; cursor: pointer; border: 2px solid #000; border-radius: 0; }
+  input[type="date"]::-webkit-calendar-picker-indicator,
   input[type="datetime-local"]::-webkit-calendar-picker-indicator { filter: invert(1); }
   select option { background: #111; }
-  * { -webkit-tap-highlight-color: transparent; }
-  button { min-height: 40px; }
+
+  /* ── Buttons: large enough touch targets ────────────────── */
+  button {
+    min-height: 44px;           /* Apple HIG minimum */
+    min-width:  44px;
+    cursor: pointer;
+    border-radius: 0;
+  }
+
+  /* ── Focus: visible ring for keyboard/e-ink nav ─────────── */
+  :focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+  :focus:not(:focus-visible) { outline: none; }
+
+  /* ── Prevent content overflow on narrow screens ─────────── */
+  img, video, canvas, svg { max-width: 100%; }
+  pre { overflow-x: auto; }
 `;
+
+// Injects/updates <meta> tags that must be present for correct mobile/PWA behaviour.
+// Called once at mount so it works even when index.html is minimal.
+function ensureHeadMeta() {
+  function setMeta(name, content, attr = "name") {
+    let el = document.querySelector(`meta[${attr}="${name}"]`);
+    if (!el) { el = document.createElement("meta"); el.setAttribute(attr, name); document.head.appendChild(el); }
+    el.setAttribute("content", content);
+  }
+  // Correct viewport: no user-scalable so the layout isn't broken, but allow pinch-zoom
+  setMeta("viewport", "width=device-width, initial-scale=1, viewport-fit=cover");
+  // PWA standalone display
+  setMeta("mobile-web-app-capable", "yes");
+  setMeta("apple-mobile-web-app-capable", "yes");
+  setMeta("apple-mobile-web-app-status-bar-style", "black-translucent");
+  // Theme colour (dark default; updated dynamically when theme changes)
+  setMeta("theme-color", "#0a0a0a");
+}
 
 function GlobalStyles() {
   useEffect(() => {
+    ensureHeadMeta();
     const styleEl = document.createElement("style");
     styleEl.setAttribute("data-ritmof", "global");
     styleEl.textContent = GLOBAL_CSS;
