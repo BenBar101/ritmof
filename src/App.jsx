@@ -383,15 +383,6 @@ export default function App() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [profile, state.habitLog, state.streak]);
 
-  // ── Storage quota warning ──
-  useEffect(() => {
-    const handleQuota = () => {
-      showBanner("SYSTEM ALERT: Storage full! Browser limits reached (~5MB). Data will not be saved. Please manually clear/prune old chat history or sessions.", "alert");
-    };
-    window.addEventListener("ls-quota-exceeded", handleQuota);
-    return () => window.removeEventListener("ls-quota-exceeded", handleQuota);
-  }, [showBanner]);
-
   // ── Daily login handler ──
   function handleDailyLogin(t) {
     setState((s) => {
@@ -569,6 +560,15 @@ export default function App() {
     setBanner({ text, type });
     bannerTimer.current = setTimeout(() => setBanner(null), 4000);
   }, []);
+
+  // ── Storage quota warning ──
+  useEffect(() => {
+    const handleQuota = () => {
+      showBanner("SYSTEM ALERT: Storage full! Browser limits reached (~5MB). Data will not be saved. Please manually clear/prune old chat history or sessions.", "alert");
+    };
+    window.addEventListener("ls-quota-exceeded", handleQuota);
+    return () => window.removeEventListener("ls-quota-exceeded", handleQuota);
+  }, [showBanner]);
 
   // ── Achievement unlock ──
   function unlockAchievement(data, skipXP = false) {
