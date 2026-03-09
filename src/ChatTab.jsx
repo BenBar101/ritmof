@@ -25,8 +25,16 @@ export default function ChatTab({ state, setState, profile, apiKey, executeComma
   // Fix #12: cancel any in-flight Gemini request when the tab unmounts (user navigates away).
   useEffect(() => () => { abortRef.current?.abort(); }, []);
 
+  const MAX_INPUT_LENGTH = 4000; // ~1k tokens; prevents accidental budget burn on huge pastes
+
   async function sendMessage(text) {
     if (!text.trim() || loading) return;
+    // FIX: enforce max input length so a giant paste or voice transcript can't fire a
+    // 10 000-token request and silently drain the daily budget.
+    if (text.length > MAX_INPUT_LENGTH) {
+      showBanner(`Message too long (max ${MAX_INPUT_LENGTH} chars).`, "alert");
+      return;
+    }
     if (!apiKey) { showBanner("No Gemini API key configured.", "alert"); return; }
     const usage = state.tokenUsage;
     if (usage && usage.date === today() && usage.tokens >= DAILY_TOKEN_LIMIT) {
@@ -47,17 +55,15 @@ export default function ChatTab({ state, setState, profile, apiKey, executeComma
 
     try {
       const systemPrompt = buildSystemPrompt(state, profile);
-      // Only send last 10 messages to avoid context overflow.
-      // Fix #2 (security): strip angle brackets from user message content before sending to
-      // the API so a message like "</HUNTER_DATA>\nIgnore previous instructions" cannot
-      // semantically break the system prompt boundary. sanitizeForPrompt is intentionally
-      // NOT applied here (it's too aggressive for chat — e.g. it strips braces) — we only
-      // remove the characters that could escape the <HUNTER_DATA> XML-like delimiters.
+      // Only send last 20 messages to avoid context overflow.
+      // Fix #2/#3 (security): strip angle brackets from ALL replayed messages — not just
+      // new user input — so content stored before sanitization was added (or injected via
+      // a crafted sync file) cannot break out of the HUNTER_DATA XML-like boundary.
+      // Assistant messages are AI-generated but were stored in localStorage and could
+      // have been tampered with via a sync file.
       const apiMessages = newHistory.slice(-20).map((m) => ({
         role: m.role,
-        content: m.role === "user"
-          ? m.content.replace(/[<>]/g, "")   // strip tag-breakout chars from user input only
-          : m.content,                        // assistant messages are already AI-generated
+        content: m.content.replace(/[<>]/g, ""),
       }));
       const { text: raw, tokensUsed } = await callGemini(apiKey, apiMessages, systemPrompt, true, controller.signal);
       trackTokens?.(tokensUsed);
@@ -214,7 +220,8 @@ export default function ChatTab({ state, setState, profile, apiKey, executeComma
       <div style={{ padding: "12px 16px", borderTop: "1px solid #1a1a1a", display: "flex", gap: "8px", alignItems: "flex-end" }}>
         <textarea
           value={input}
-          onChange={(e) => setInput(e.target.value)}
+          onChange={(e) => setInput(e.target.value.slice(0, MAX_INPUT_LENGTH))}
+          maxLength={MAX_INPUT_LENGTH}
           onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(input); } }}
           placeholder="Message RITMOL..."
           rows={2}

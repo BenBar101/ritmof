@@ -149,7 +149,10 @@ const SYNC_VALIDATORS = {
     const keys = Object.keys(v);
     if (keys.length > 20) return false;
     for (const k of keys) {
-      if (!ALLOWED_PROFILE_KEYS.has(k) && k !== "geminiKey") return false;
+      // FIX (security): removed `&& k !== "geminiKey"` exception. geminiKey must NEVER
+      // pass profile validation — allowing it meant a crafted sync file could store the
+      // raw API key into localStorage under jv_profile, leaking it to any LS reader.
+      if (!ALLOWED_PROFILE_KEYS.has(k)) return false;
       const val = v[k];
       if (val !== null && val !== undefined && typeof val !== "string" && typeof val !== "number" && typeof val !== "boolean") return false;
       if (typeof val === "string" && val.length > 1000) return false;
@@ -199,9 +202,11 @@ function applySyncPayload(payload) {
     console.warn(`applySyncPayload: remote schema version ${remoteVersion} > local ${SYNC_SCHEMA_VERSION}. Update the app first.`);
     return;
   }
-  if (payload.geminiKey && typeof payload.geminiKey === "string" && payload.geminiKey.trim()) {
-    setGeminiApiKey(payload.geminiKey.trim());
-  }
+  // FIX (security): removed unconditional top-level geminiKey read here.
+  // geminiKey is intentionally excluded from SYNC_KEYS. Reading it outside the allowlist
+  // loop meant a crafted sync file could silently overwrite the key in sessionStorage
+  // without going through any of the per-key validators. The only sanctioned path for
+  // loading the key is through the KeysConfigGate flow in App.jsx.
   const allowedSet = new Set(SYNC_KEYS);
   Object.entries(payload).forEach(([k, v]) => {
     if (!allowedSet.has(k)) return;

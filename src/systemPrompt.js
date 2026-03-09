@@ -1,11 +1,17 @@
 import { today } from "./utils/storage";
 import { getLevel, getRank, getXpPerLevel } from "./utils/xp";
 
-// NOTE: sanitizeForPrompt is kept as a pass-through. This is a single-user personal app —
-// the user IS the only actor. Prompt injection by the owner is not a threat.
+// FIX (security): sanitizeForPrompt was a no-op pass-through. The comment argued that
+// prompt injection isn't a threat in a single-user app, but chat history is persisted
+// to localStorage and replayed into future prompts — a compromised or maliciously crafted
+// sync file can inject instruction-like text that survives across sessions. Strip XML-
+// breakout chars and control characters to close that path.
 export function sanitizeForPrompt(str, maxLen = 200) {
   if (typeof str !== "string") return "";
-  return str.slice(0, maxLen);
+  return str
+    .replace(/[<>]/g, "")                                  // close XML/tag breakout
+    .replace(/[\u0000-\u001F\u007F-\u009F\u200B-\u200D\uFEFF]/g, "") // strip control chars
+    .slice(0, maxLen);
 }
 
 export function buildSystemPrompt(state, profile) {

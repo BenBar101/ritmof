@@ -46,7 +46,11 @@ export async function fetchDailyQuote(_apiKey, profile, _onTokens) {
   if (_quoteInFlight) return null;
   _quoteInFlight = true;
 
-  const timeout = AbortSignal.timeout ? AbortSignal.timeout(8000) : undefined;
+  // FIX: create a fresh timeout signal per fetch instead of one shared signal.
+  // A single AbortSignal.timeout(8000) starts counting immediately — if the first
+  // fetch takes 5 s the fallback fetch only has 3 s remaining, causing spurious
+  // timeouts. Each call now gets its own independent 8-second budget.
+  const makeSignal = () => AbortSignal.timeout ? AbortSignal.timeout(8000) : undefined;
 
   try {
     // ── Step 1: try to find a quote by an author from the user's books/interests ──
@@ -57,7 +61,7 @@ export async function fetchDailyQuote(_apiKey, profile, _onTokens) {
       if (hit) break;
       try {
         const searchUrl = `https://api.quotable.kameswari.in/search/authors?query=${encodeURIComponent(token)}&limit=3`;
-        const searchRes = await fetch(searchUrl, { signal: timeout });
+        const searchRes = await fetch(searchUrl, { signal: makeSignal() });
         if (!searchRes.ok) continue;
         const searchData = await searchRes.json();
         const authors = searchData.results || [];
@@ -67,7 +71,7 @@ export async function fetchDailyQuote(_apiKey, profile, _onTokens) {
         if (!match?.slug) continue;
 
         const quoteUrl = `https://api.quotable.kameswari.in/quotes/random?author=${encodeURIComponent(match.slug)}&maxLength=250&limit=1`;
-        const quoteRes = await fetch(quoteUrl, { signal: timeout });
+        const quoteRes = await fetch(quoteUrl, { signal: makeSignal() });
         if (!quoteRes.ok) continue;
         const quoteArr = await quoteRes.json();
         const q = Array.isArray(quoteArr) ? quoteArr[0] : quoteArr?.results?.[0];
@@ -84,7 +88,7 @@ export async function fetchDailyQuote(_apiKey, profile, _onTokens) {
       const tag = QUOTABLE_FALLBACK_TAGS[Math.floor(Math.random() * QUOTABLE_FALLBACK_TAGS.length)];
       const fallbackUrl = `https://api.quotable.kameswari.in/quotes/random?tags=${tag}&maxLength=200&limit=1`;
       try {
-        const fallbackRes = await fetch(fallbackUrl, { signal: timeout });
+        const fallbackRes = await fetch(fallbackUrl, { signal: makeSignal() });
         if (fallbackRes.ok) {
           const fallbackArr = await fallbackRes.json();
           const q = Array.isArray(fallbackArr) ? fallbackArr[0] : fallbackArr?.results?.[0];

@@ -20,7 +20,12 @@ export async function updateDynamicCosts(apiKey, state, event, onTokensUsed) {
   const weekend = day === 0 || day === 6;
   const month = now.getMonth(), date = now.getDate();
   const holidayHint = (month === 11 && date === 25) ? "Christmas" : (month === 0 && date === 1) ? "New Year" : (month === 6 && date === 4) ? "US Independence Day" : null;
-  const prompt = `You are the RITMOL system adjusting economy parameters. Event: ${event}.
+  const VALID_EVENTS = new Set(["level_up", "gacha_pull", "streak_shield_use"]);
+  // FIX (security): whitelist the event string before embedding it in the prompt.
+  // An unexpected value would still be benign here (it's our own call sites), but
+  // defence-in-depth means we should never interpolate an unchecked string into a prompt.
+  const safeEvent = VALID_EVENTS.has(event) ? event : "unknown";
+  const prompt = `You are the RITMOL system adjusting economy parameters. Event: ${safeEvent}.
 Current costs: xpPerLevel=${xpPerLevel}, gachaCost=${gachaCost}, streakShieldCost=${streakShieldCost}. Hunter level=${level}, total XP=${state.xp}.
 Context: today is weekday=${!weekend}${holidayHint ? ", holiday=" + holidayHint : ""}. You may raise costs after level-up/gacha/shield use, or offer discounts (e.g. weekends, holidays).
 Keep values within these strict bounds: xpPerLevel 200–10000, gachaCost 50–5000, streakShieldCost 100–5000.

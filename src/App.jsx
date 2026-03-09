@@ -266,6 +266,13 @@ export default function App() {
   const latestStateRef = useRef(null);
   useEffect(() => { latestStateRef.current = state; }, [state]);
 
+  // Fix #5: track aiXpToday in a ref that is updated synchronously within
+  // consumeAiXpBudget. Using only state/latestStateRef caused a race condition
+  // where multiple calls within the same executeCommands run could each read a
+  // stale aiXpToday value before any setState had flushed, allowing the daily
+  // AI XP cap to be exceeded.
+  const aiXpTodayRef = useRef(null); // null = not yet initialised for today
+
   useEffect(() => {
     const push = async () => {
       const handle = await SyncManager.getHandle().catch(() => null);
@@ -419,19 +426,29 @@ export default function App() {
 
   function consumeAiXpBudget(requested) {
     const t = today();
-    const stateSource = latestStateRef.current ?? state;
-    const usage = stateSource.tokenUsage || { date: t, tokens: 0 };
-    const fresh = usage.date !== t ? { date: t, tokens: 0, warnedAt: [], aiXpToday: 0 } : usage;
-    const alreadyAwarded = fresh.aiXpToday || 0;
+    // Fix #5: read and write aiXpTodayRef synchronously so that multiple calls within
+    // the same executeCommands run see the accumulated total, not a stale snapshot.
+    if (aiXpTodayRef.current === null || aiXpTodayRef.current.date !== t) {
+      // Initialise from persisted state on the first call of the day.
+      const stateSource = latestStateRef.current ?? state;
+      const usage = stateSource.tokenUsage || { date: t, tokens: 0 };
+      const baseXp = (usage.date === t ? usage.aiXpToday : 0) || 0;
+      aiXpTodayRef.current = { date: t, value: baseXp };
+    }
+    const alreadyAwarded = aiXpTodayRef.current.value;
     const remaining = Math.max(0, DAILY_AI_XP_LIMIT - alreadyAwarded);
     const allowed = Math.min(requested, remaining);
     if (allowed > 0) {
-      const updated = { ...fresh, aiXpToday: alreadyAwarded + allowed };
-      if (latestStateRef.current) {
-        latestStateRef.current = { ...latestStateRef.current, tokenUsage: updated };
-      }
-      setState((s) => ({ ...s, tokenUsage: updated }));
-      LS.set(storageKey("jv_token_usage"), updated);
+      // Update ref synchronously before any async setState so the next call in the
+      // same loop sees the correct accumulated total.
+      aiXpTodayRef.current = { date: t, value: alreadyAwarded + allowed };
+      setState((s) => {
+        const usage = s.tokenUsage || { date: t, tokens: 0 };
+        const fresh = usage.date !== t ? { date: t, tokens: 0, warnedAt: [] } : usage;
+        const updated = { ...fresh, aiXpToday: aiXpTodayRef.current.value };
+        LS.set(storageKey("jv_token_usage"), updated);
+        return { ...s, tokenUsage: updated };
+      });
     }
     return allowed;
   }
@@ -702,19 +719,29 @@ export default function App() {
     actionLocksRef.current.add(habitId);
     setTimeout(() => actionLocksRef.current.delete(habitId), 500);
     const t = today();
-    const habit = state.habits.find((h) => h.id === habitId);
+    const habit = (latestStateRef.current ?? state).habits.find((h) => h.id === habitId);
     if (!habit) return;
-    const logResult = { didLog: false, xp: habit.xp };
+    const habitXP = habit.xp;
+    // FIX: logResult was being mutated inside the setState updater (async) and then read
+    // synchronously outside it — the read always saw the initial false value, so awardXP
+    // and checkMissions were never called on the first log of a habit each session.
+    // Use a plain flag ref that is written before the updater returns and read in a
+    // microtask-safe way via queueMicrotask so it runs after React flushes the update.
+    let didLog = false;
     setState((s) => {
       const log = s.habitLog[t] || [];
       if (log.includes(habitId)) return s;
-      logResult.didLog = true;
+      didLog = true;
       return { ...s, habitLog: { ...s.habitLog, [t]: [...log, habitId] } };
     });
-    if (logResult.didLog) {
-      awardXP(logResult.xp, event);
-      checkMissions("habits");
-    }
+    // queueMicrotask runs after the current task (including the setState updater) so
+    // didLog is guaranteed to reflect the updater's decision before we act on it.
+    queueMicrotask(() => {
+      if (didLog) {
+        awardXP(habitXP, event);
+        checkMissions("habits");
+      }
+    });
   }
 
   // ── AI command executor ──
@@ -738,7 +765,8 @@ export default function App() {
     const sanitizeStr = (s, max = MAX_STR_LEN) => {
       if (typeof s !== "string") return "";
       const noControl = s.replace(/[\u0000-\u001F\u007F-\u009F\u200B-\u200D\uFEFF]/g, "");
-      return noControl.slice(0, max).replace(/[<>"`&]/g, "");
+      // Fix #12: include single-quote in the strip set alongside the existing chars.
+      return noControl.slice(0, max).replace(/[<>"`&']/g, "");
     };
 
     commands.forEach((cmd) => {

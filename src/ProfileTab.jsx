@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { today, LS, storageKey, getGeminiApiKey } from "./utils/storage";
+import { flushStateToStorage } from "./utils/state";
 import { ACHIEVEMENT_RARITIES, STYLE_CSS, DAILY_TOKEN_LIMIT } from "./constants";
 import { getLevelProgress } from "./utils/xp";
 import { callGemini } from "./api/gemini";
@@ -687,7 +688,7 @@ function SettingsSection({ profile, setState, showBanner, syncStatus, lastSynced
             ⚠ Your browser does not support direct file access. Use Download + Import below.<br />
             Place the downloaded file in your Syncthing folder manually.
           </div>
-          <button onClick={() => SyncManager.download()} style={{
+          <button onClick={() => { flushStateToStorage(latestStateRef.current); SyncManager.download(); }} style={{
             padding: "10px", border: "1px solid #555", background: "transparent",
             color: "#aaa", fontFamily: "'Share Tech Mono', monospace", fontSize: "11px", cursor: "pointer",
           }}>
