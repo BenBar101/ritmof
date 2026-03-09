@@ -560,7 +560,7 @@ function buildSyncPayload() {
 // Validate that a value coming from a sync file is safe to write to localStorage.
 // Rejects anything that isn't a string, number, boolean, plain object, or array,
 // and caps size to avoid storage-bombing attacks.
-const MAX_SYNC_VALUE_SIZE = 500_000; // 500 KB per key — localStorage total quota is ~5–10 MB, so 100 MB was meaningless
+const MAX_SYNC_VALUE_SIZE = 2_000_000; // 2 MB per key — localStorage total quota is ~5–10 MB, so 100 MB was meaningless
 const PROTO_POISON_KEYS = new Set(["__proto__", "constructor", "prototype"]);
 function isSafeSyncValue(v) {
   // null is a valid sync value (e.g. jv_last_shield_use_date reset, jv_missions not yet generated).
@@ -1346,7 +1346,7 @@ async function fetchDailyQuote(_apiKey, profile, _onTokens) {
 
 // Ask AI to update dynamic costs (xpPerLevel, gachaCost, streakShieldCost) after level-up, gacha pull, or shield use.
 // event: "level_up" | "gacha_pull" | "streak_shield_use". Returns partial costs to merge into state.dynamicCosts.
-async function updateDynamicCosts(apiKey, state, event) {
+async function updateDynamicCosts(apiKey, state, event, onTokensUsed) {
   if (!apiKey) return {};
   // Fix #4: honour the daily token budget. updateDynamicCosts was previously called
   // unconditionally on every level-up / gacha / shield event, even after the budget was
@@ -1373,18 +1373,9 @@ Respond ONLY with a JSON object with any of: xpPerLevel, gachaCost, streakShield
 
   try {
     const { text, tokensUsed } = await callGemini(apiKey, [{ role: "user", content: prompt }], "You output only valid JSON with numeric values.", true);
-    // Track tokens directly in localStorage (this is a module-level function with no React setState access).
-    // This keeps the daily budget accurate even though the React trackTokens() helper is unavailable here.
-    if (tokensUsed > 0) {
-      try {
-        const usageKey = storageKey("jv_token_usage");
-        const stored = LS.get(usageKey) || { date: today(), tokens: 0 };
-        const fresh = stored.date !== today() ? { date: today(), tokens: 0, warnedAt: [], aiXpToday: 0 } : stored;
-        LS.set(usageKey, { ...fresh, tokens: fresh.tokens + tokensUsed });
-      } catch {}
-    }
-    const raw = text.replace(/```json|```/g, "").trim();
-    const data = JSON.parse(raw);
+    if (onTokensUsed && tokensUsed > 0) onTokensUsed(tokensUsed);
+    const match = text.match(/\{[\s\S]*\}/);
+    const data = match ? JSON.parse(match[0]) : {};
     const out = {};
     if (typeof data.xpPerLevel === "number" && data.xpPerLevel >= 200 && data.xpPerLevel <= 10000) out.xpPerLevel = Math.round(data.xpPerLevel);
     if (typeof data.gachaCost === "number" && data.gachaCost >= 50 && data.gachaCost <= 5000) out.gachaCost = Math.round(data.gachaCost);
@@ -1921,7 +1912,7 @@ export default function App() {
         const snapshot = { ...s, xp: newXP, streak: newStreak, streakShields: newShields, lastLoginDate: effectiveDate, lastShieldUseDate: newLastShieldUseDate, dynamicCosts: s.dynamicCosts };
         setTimeout(() => {
           setLevelUpData({ level: newLevel, rank: getRank(newLevel) });
-          updateDynamicCosts(getGeminiApiKey(), snapshot, "level_up").then((costs) => {
+          updateDynamicCosts(getGeminiApiKey(), snapshot, "level_up", trackTokens).then((costs) => {
             if (costs && Object.keys(costs).length) setState((prev) => ({ ...prev, dynamicCosts: { ...prev.dynamicCosts, ...costs } }));
           }).catch(() => {});
         }, 300);
@@ -1929,7 +1920,7 @@ export default function App() {
       if (bannerMsg) setTimeout(() => showBanner(bannerMsg, "info"), 0);
       if (usedShield) {
         setTimeout(() => {
-          updateDynamicCosts(getGeminiApiKey(), { ...s, streakShields: newShields, lastShieldUseDate: effectiveDate, dynamicCosts: s.dynamicCosts }, "streak_shield_use").then((costs) => {
+          updateDynamicCosts(getGeminiApiKey(), { ...s, streakShields: newShields, lastShieldUseDate: effectiveDate, dynamicCosts: s.dynamicCosts }, "streak_shield_use", trackTokens).then((costs) => {
             if (costs && Object.keys(costs).length) setState((prev) => ({ ...prev, dynamicCosts: { ...prev.dynamicCosts, ...costs } }));
           }).catch(() => {});
         }, 0);
@@ -1975,7 +1966,7 @@ export default function App() {
     if (didLevelUp) {
       setTimeout(() => {
         setLevelUpData({ level: newLevel, rank: getRank(newLevel) });
-        updateDynamicCosts(getGeminiApiKey(), snapshotForApi, "level_up").then((costs) => {
+        updateDynamicCosts(getGeminiApiKey(), snapshotForApi, "level_up", trackTokens).then((costs) => {
           if (costs && Object.keys(costs).length) setState((prev) => ({ ...prev, dynamicCosts: { ...prev.dynamicCosts, ...costs } }));
         }).catch(() => {});
       }, 300);
@@ -2041,7 +2032,7 @@ export default function App() {
       setTimeout(() => {
         setLevelUpData({ level, rank });
         // fix #2: read key at call-time (not from closure)
-        updateDynamicCosts(getGeminiApiKey(), snapshot, "level_up").then((costs) => {
+        updateDynamicCosts(getGeminiApiKey(), snapshot, "level_up", trackTokens).then((costs) => {
           if (costs && Object.keys(costs).length) setState((prev) => ({ ...prev, dynamicCosts: { ...prev.dynamicCosts, ...costs } }));
         }).catch(() => {});
       }, 300);
@@ -3181,8 +3172,9 @@ Respond ONLY with JSON array:
       .then(({ text, tokensUsed }) => {
         if (controller.signal.aborted) return; // unmounted — discard
         trackTokens?.(tokensUsed);
-        const cleaned = text.replace(/```json|```/g, "").trim();
-        const newHabits = JSON.parse(cleaned);
+        const match = text.match(/\[[\s\S]*\]/);
+        if (!match) throw new Error("Expected array from Gemini");
+        const newHabits = JSON.parse(match[0]);
         if (!Array.isArray(newHabits)) throw new Error("Expected array from Gemini");
         setState((s) => ({
           ...s,
@@ -3609,25 +3601,22 @@ function ChatTab({ state, setState, profile, apiKey, executeCommands, showBanner
       const { text: raw, tokensUsed } = await callGemini(apiKey, apiMessages, systemPrompt, true, controller.signal);
       trackTokens?.(tokensUsed);
 
-      // Robust JSON extraction: find first { ... } block
+      // Robust JSON extraction: use a safer regex-based fallback instead of lastIndexOf("}")
       let parsed;
       try {
         // Try direct parse first
         const cleaned = raw.replace(/```json|```/g, "").trim();
         parsed = JSON.parse(cleaned);
       } catch {
-        // Try extracting the outermost { ... } block — handles nested objects correctly
-        // (the previous regex was non-greedy and truncated on the first closing brace).
-        const start = raw.indexOf("{");
-        const end = raw.lastIndexOf("}");
-        if (start !== -1 && end > start) {
+        // Fallback: attempt to extract a JSON object block from the text.
+        const match = raw.match(/\{[\s\S]*\}/);
+        if (match) {
           try {
-            parsed = JSON.parse(raw.slice(start, end + 1));
+            parsed = JSON.parse(match[0]);
           } catch {
             parsed = { message: raw, commands: [] };
           }
         } else {
-          // Fallback: treat entire raw as message
           parsed = { message: raw, commands: [] };
         }
       }
@@ -3906,7 +3895,7 @@ function ProfileOverview({ state, setState, profile, level, rank, streakShieldCo
     // Fire async cost update after a tick so snapshotForApi is populated
     setTimeout(() => {
       if (!snapshotForApi) return;
-      updateDynamicCosts(getGeminiApiKey(), snapshotForApi, "streak_shield_use").then((costs) => {
+      updateDynamicCosts(getGeminiApiKey(), snapshotForApi, "streak_shield_use", trackTokens).then((costs) => {
         if (costs && Object.keys(costs).length) setState((prev) => ({ ...prev, dynamicCosts: { ...prev.dynamicCosts, ...costs } }));
       }).catch(() => {});
     }, 0);
@@ -3983,7 +3972,7 @@ function AchievementsSection({ state }) {
   const achievements = state.achievements || [];
   const rarityOrder = { legendary: 0, epic: 1, rare: 2, common: 3 };
 
-  const sorted = [...achievements].sort((a, b) => (rarityOrder[a.rarity] || 3) - (rarityOrder[b.rarity] || 3));
+  const sorted = [...achievements].sort((a, b) => (rarityOrder[a.rarity] ?? 3) - (rarityOrder[b.rarity] ?? 3));
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
@@ -4258,8 +4247,9 @@ Respond ONLY with JSON:
       const { text: raw, tokensUsed } = await callGemini(apiKey, [{ role: "user", content: prompt }], "You are a master of literary atmosphere and ASCII art. Respond only in JSON.", true, controller.signal);
       if (controller.signal.aborted) { setPulling(false); return; }
       trackTokens(tokensUsed);
-      const cleaned = raw.replace(/```json|```/g, "").trim();
-      const card = JSON.parse(cleaned);
+      const match = raw.match(/\{[\s\S]*\}/);
+      if (!match) throw new Error("Failed to parse Gacha JSON");
+      const card = JSON.parse(match[0]);
 
       // Fix #11 (security): construct the stored card explicitly — never spread the raw AI
       // object so unexpected keys cannot pollute the gachaCollection state/localStorage.
@@ -4296,7 +4286,7 @@ Respond ONLY with JSON:
         gachaCollection: [...(s.gachaCollection || []), { ...safeCard, pulledAt: Date.now() }],
       }));
 
-      updateDynamicCosts(getGeminiApiKey(), snapshotForCosts, "gacha_pull").then((costs) => {
+      updateDynamicCosts(getGeminiApiKey(), snapshotForCosts, "gacha_pull", trackTokens).then((costs) => {
         if (costs && Object.keys(costs).length) setState((prev) => ({ ...prev, dynamicCosts: { ...prev.dynamicCosts, ...costs } }));
       }).catch(() => {});
 
