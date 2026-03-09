@@ -10,6 +10,9 @@ dist/
 .env.*
 !.env.example
 
+# Local data / sync files — keep out of git
+data/
+
 # Editor / OS
 .cursor/
 .DS_Store

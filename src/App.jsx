@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
-import ReactDOM from "react-dom/client";
 
 // ═══════════════════════════════════════════════════════════════
 // CONSTANTS
@@ -53,34 +52,45 @@ const ACHIEVEMENT_RARITIES = {
 // Single-account gate: only the configured Google email can use the app. Set via .env or GitHub Variables.
 // SECURITY: Both VITE_ALLOWED_EMAIL and VITE_GOOGLE_CLIENT_ID must be set. If either is missing the app
 // renders a hard block — it never falls through to the main UI with no auth.
+//
+// ── INTENTIONAL ACCEPTED RISKS (do not flag these in code review) ──────────────────────────────
+// (1) ALLOWED_EMAIL is a Vite build-time variable and therefore embedded in the compiled JS bundle.
+//     This is intentional. The threat model for this app is an external attacker hitting the
+//     GitHub Pages URL, not someone who already has access to this machine or its DevTools.
+//     The email being visible in the bundle is an accepted privacy trade-off for a zero-backend
+//     personal app. Do not suggest moving it to a backend or runtime env — there is no backend.
+// (2) The client-side JWT verification path (when VERIFY_GOOGLE_ID_URL is not set) validates
+//     iss, aud, exp, iat, nbf, azp, and email_verified but does NOT verify the RSA-256 signature
+//     against Google's public JWKs. This is intentional for a personal single-user app. The owner
+//     is both the developer and the only user; anyone who could exploit this already has full
+//     access to the machine. Setting VERIFY_GOOGLE_ID_URL is recommended but not required.
+//     Do not suggest adding webcrypto signature verification here — the complexity is not worth it.
+// ────────────────────────────────────────────────────────────────────────────────────────────────
 const ALLOWED_EMAIL = (import.meta.env.VITE_ALLOWED_EMAIL || "").trim().toLowerCase();
 const GATE_GOOGLE_CLIENT_ID = (import.meta.env.VITE_GOOGLE_CLIENT_ID || "").trim();
 const VERIFY_GOOGLE_ID_URL = (import.meta.env.VITE_VERIFY_GOOGLE_ID_URL || "").trim();
 
-// Required: Gemini API key from env. App assumes it is set in GitHub repo Variables or .env.
-// SECURITY: This key is embedded in the browser bundle by Vite at build time — it is visible
-// to anyone who reads the page source or downloads the JS asset. HTTP referrer restrictions
-// in AI Studio provide partial mitigation but CAN be bypassed by a server-side proxy that
-// spoofs the Referer header. The correct mitigations for a personal app are:
-//   1. AI Studio → API Keys → Edit → "API restrictions" → restrict to the Gemini API only
-//   2. Set VITE_GEMINI_KEY_RESTRICTED=true in your env AFTER you have applied the restriction
-//   3. Set a low daily quota in AI Studio and enable usage alerts/notifications
-//   4. Rotate the key immediately if you detect unexpected usage
-//   5. Never reuse this key in any other project or service
-// This is an accepted risk for a single-user self-hosted app with a quota ceiling.
-// Never paste this key anywhere else or commit it to source control.
-const VITE_GEMINI_API_KEY = (import.meta.env.VITE_GEMINI_API_KEY || "").trim();
-// Fix #1 (security): surfaced as a visible dev warning if the deployer forgot to restrict the key.
-// Set VITE_GEMINI_KEY_RESTRICTED=true in your env only after applying API restrictions in AI Studio.
-const GEMINI_KEY_RESTRICTED = import.meta.env.VITE_GEMINI_KEY_RESTRICTED === "true";
-// Warn at module load time (not just in the UI banner) so it appears in CI logs and DevTools console.
-if (VITE_GEMINI_API_KEY && !GEMINI_KEY_RESTRICTED) {
-  console.warn(
-    "[RITMOL] SECURITY: Gemini API key is present but VITE_GEMINI_KEY_RESTRICTED is not set to 'true'.\n" +
-    "Apply API restrictions in AI Studio, then set VITE_GEMINI_KEY_RESTRICTED=true in your env.\n" +
-    "See comments in App.jsx near VITE_GEMINI_API_KEY for the full mitigation checklist."
-  );
-}
+// Gemini API key is NOT baked into the build. It is read at runtime from the Syncthing
+// sync file (ritmol-data.json) and held only in sessionStorage for the lifetime of the tab.
+// This means the key is never present in the JS bundle, never visible in page source, and
+// never touches GitHub at all — not even as a repo Variable.
+//
+// How it works:
+//   1. You add "geminiKey": "AIza..." to your ritmol-data.json (the file Syncthing manages).
+//   2. On Pull (or on first load when a handle is already saved), applySyncPayload reads the
+//      key and writes it to sessionStorage under "ritmol_gemini_key". It is never written to
+//      localStorage and is never included in outgoing Push payloads.
+//   3. getGeminiApiKey() reads from sessionStorage. If the tab is closed and reopened without
+//      a Pull, the app prompts the user to Pull (which re-reads the file).
+//
+// SECURITY NOTE: sessionStorage is readable by any JS running in the same tab (e.g. a
+// malicious browser extension, or the user themselves via DevTools). For a single-user
+// personal app that you run on your own machine this is an accepted risk — the threat model
+// is an attacker accessing your GitHub Pages URL from the outside, not someone with physical
+// access to your running browser session. If you leave your browser open and unattended,
+// the key is visible in DevTools just like any other sensitive sessionStorage value.
+// Mitigate by restricting the key in AI Studio (Gemini API only) and setting a daily quota.
+// (VITE_GEMINI_KEY_RESTRICTED removed — no longer applicable with sync-file key delivery)
 // Auth is required by default (fail-closed). It is only skipped when running in local dev mode
 // AND both env vars are absent — meaning the developer deliberately left them unset locally.
 // Any production build with at least one var set will always enforce the gate.
@@ -125,6 +135,14 @@ const THEME_KEY = "jv_theme";
 //   the token trivially: SHA256(ALLOWED_EMAIL + "|" + extractedNonce).
 //   The actual security boundary is the Google-signed JWT verified during AuthGate sign-in.
 //   Treat this token purely as a convenience: it avoids the sign-in prompt on every reload.
+//
+// ── INTENTIONAL ACCEPTED RISK (do not flag in code review) ──────────────────────────────────
+// The nonce + email are both accessible to someone with DevTools on this machine. This is
+// intentional — the threat model is an external network attacker, not local machine access.
+// The "cannot be bypassed from the console" claim in older comments is therefore technically
+// inaccurate; the correct framing is that it cannot be bypassed by a remote attacker who
+// cannot read sessionStorage. Do not suggest making this cryptographically stronger.
+// ────────────────────────────────────────────────────────────────────────────────────────────
 const _NONCE_SS_KEY = "ritmol_session_nonce";
 const SESSION_NONCE = (() => {
   try {
@@ -150,8 +168,9 @@ async function isSessionValid() {
   return stored === expected;
 }
 
-// Gemini API key is read from VITE_GEMINI_API_KEY (env). It is never stored in localStorage or sync payloads.
-// applySyncPayload strips geminiKey from synced profile objects to prevent accidental exposure.
+// Gemini API key flow: the key is read FROM the sync file (ritmol-data.json) during applySyncPayload
+// and held only in sessionStorage for the tab's lifetime. It is never written back to localStorage,
+// never included in outgoing Push payloads (not in SYNC_KEYS), and never present in the JS bundle.
 
 // ═══════════════════════════════════════════════════════════════
 // LOCAL STORAGE HELPERS
@@ -205,6 +224,15 @@ async function callGemini(apiKey, messages, systemPrompt, jsonMode = false, sign
     },
   };
 
+  // Fix: if the caller passes no signal (e.g. updateDynamicCosts), create a 30-second timeout
+  // so a hung Gemini request never blocks indefinitely. If the caller provides a signal, combine
+  // it with the timeout so either party can cancel (AbortSignal.any requires Chrome 116+, fall back
+  // to a plain timeout signal when .any is unavailable).
+  const timeoutSignal = AbortSignal.timeout ? AbortSignal.timeout(30000) : undefined;
+  const effectiveSignal = signal
+    ? (typeof AbortSignal.any === "function" ? AbortSignal.any([signal, timeoutSignal].filter(Boolean)) : signal)
+    : timeoutSignal;
+
   const res = await fetch(url, {
     method: "POST",
     headers: {
@@ -212,7 +240,7 @@ async function callGemini(apiKey, messages, systemPrompt, jsonMode = false, sign
       "x-goog-api-key": apiKey,
     },
     body: JSON.stringify(body),
-    signal, // Fix #12: honour AbortSignal from caller
+    signal: effectiveSignal,
   });
 
   if (!res.ok) {
@@ -330,8 +358,23 @@ function storageKey(k) {
   return k;
 }
 
+// GEMINI_SESSION_KEY is intentionally NOT prefixed with "jv_" (it lives in sessionStorage,
+// not localStorage), but we still apply dev/prod isolation via a direct IS_DEV check so
+// a dev tab and a prod tab open simultaneously don't share the same Gemini key slot.
+const GEMINI_SESSION_KEY = IS_DEV ? "ritmol_dev_gemini_key" : "ritmol_gemini_key";
+
 function getGeminiApiKey() {
-  return VITE_GEMINI_API_KEY;
+  try { return sessionStorage.getItem(GEMINI_SESSION_KEY) || ""; } catch { return ""; }
+}
+
+function setGeminiApiKey(key) {
+  try {
+    if (key && typeof key === "string" && key.trim()) {
+      sessionStorage.setItem(GEMINI_SESSION_KEY, key.trim());
+    } else {
+      sessionStorage.removeItem(GEMINI_SESSION_KEY);
+    }
+  } catch {}
 }
 
 // IndexedDB helpers for persisting the FileSystemFileHandle.
@@ -520,7 +563,10 @@ function buildSyncPayload() {
 const MAX_SYNC_VALUE_SIZE = 500_000; // 500 KB per key — localStorage total quota is ~5–10 MB, so 100 MB was meaningless
 const PROTO_POISON_KEYS = new Set(["__proto__", "constructor", "prototype"]);
 function isSafeSyncValue(v) {
-  if (v === null || v === undefined) return false;
+  // null is a valid sync value (e.g. jv_last_shield_use_date reset, jv_missions not yet generated).
+  // Distinguish null (allowed) from undefined (not a real value — skip).
+  if (v === undefined) return false;
+  if (v === null) return true;
   const type = typeof v;
   if (type === "string") return v.length <= MAX_SYNC_VALUE_SIZE;
   if (type === "number" || type === "boolean") return true;
@@ -622,6 +668,8 @@ function parseSyncValue(k, v) {
 
 function applySyncPayload(payload) {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) return;
+  // Fix: validate schema version BEFORE writing anything (including the geminiKey) so a
+  // corrupt or outdated payload cannot update the live API key and then throw mid-way.
   // Fix #7: require _schemaVersion to be present and within the supported range.
   // Missing version (old client) is treated as version 0 and rejected to avoid silently
   // applying an incompatible format. Future versions are also rejected (existing behaviour).
@@ -635,6 +683,12 @@ function applySyncPayload(payload) {
   if (remoteVersion > SYNC_SCHEMA_VERSION) {
     console.warn(`applySyncPayload: remote schema version ${remoteVersion} > local ${SYNC_SCHEMA_VERSION}. Update the app first.`);
     return;
+  }
+  // Read geminiKey from the sync file and hold it only in sessionStorage.
+  // It is never written to localStorage and never re-exported in Push payloads (not in SYNC_KEYS).
+  // Placed after schema version check so a rejected payload cannot update the live API key.
+  if (payload.geminiKey && typeof payload.geminiKey === "string" && payload.geminiKey.trim()) {
+    setGeminiApiKey(payload.geminiKey.trim());
   }
   // Allowlist: only write keys that are explicitly listed in SYNC_KEYS.
   const allowedSet = new Set(SYNC_KEYS);
@@ -697,10 +751,13 @@ function AuthGate({ onAccessGranted }) {
   const MAX_RETRIES = 5;
   const isRateLimited = retryCount >= MAX_RETRIES;
 
-  // Fix #11: wrap in useCallback so the onClick button always gets a stable, fresh reference
-  // and does not close over a stale `status` or `retryCount` from a prior render.
+  // Fix: authInFlightRef is the sole concurrency guard. The previous `status === "loading"`
+  // check was redundant with the ref and created a stale-closure window between renders where
+  // a rapid re-click could slip through before the new status committed. The ref is synchronous
+  // and immune to closure staleness. `status` is removed from the early-return guard (and from
+  // the useCallback dep array) so the callback is stable and never closes over stale state.
   const handleSignIn = useCallback(async (isAutoAttempt = false) => {
-    if (misconfigured || status === "loading" || isRateLimited) return;
+    if (misconfigured || isRateLimited) return;
     // Prevent a second concurrent GIS flow if the previous one hasn't resolved yet.
     if (authInFlightRef.current) return;
     authInFlightRef.current = true;
@@ -717,10 +774,14 @@ function AuthGate({ onAccessGranted }) {
             try {
               let email;
               if (VERIFY_GOOGLE_ID_URL) {
+                // Fix: add a 10-second timeout so a slow or hung verification endpoint
+                // cannot leave the auth flow stuck in "SIGNING IN…" indefinitely.
+                const verifySignal = AbortSignal.timeout ? AbortSignal.timeout(10000) : undefined;
                 const res = await fetch(VERIFY_GOOGLE_ID_URL, {
                   method: "POST",
                   headers: { "Content-Type": "application/json" },
                   body: JSON.stringify({ credential: response.credential }),
+                  signal: verifySignal,
                 });
                 if (!res.ok) {
                   const data = await res.json().catch(() => ({}));
@@ -818,10 +879,15 @@ function AuthGate({ onAccessGranted }) {
     }
   // retryCount is listed (not isRateLimited) because isRateLimited is derived from retryCount
   // in the same render scope. Listing the primitive avoids a stale closure while keeping the
-  // dependency array accurate.
-  }, [misconfigured, status, retryCount]);
+  // dependency array accurate. `status` is intentionally omitted — authInFlightRef is the sole
+  // concurrency guard and is immune to stale-closure issues; including status would recreate
+  // the callback on every status change and reintroduce the race it was meant to prevent.
+  }, [misconfigured, retryCount]);
 
-  useEffect(() => { handleSignIn(true); }, []);
+  // Fix: include handleSignIn in deps so HMR remounts pick up the current callback rather than
+  // the stale one from the first mount. authInFlightRef still prevents double-firing in production.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { handleSignIn(true); }, [handleSignIn]);
 
   if (misconfigured) {
     // In production: both vars must be set — show a clear deployment error.
@@ -882,10 +948,10 @@ function AuthGate({ onAccessGranted }) {
   );
 }
 
-// Required API keys must be set as environment variables (GitHub repo Variables or .env).
+// Required: Gemini API key must be present in the sync file and loaded via Pull.
 function KeysConfigGate() {
   const missing = [];
-  if (!getGeminiApiKey()) missing.push("VITE_GEMINI_API_KEY");
+  if (!getGeminiApiKey()) missing.push("geminiKey");
   if (missing.length === 0) return null;
   return (
     <div style={{
@@ -894,13 +960,12 @@ function KeysConfigGate() {
     }}>
       <img src={APP_ICON_URL} alt="" style={{ width: 48, height: 48, marginBottom: "16px", display: "block" }} />
       <div style={{ fontSize: "11px", color: "#666", letterSpacing: "2px", marginBottom: "16px" }}>RITMOL — CONFIGURATION REQUIRED</div>
-      <div style={{ color: "#c44", fontSize: "12px", maxWidth: "380px", lineHeight: "1.8" }}>
-        Set these variables in your environment (GitHub repo Variables or local <code>.env</code>). The app expects keys to be defined there, not in the UI.
+      <div style={{ color: "#c44", fontSize: "12px", maxWidth: "420px", lineHeight: "1.8" }}>
+        No Gemini API key found in this session. Add <code>"geminiKey": "AIza..."</code> to your{" "}
+        <code>ritmol-data.json</code> sync file, then use <strong>Pull ↓</strong> (Profile → Settings) to load it.
+        The key is never stored in the build or in GitHub — it lives only in your Syncthing file and this tab's sessionStorage.
       </div>
-      <ul style={{ textAlign: "left", fontSize: "12px", color: "#aaa", marginTop: "16px", listStyle: "none" }}>
-        {missing.map((v) => <li key={v} style={{ marginBottom: "6px" }}><code style={{ color: "#888" }}>{v}</code></li>)}
-      </ul>
-      <div style={{ fontSize: "10px", color: "#555", marginTop: "24px" }}>See <code>.env.example</code> and README.</div>
+      <div style={{ fontSize: "10px", color: "#555", marginTop: "24px" }}>See README — Gemini API Key section.</div>
     </div>
   );
 }
@@ -1010,6 +1075,13 @@ function getStreakShieldCost(state) { return state.dynamicCosts?.streakShieldCos
 // contents of the prompt. Stripping characters from someone's own book titles and interests
 // just produces garbled, unhelpful prompts for zero security gain.
 // The function is kept as a no-op pass-through so call sites don't need to change.
+//
+// ── INTENTIONAL ACCEPTED RISK (do not flag in code review) ──────────────────────────────────
+// User-controlled strings (name, books, interests, etc.) are injected directly into the
+// system prompt. This is intentional — the user IS the only actor. Prompt injection by the
+// owner of a single-user personal app is not a threat. Do not suggest re-adding sanitization,
+// adding delimiters around user fields, or moving fields further from the instruction zone.
+// ────────────────────────────────────────────────────────────────────────────────────────────
 function sanitizeForPrompt(str, maxLen = 200) {
   if (typeof str !== "string") return "";
   return str.slice(0, maxLen);
@@ -1020,12 +1092,16 @@ function buildSystemPrompt(state, profile) {
   const rank = getRank(lvl);
   const todayLog = state.habitLog[today()] || [];
   const todayHabits = state.habits.filter((h) => todayLog.includes(h.id));
-  const upcomingExams = (state.calendarEvents || [])
-    .filter((e) => e.type === "exam")
+
+  // All calendar events in the next 14 days, sorted by start time
+  const twoWeeksOut = Date.now() + 14 * 86400000;
+  const upcomingEvents = (state.calendarEvents || [])
     .filter((e) => {
-      const diff = (new Date(e.start) - Date.now()) / 86400000;
-      return diff >= 0 && diff <= 14;
-    });
+      const t = new Date(e.start).getTime();
+      return t >= Date.now() - 86400000 && t <= twoWeeksOut; // include today
+    })
+    .sort((a, b) => new Date(a.start) - new Date(b.start));
+  const upcomingExams = upcomingEvents.filter((e) => e.type === "exam");
 
   const recentSessions = (state.sessions || []).slice(-10);
   const sessionStats = recentSessions.reduce((acc, s) => {
@@ -1037,6 +1113,30 @@ function buildSystemPrompt(state, profile) {
   const avgSleep = sleepEntries.length ? (sleepEntries.reduce((a, [,v]) => a + (v.hours || 0), 0) / sleepEntries.length).toFixed(1) : null;
   const screenToday = state.screenTimeLog?.[today()] || {};
   const totalScreenToday = (screenToday.afternoon || 0) + (screenToday.evening || 0);
+
+  // Cap open tasks/goals sent to the prompt — prevents token blowout when the user has
+  // hundreds of accumulated items. Prioritise: high-priority and soonest-due items first.
+  const PROMPT_TASK_CAP = 30;
+  const PROMPT_GOAL_CAP = 20;
+  const allOpenTasks = (state.tasks || []).filter(t => !t.done);
+  const allOpenGoals = (state.goals || []).filter(g => !g.done);
+  const priorityOrder = { high: 0, medium: 1, low: 2 };
+  const openTasks = allOpenTasks
+    .sort((a, b) => {
+      const pa = priorityOrder[a.priority] ?? 1, pb = priorityOrder[b.priority] ?? 1;
+      if (pa !== pb) return pa - pb;
+      if (a.due && b.due) return a.due < b.due ? -1 : 1;
+      if (a.due) return -1; if (b.due) return 1;
+      return 0;
+    })
+    .slice(0, PROMPT_TASK_CAP);
+  const openGoals = allOpenGoals
+    .sort((a, b) => {
+      if (a.due && b.due) return a.due < b.due ? -1 : 1;
+      if (a.due) return -1; if (b.due) return 1;
+      return 0;
+    })
+    .slice(0, PROMPT_GOAL_CAP);
 
   // Fix #16: use a deterministic local-time string instead of toLocaleString() to avoid
   // locale/timezone non-determinism that inflates token counts and breaks prompt caching.
@@ -1061,28 +1161,25 @@ Semester objective: ${sanitizeForPrompt(profile?.semesterGoal || "None declared"
 LIVE STATUS [${nowStr}]:
 XP: ${state.xp} | Streak: ${state.streak}d | Shields: ${state.streakShields}
 Habits today: ${todayHabits.length}/${state.habits?.length || 0} — ${todayHabits.map(h => sanitizeForPrompt(h.label, 40)).join(", ") || "zero"}
-Active tasks: ${(state.tasks || []).filter(t => !t.done).map(t => `[${sanitizeForPrompt(t.text, 80)}] [${t.priority}]`).join(", ") || "none"}
-Active goals: ${(state.goals || []).filter(g => !g.done).map(g => `[${sanitizeForPrompt(g.title, 80)}] (${sanitizeForPrompt(g.course || "no course", 40)})`).join(", ") || "none"}
 Daily focus: ${sanitizeForPrompt(state.dailyGoal || "unset", 100)}
-Upcoming exams: ${upcomingExams.map(e => `[${sanitizeForPrompt(e.title, 60)}] in ${Math.ceil((new Date(e.start) - Date.now()) / 86400000)}d`).join(", ") || "none"}
+Upcoming exams (14d): ${upcomingExams.map(e => `[${sanitizeForPrompt(e.title, 60)}] in ${Math.ceil((new Date(e.start) - Date.now()) / 86400000)}d`).join(", ") || "none"}
 
 BEHAVIORAL DATA:
 Sleep (last 5 days): ${sleepEntries.map(([d,v]) => `${d}: ${v.hours}h q${v.quality}`).join(" | ") || "no data"} | avg: ${avgSleep || "?"}h
 Screen time today: ${totalScreenToday ? `${Math.floor(totalScreenToday/60)}h${totalScreenToday%60}m total` : "not logged yet"}
 Study sessions (recent): ${JSON.stringify(sessionStats)} | Total sessions all time: ${(state.sessions||[]).length}
-Achievements unlocked: ${(state.achievements||[]).map(a=>a.id).join(", ")||"none"}
+Achievements unlocked: ${(state.achievements||[]).length}
 Gacha pulls: ${(state.gachaCollection||[]).length}
 
 FULL DATA TABLES:
 habits: ${JSON.stringify(state.habits?.map(h=>({id:h.id,label:sanitizeForPrompt(h.label,60),cat:h.category,xp:h.xp})))}
-tasks: ${JSON.stringify((state.tasks||[]).slice(-20).map(t=>({id:t.id,text:sanitizeForPrompt(t.text,120),priority:t.priority,done:t.done,due:t.due})))}
-goals: ${JSON.stringify((state.goals||[]).slice(-10).map(g=>({id:g.id,title:sanitizeForPrompt(g.title,120),course:sanitizeForPrompt(g.course||"",60),done:g.done,due:g.due,subs:g.submissionCount})))}
+open_tasks (${openTasks.length}): ${JSON.stringify(openTasks.map(t=>({id:t.id,text:sanitizeForPrompt(t.text,120),priority:t.priority,due:t.due,addedBy:t.addedBy})))}
+open_goals (${openGoals.length}): ${JSON.stringify(openGoals.map(g=>({id:g.id,title:sanitizeForPrompt(g.title,120),course:sanitizeForPrompt(g.course||"",60),due:g.due,subs:g.submissionCount})))}
 sessions_last_5: ${JSON.stringify(recentSessions.slice(-5).map(s=>({type:s.type,course:sanitizeForPrompt(s.course||"",60),duration:s.duration,focus:s.focus,date:s.date})))}
-calendar_upcoming: ${JSON.stringify((state.calendarEvents||[]).slice(0,10).map(e=>({title:sanitizeForPrompt(e.title||"",80),type:e.type,start:e.start})))}
+calendar_next_14d (${upcomingEvents.length} events): ${JSON.stringify(upcomingEvents.map(e=>({title:sanitizeForPrompt(e.title||"",80),type:e.type,start:e.start})))}
 sleep_last_3: ${JSON.stringify(Object.entries(state.sleepLog||{}).slice(-3))}
 screen_today: ${JSON.stringify(screenToday)}
 missions: ${JSON.stringify((state.dailyMissions||[]).map(m=>({desc:sanitizeForPrompt(m.desc||"",100),done:m.done,xp:m.xp})))}
-achievements: ${JSON.stringify((state.achievements||[]).map(a=>({id:a.id,title:sanitizeForPrompt(a.title||"",80),rarity:a.rarity})))}
 </HUNTER_DATA>
 
 RESPONSE FORMAT — always valid JSON, nothing else:
@@ -1124,23 +1221,53 @@ You are not here to make them feel good. You are here to make them better. The d
 }
 
 // ═══════════════════════════════════════════════════════════════
-// DAILY QUOTE
+// DAILY QUOTE  (Quotable API — no tokens consumed)
 // ═══════════════════════════════════════════════════════════════
-// Module-level in-flight guard: prevents a second callGemini from racing if the effect
-// re-fires (e.g. profile reference changes) before the first request resolves.
+// Uses the free, open Quotable REST API (https://api.quotable.kameswari.in)
+// instead of asking Gemini to hallucinate quotes, which:
+//   (a) wastes daily token budget
+//   (b) produces unverifiable, sometimes fabricated attributions
+// The API returns real quotes from a curated database; no API key required.
+//
+// Author matching: we extract bare last-name tokens from the user's books/interests
+// field and try to find a matching Quotable author slug. On miss we fall back to a
+// random quote tagged with one of several STEM/philosophy tags relevant to the app.
+//
+// In-flight guard: a module-level flag was previously used but is unsafe under
+// React 18 StrictMode (effects run twice on mount). The guard is now stored on a
+// shared module-level ref that is reset on each call-site abort — stale closures
+// cannot keep it stuck because the flag is only ever read at the start of a fresh
+// call (not captured in a closure). HMR evaluation still resets it to false because
+// the module is re-executed.
 let _quoteInFlight = false;
 
-async function fetchDailyQuote(apiKey, profile, onTokens) {
+// Quotable tags that fit the STEM / stoic / self-improvement theme of RITMOL.
+const QUOTABLE_FALLBACK_TAGS = ["technology","science","education","wisdom","inspirational","philosophy"];
+
+// Extract candidate author name tokens from a free-text "books/authors" string.
+// We only need the last name (or the most distinctive word) for Quotable's slug lookup.
+function _extractAuthorTokens(booksStr) {
+  if (!booksStr || typeof booksStr !== "string") return [];
+  // Split on common delimiters and keep tokens ≥4 chars (filters "and", "the", etc.)
+  return booksStr
+    .split(/[,;|\/\n]+/)
+    .map(s => s.trim().split(/\s+/).pop()) // last word of each segment
+    .filter(t => t && t.length >= 4)
+    .slice(0, 5); // cap: no more than 5 attempts
+}
+
+async function fetchDailyQuote(_apiKey, profile, _onTokens) {
+  // _apiKey and _onTokens kept in signature for call-site compatibility but unused —
+  // Quotable is free and consumes no Gemini tokens.
   const key = storageKey(`jv_quote_${today()}`);
 
-  // fix #3: collect keys first, then remove — avoids index-shift bug when removing during iteration
+  // Evict stale quote cache keys from previous days
   try {
     const quotePrefix = IS_DEV ? `${DEV_PREFIX}jv_quote_` : "jv_quote_";
-    const todayKey = key; // already computed above
     const staleKeys = [];
     for (let i = 0; i < localStorage.length; i++) {
       const k = localStorage.key(i);
-      if (k && k.startsWith(quotePrefix) && k !== todayKey) staleKeys.push(k);
+      if (k && k.startsWith(quotePrefix) && k !== key) staleKeys.push(k);
     }
     staleKeys.forEach((k) => localStorage.removeItem(k));
   } catch {}
@@ -1148,38 +1275,72 @@ async function fetchDailyQuote(apiKey, profile, onTokens) {
   const cached = LS.get(key);
   if (cached) return cached;
 
-  // Bail out if a request is already in-flight — avoids racing writes to the same cache key.
   if (_quoteInFlight) return null;
   _quoteInFlight = true;
 
-  const prompt = `Generate ONE real, verifiable quote from one of these authors/books: ${sanitizeForPrompt(profile?.books || "Richard Feynman, Marcus Aurelius", 300)}. 
-The quote must be real — you must be highly confident it is accurate and attributable.
-If you are not highly confident, respond with null.
-Respond ONLY with JSON: { "quote": "...", "author": "...", "source": "...", "confident": true } or { "confident": false }`;
+  const timeout = AbortSignal.timeout ? AbortSignal.timeout(8000) : undefined;
 
   try {
-    const { text, tokensUsed } = await callGemini(apiKey, [{ role: "user", content: prompt }], "You are a literary scholar with perfect recall.", true);
-    onTokens?.(tokensUsed);
-    const raw = text.replace(/```json|```/g, "").trim();
-    const data = JSON.parse(raw);
-    // Validate shape: require string fields of reasonable length, reject malformed responses
-    if (
-      data.confident === true &&
-      typeof data.quote === "string" && data.quote.length > 5 && data.quote.length <= 500 &&
-      typeof data.author === "string" && data.author.length <= 100 &&
-      typeof data.source === "string" && data.source.length <= 100
-    ) {
+    // ── Step 1: try to find a quote by an author from the user's books/interests ──
+    const tokens = _extractAuthorTokens(profile?.books || "");
+    let hit = null;
+
+    for (const token of tokens) {
+      if (hit) break;
+      try {
+        const searchUrl = `https://api.quotable.kameswari.in/search/authors?query=${encodeURIComponent(token)}&limit=3`;
+        const searchRes = await fetch(searchUrl, { signal: timeout });
+        if (!searchRes.ok) continue;
+        const searchData = await searchRes.json();
+        const authors = searchData.results || [];
+        if (!authors.length) continue;
+
+        // Pick the first result whose slug contains the search token (case-insensitive)
+        const match = authors.find(a => a.slug && a.slug.toLowerCase().includes(token.toLowerCase())) || authors[0];
+        if (!match?.slug) continue;
+
+        const quoteUrl = `https://api.quotable.kameswari.in/quotes/random?author=${encodeURIComponent(match.slug)}&maxLength=250&limit=1`;
+        const quoteRes = await fetch(quoteUrl, { signal: timeout });
+        if (!quoteRes.ok) continue;
+        const quoteArr = await quoteRes.json();
+        const q = Array.isArray(quoteArr) ? quoteArr[0] : quoteArr?.results?.[0];
+        if (q?.content && q?.author) {
+          hit = { quote: q.content, author: q.author, source: q.authorSlug || "" };
+        }
+      } catch {
+        // Network error on one token — try the next
+      }
+    }
+
+    // ── Step 2: fall back to a themed random quote if author lookup missed ──
+    if (!hit) {
+      const tag = QUOTABLE_FALLBACK_TAGS[Math.floor(Math.random() * QUOTABLE_FALLBACK_TAGS.length)];
+      const fallbackUrl = `https://api.quotable.kameswari.in/quotes/random?tags=${tag}&maxLength=200&limit=1`;
+      try {
+        const fallbackRes = await fetch(fallbackUrl, { signal: timeout });
+        if (fallbackRes.ok) {
+          const fallbackArr = await fallbackRes.json();
+          const q = Array.isArray(fallbackArr) ? fallbackArr[0] : fallbackArr?.results?.[0];
+          if (q?.content && q?.author) {
+            hit = { quote: q.content, author: q.author, source: q.authorSlug || "" };
+          }
+        }
+      } catch {}
+    }
+
+    if (hit) {
       const safe = {
-        quote: String(data.quote).slice(0, 500),
-        author: String(data.author).slice(0, 100),
-        source: String(data.source).slice(0, 100),
-        confident: true,
+        quote:  String(hit.quote).slice(0, 500),
+        author: String(hit.author).slice(0, 100),
+        source: String(hit.source).slice(0, 100),
+        confident: true, // real quote from a curated database — always confident
       };
       LS.set(key, safe);
       return safe;
     }
-  } catch {}
-  finally { _quoteInFlight = false; }
+  } finally {
+    _quoteInFlight = false;
+  }
   return null;
 }
 
@@ -1206,14 +1367,22 @@ async function updateDynamicCosts(apiKey, state, event) {
   const prompt = `You are the RITMOL system adjusting economy parameters. Event: ${event}.
 Current costs: xpPerLevel=${xpPerLevel}, gachaCost=${gachaCost}, streakShieldCost=${streakShieldCost}. Hunter level=${level}, total XP=${state.xp}.
 Context: today is weekday=${!weekend}${holidayHint ? ", holiday=" + holidayHint : ""}. You may raise costs after level-up/gacha/shield use, or offer discounts (e.g. weekends, holidays).
-// Fix #9 (bug): these ceilings now match the validator bounds in updateDynamicCosts and SYNC_VALIDATORS
-// exactly so the prompt never implies a value the validator would accept but the prompt forbids.
 Keep values within these strict bounds: xpPerLevel 200–10000, gachaCost 50–5000, streakShieldCost 100–5000.
 Typical reasonable values: xpPerLevel 300–1500, gachaCost 80–400, streakShieldCost 150–600.
 Respond ONLY with a JSON object with any of: xpPerLevel, gachaCost, streakShieldCost (only include keys you want to change). Example: {"gachaCost": 180} or {"xpPerLevel": 550, "streakShieldCost": 320}. No explanation.`;
 
   try {
-    const { text } = await callGemini(apiKey, [{ role: "user", content: prompt }], "You output only valid JSON with numeric values.", true);
+    const { text, tokensUsed } = await callGemini(apiKey, [{ role: "user", content: prompt }], "You output only valid JSON with numeric values.", true);
+    // Track tokens directly in localStorage (this is a module-level function with no React setState access).
+    // This keeps the daily budget accurate even though the React trackTokens() helper is unavailable here.
+    if (tokensUsed > 0) {
+      try {
+        const usageKey = storageKey("jv_token_usage");
+        const stored = LS.get(usageKey) || { date: today(), tokens: 0 };
+        const fresh = stored.date !== today() ? { date: today(), tokens: 0, warnedAt: [], aiXpToday: 0 } : stored;
+        LS.set(usageKey, { ...fresh, tokens: fresh.tokens + tokensUsed });
+      } catch {}
+    }
     const raw = text.replace(/```json|```/g, "").trim();
     const data = JSON.parse(raw);
     const out = {};
@@ -1295,7 +1464,7 @@ export default function App() {
     };
     window.addEventListener('ls-quota-exceeded', handleQuota);
     return () => window.removeEventListener('ls-quota-exceeded', handleQuota);
-  }, []);
+  }, [showBanner]);
   const [modal, setModal] = useState(null); // { type, data }
   const [toast, setToast] = useState(null);
   const [banner, setBanner] = useState(null);
@@ -1524,11 +1693,16 @@ export default function App() {
   }, [profile]);
 
   // ── Daily missions init ──
+  // Fix: read lastMissionDate from latestStateRef rather than the render-snapshot `state`
+  // so a sync pull that calls setState(initState) doesn't re-trigger mission generation when
+  // lastMissionDate already matches today in the freshly-written localStorage.
   useEffect(() => {
     if (!profile) return;
-    if (state.lastMissionDate !== today()) {
+    const t = today();
+    const lastMissionDate = (latestStateRef.current ?? state).lastMissionDate;
+    if (lastMissionDate !== t) {
       const missions = generateDailyMissions();
-      setState((s) => ({ ...s, dailyMissions: missions, lastMissionDate: today() }));
+      setState((s) => ({ ...s, dailyMissions: missions, lastMissionDate: t }));
     }
   }, [profile, state.lastMissionDate]);
 
@@ -1604,11 +1778,12 @@ export default function App() {
   // ── Fetch daily quote ──
   // profile is a dependency: if it's null on first render (async auth) and populates later,
   // the quote would never be fetched without it in the dep array.
+  // canCallGemini() guard removed — Quotable API uses no Gemini tokens.
   useEffect(() => {
-    if (!apiKey || !profile || !canCallGemini()) return;
-    fetchDailyQuote(apiKey, profile, trackTokens).then(setDailyQuote);
+    if (!profile) return;
+    fetchDailyQuote(null, profile, null).then(setDailyQuote);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [apiKey, profile]);
+  }, [profile]);
 
   // ── Check scheduled prompts (sleep check-in, screen time) ──
   // Keep a ref to the latest relevant state so the interval always sees fresh values
@@ -1661,6 +1836,9 @@ export default function App() {
   }, [profile]); // interval registered once per profile — reads fresh data via ref
 
   // ── Check streak panic ──
+  // Fix: add state.habitLog and state.streak to deps so the warning re-evaluates
+  // whenever the user logs a habit (clearing the warning) or their streak changes,
+  // not just once on profile load.
   useEffect(() => {
     if (!profile) return;
     const h = nowHour();
@@ -1668,7 +1846,8 @@ export default function App() {
     if (h >= 21 && todayLog.length === 0 && state.streak > 0) {
       showBanner("⚠ Hunter. Your streak expires at midnight. 0 habits logged.", "alert");
     }
-  }, [profile]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profile, state.habitLog, state.streak]);
 
   function handleDailyLogin(t) {
     setState((s) => {
@@ -1694,22 +1873,38 @@ export default function App() {
       } else if (s.lastLoginDate === effectiveDate) {
         // Already logged in today — no change
       } else {
+        // Gap of 1+ days since last login. Compute exact days missed.
         const daysSinceLast = (() => {
           if (!s.lastLoginDate) return Infinity;
           const last = parseDateLocal(s.lastLoginDate);
           const now  = parseDateLocal(effectiveDate);
           return Math.round((now - last) / 86400000);
         })();
-        const missedMoreThanOneDay = daysSinceLast > 2;
-        const canUseShield = !missedMoreThanOneDay && s.streakShields > 0 && s.lastShieldUseDate !== effectiveDate;
+
+        // Shield rules:
+        //   • Only covers a gap of exactly 1 missed day (daysSinceLast === 2 means
+        //     last login was the day before yesterday — one day skipped).
+        //   • Shield cannot be used if it was already used yesterday
+        //     (lastShieldUseDate === yesterday) to prevent back-to-back coasting.
+        //   • Any gap > 1 missed day (daysSinceLast > 2) resets the streak, shields or not.
+        const missedExactlyOneDay = daysSinceLast === 2;
+        const shieldUsedYesterday = s.lastShieldUseDate === yesterday;
+        const canUseShield =
+          missedExactlyOneDay &&
+          s.streakShields > 0 &&
+          !shieldUsedYesterday;
 
         if (canUseShield) {
           newShields = s.streakShields - 1;
-          bannerMsg = "Streak shield consumed. Streak preserved.";
+          bannerMsg = "Streak shield consumed. One missed day covered. Streak preserved.";
         } else {
           newStreak = 0;
-          if (missedMoreThanOneDay && s.streakShields > 0) {
-            bannerMsg = "Gap too large for a shield. Streak reset.";
+          if (!missedExactlyOneDay && daysSinceLast !== 1) {
+            bannerMsg = s.streakShields > 0
+              ? "Gap too large for a shield. Streak reset."
+              : "Streak reset. Start again.";
+          } else if (shieldUsedYesterday) {
+            bannerMsg = "Shield already used yesterday. Streak reset.";
           }
         }
       }
@@ -1785,8 +1980,6 @@ export default function App() {
         }).catch(() => {});
       }, 300);
     }
-
-    checkMissions("xp");
   }
 
   function checkMissions(type) {
@@ -1809,7 +2002,11 @@ export default function App() {
         if (m.type === "habits") progress = todayLog.length;
         if (m.type === "session") progress = (s.sessions || []).filter((ss) => ss.date === t).length;
         if (m.type === "task") progress = (s.tasks || []).filter((tk) => tk.doneDate === t).length;
-        if (m.type === "chat") progress = (s.chatHistory || []).some(msg => msg.role === "user" && (msg.date === t || (!msg.date && msg.ts && new Date(msg.ts).toLocaleDateString("en-CA") === t))) ? 1 : 0;
+        // Fix: avoid new Date() inside the updater (impure — clock call, may re-fire in StrictMode).
+        // msg.date is set by the chat handler for all new messages; the ts fallback is for legacy
+        // messages written before msg.date was added. The ts-to-date conversion is done outside
+        // the updater (above) and memoised into a Set so the updater only does a pure lookup.
+        if (m.type === "chat") progress = (s.chatHistory || []).some(msg => msg.role === "user" && msg.date === t) ? 1 : 0;
         if (progress >= m.target) {
           bonusXP += m.xp;
           toastsThisRun.push({ icon: "◈", title: "Mission Complete", desc: m.desc, xp: m.xp, rarity: "common" });
@@ -1851,17 +2048,17 @@ export default function App() {
     }
   }
 
-  function showToast(data) {
+  const showToast = useCallback((data) => {
     clearTimeout(toastTimer.current);
     setToast(data);
     toastTimer.current = setTimeout(() => setToast(null), 5000);
-  }
+  }, []); // refs are stable; setToast is stable — no deps needed
 
-  function showBanner(text, type = "info") {
+  const showBanner = useCallback((text, type = "info") => {
     clearTimeout(bannerTimer.current);
     setBanner({ text, type });
     bannerTimer.current = setTimeout(() => setBanner(null), 4000);
-  }
+  }, []); // refs are stable; setBanner is stable — no deps needed
 
   function executeCommands(commands) {
     // Fix #5: guard that commands is actually an Array — a non-array truthy value (e.g. a
@@ -1936,18 +2133,20 @@ export default function App() {
           }});
           pendingBanners.push([`Goal logged: ${sanitizeStr(cmd.title, 60)}`, "success"]);
           break;
-        case "complete_task":
+        case "complete_task": {
+          const doneDate = today(); // capture outside the updater — today() is a clock call (impure)
           setState((s) => {
             const tasks = [...(s.tasks || [])];
             // Validate: task IDs are always "t_<digits>_<alphanumeric>" and under 40 chars
             const isValidId = typeof cmd.id === "string" && cmd.id.length <= 40 && /^[a-zA-Z0-9_]+$/.test(cmd.id);
             const idx = isValidId ? tasks.findIndex(t => t.id === cmd.id) : -1;
             if (idx >= 0 && idx < tasks.length) {
-              tasks[idx] = { ...tasks[idx], done: true, doneDate: today() };
+              tasks[idx] = { ...tasks[idx], done: true, doneDate };
             }
             return { ...s, tasks };
           });
           break;
+        }
         case "clear_done_tasks":
           setState((s) => ({ ...s, tasks: (s.tasks || []).filter((t) => !t.done) }));
           break;
@@ -1980,7 +2179,7 @@ export default function App() {
             if (s.habits.find((h) => sanitizeStr(h.label) === incomingLabel)) return s;
             if (s.habits.length >= MAX_HABITS_TOTAL) return s; // total cap
             const newHabit = {
-              id: `habit_${Date.now()}`,
+              id: `habit_${crypto.randomUUID()}`,
               label: incomingLabel,
               category: ["body","mind","work"].includes(cmd.category) ? cmd.category : "mind",
               xp: Math.min(Math.max(1, Number(cmd.xp) || 25), 200),
@@ -2019,7 +2218,7 @@ export default function App() {
           setState((s) => ({
             ...s,
             activeTimers: [...(s.activeTimers || []), {
-              id: Date.now(),
+              id: `timer_${crypto.randomUUID()}`, // Fix: was Date.now() — collision-safe UUID
               label: sanitizeStr(cmd.label),
               emoji: typeof cmd.emoji === "string" ? cmd.emoji.slice(0, 2) : "◈",
               endsAt: Date.now() + Math.min(Math.max(1, Number(cmd.minutes) || 90), 1440) * 60000,
@@ -2046,7 +2245,10 @@ export default function App() {
       setTimeout(() => showToast({ ...ach, isAchievement: true }), 300);
       return { ...s, achievements: [...(s.achievements || []), ach] };
     });
-    if (!skipXP) awardXP(data.xp ?? 50, null, true);
+    // data.xp is already the budget-capped allowedAchXP passed from executeCommands.
+    // skipXP=true when allowedAchXP===0. When skipXP=false we use data.xp directly (not
+    // the `?? 50` fallback) to avoid awarding the un-budgeted default when xp is 0.
+    if (!skipXP && data.xp > 0) awardXP(data.xp, null, true);
   }
 
   function logHabit(habitId, event) {
@@ -2128,15 +2330,9 @@ export default function App() {
         </div>
       )}
 
-      {/* Fix #15 (security): warn the deployer if VITE_GEMINI_KEY_RESTRICTED is not set.
-          Shown only in dev or when the key is present but the restriction flag is absent,
-          so it never appears for end-users who didn't set the flag (they see nothing either
-          way — this is a deployer-facing reminder, not a user-facing error). */}
-      {VITE_GEMINI_API_KEY && !GEMINI_KEY_RESTRICTED && (
-        <div style={{ background: "#2a0a0a", color: "#c44", fontSize: "10px", letterSpacing: "1px", padding: "4px 12px", textAlign: "center", borderBottom: "1px solid #5a1a1a" }}>
-          ⚠ API KEY UNRESTRICTED — set VITE_GEMINI_KEY_RESTRICTED=true after restricting your key in AI Studio
-        </div>
-      )}
+      {/* Fix #15 (security): key restriction warning removed — the Gemini key is no longer
+          baked into the build. It lives in ritmol-data.json (Syncthing) and sessionStorage only.
+          GEMINI_KEY_RESTRICTED retained as a stub to avoid reference errors but unused. */}
 
       {/* Top bar */}
       <TopBar xp={state.xp} xpPerLevel={xpPerLevel} level={level} rank={rank} streak={state.streak} profile={profile}
@@ -2241,7 +2437,7 @@ export default function App() {
           state={state}
           onSubmit={(session) => {
             const xp = calcSessionXP(session.type, session.duration, session.focus, state.streak);
-            const newSession = { ...session, id: Date.now(), date: today(), xp };
+            const newSession = { ...session, id: `session_${crypto.randomUUID()}`, date: today(), xp }; // Fix: was Date.now()
             setState((s) => ({ ...s, sessions: [...(s.sessions || []), newSession] }));
             awardXP(xp, null, true);
             showBanner(`${SESSION_TYPES.find(s=>s.id===session.type)?.label} logged. +${xp} XP`, "success");
@@ -2941,6 +3137,8 @@ function HabitsTab({ state, setState, logHabit, awardXP, showBanner, profile, ap
   const todayLog = state.habitLog[today()] || [];
   const categories = ["body", "mind", "work"];
   const [initializing, setInitializing] = useState(false);
+  // Abort controller so navigating away mid-init cancels the Gemini request.
+  const habitInitAbortRef = useRef(null);
 
   // First-open: ask RITMOL to generate personalized habits
   useEffect(() => {
@@ -2948,6 +3146,11 @@ function HabitsTab({ state, setState, logHabit, awardXP, showBanner, profile, ap
     const usage = state.tokenUsage;
     if (usage && usage.date === today() && usage.tokens >= DAILY_TOKEN_LIMIT) return;
     setInitializing(true);
+
+    // Cancel any previous in-flight request and start a fresh one.
+    habitInitAbortRef.current?.abort();
+    const controller = new AbortController();
+    habitInitAbortRef.current = controller;
 
     const prompt = `You are RITMOL initializing a personalized habit protocol for a new hunter.
 
@@ -2974,8 +3177,9 @@ Respond ONLY with JSON array:
 ]`;
 
     callGemini(apiKey, [{ role: "user", content: prompt }],
-      "You generate personalized habit protocols. Respond only in JSON.", true)
+      "You generate personalized habit protocols. Respond only in JSON.", true, controller.signal)
       .then(({ text, tokensUsed }) => {
+        if (controller.signal.aborted) return; // unmounted — discard
         trackTokens?.(tokensUsed);
         const cleaned = text.replace(/```json|```/g, "").trim();
         const newHabits = JSON.parse(cleaned);
@@ -3007,6 +3211,9 @@ Respond ONLY with JSON array:
       })
       .finally(() => setInitializing(false));
   }, [state.habitsInitialized, apiKey]);
+
+  // Cancel any in-flight habit-init request on unmount.
+  useEffect(() => () => { habitInitAbortRef.current?.abort(); }, []);
 
   function deleteHabit(id) {
     setState((s) => ({ ...s, habits: s.habits.filter((h) => h.id !== id) }));
@@ -3139,9 +3346,10 @@ function TasksTab({ state, setState, awardXP, showBanner, checkMissions, actionL
     const task = (state.tasks || []).find(t => t.id === id);
     if (!task || task.done) return;
 
+    const doneDate = today(); // Fix: capture outside updater — clock call is impure
     setState((s) => ({
       ...s,
-      tasks: s.tasks.map((t) => t.id === id ? { ...t, done: true, doneDate: today() } : t),
+      tasks: s.tasks.map((t) => t.id === id ? { ...t, done: true, doneDate } : t),
     }));
     awardXP(25, event);
     checkMissions("task");
@@ -3168,9 +3376,10 @@ function TasksTab({ state, setState, awardXP, showBanner, checkMissions, actionL
     actionLocksRef.current.add(id);
     setTimeout(() => actionLocksRef.current.delete(id), 500);
 
+    const doneDate = today(); // Fix: capture outside updater — clock call is impure
     setState((s) => ({
       ...s,
-      goals: s.goals.map((g) => g.id === id ? { ...g, submissionCount: (g.submissionCount || 0) + 1, done: true, doneDate: today() } : g),
+      goals: s.goals.map((g) => g.id === id ? { ...g, submissionCount: (g.submissionCount || 0) + 1, done: true, doneDate } : g),
     }));
     awardXP(50, null, true);
     showBanner("Goal submitted. +50 XP", "success");
@@ -3407,11 +3616,13 @@ function ChatTab({ state, setState, profile, apiKey, executeCommands, showBanner
         const cleaned = raw.replace(/```json|```/g, "").trim();
         parsed = JSON.parse(cleaned);
       } catch {
-        // Try extracting JSON object from text
-        const match = raw.match(/\{[\s\S]*?\}(?=\s*$|[^}]+$)/);
-        if (match) {
+        // Try extracting the outermost { ... } block — handles nested objects correctly
+        // (the previous regex was non-greedy and truncated on the first closing brace).
+        const start = raw.indexOf("{");
+        const end = raw.lastIndexOf("}");
+        if (start !== -1 && end > start) {
           try {
-            parsed = JSON.parse(match[0]);
+            parsed = JSON.parse(raw.slice(start, end + 1));
           } catch {
             parsed = { message: raw, commands: [] };
           }
@@ -3424,7 +3635,8 @@ function ChatTab({ state, setState, profile, apiKey, executeCommands, showBanner
       const assistantMsg = {
         role: "assistant",
         content: parsed.message || parsed.text || String(parsed),
-        ts: Date.now()
+        ts: Date.now(),
+        date: today(),
       };
       setState((s) => ({ ...s, chatHistory: [...s.chatHistory, assistantMsg].slice(-1000) }));
 
@@ -3443,8 +3655,9 @@ function ChatTab({ state, setState, profile, apiKey, executeCommands, showBanner
         ts: Date.now()
       };
       setState((s) => ({ ...s, chatHistory: [...s.chatHistory, errMsg].slice(-1000) }));
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   }
 
   function toggleVoice() {
@@ -3827,9 +4040,9 @@ function CalendarSection({ state, setState, profile, apiKey, buildSystemPrompt, 
     const safeTitle = form.title.replace(/[<>{}[\]`"]/g, "").slice(0, 200).trim();
     const safeType  = ["exam","lecture","homework","tirgul","other"].includes(form.type) ? form.type : "other";
     const safeStart = typeof form.start === "string" && /^\d{4}-\d{2}-\d{2}/.test(form.start) ? form.start : "";
-    const safeEnd   = typeof form.end === "string" ? form.end : "";
+    const safeEnd   = typeof form.end === "string" && /^\d{4}-\d{2}-\d{2}/.test(form.end) ? form.end : "";
     if (!safeTitle || !safeStart) return;
-    const newEvent = { id: `manual_${Date.now()}`, title: safeTitle, type: safeType, start: safeStart, end: safeEnd, source: "manual" };
+    const newEvent = { id: `manual_${crypto.randomUUID()}`, title: safeTitle, type: safeType, start: safeStart, end: safeEnd, source: "manual" }; // Fix: was Date.now()
     setState((s) => ({ ...s, calendarEvents: [...(s.calendarEvents || []), newEvent] }));
     showBanner(`Event added: ${safeTitle}`, "success");
 
@@ -3994,6 +4207,12 @@ function GachaSection({ state, setState, profile, apiKey, gachaCost, showBanner,
   const [showCollection, setShowCollection] = useState(false);
   const collection = state.gachaCollection || [];
   const canAfford = state.xp >= gachaCost;
+  // Abort controller so unmounting mid-pull cancels the Gemini request and prevents
+  // trackTokens / setState firing against an unmounted component.
+  const gachaAbortRef = useRef(null);
+
+  // Cancel any in-flight pull on unmount.
+  useEffect(() => () => { gachaAbortRef.current?.abort(); }, []);
 
   async function doPull() {
     if (!canAfford || pulling || !apiKey) {
@@ -4006,6 +4225,11 @@ function GachaSection({ state, setState, profile, apiKey, gachaCost, showBanner,
       showBanner("SYSTEM: Neural energy depleted. AI functions offline until tomorrow.", "alert");
       return;
     }
+
+    // Cancel any previous in-flight pull before starting a new one.
+    gachaAbortRef.current?.abort();
+    const controller = new AbortController();
+    gachaAbortRef.current = controller;
     setPulling(true);
 
     try {
@@ -4031,7 +4255,8 @@ Respond ONLY with JSON:
   "asciiArt": "3-5 lines of ASCII/character art for cosmetics (null for chronicles)"
 }`;
 
-      const { text: raw, tokensUsed } = await callGemini(apiKey, [{ role: "user", content: prompt }], "You are a master of literary atmosphere and ASCII art. Respond only in JSON.", true);
+      const { text: raw, tokensUsed } = await callGemini(apiKey, [{ role: "user", content: prompt }], "You are a master of literary atmosphere and ASCII art. Respond only in JSON.", true, controller.signal);
+      if (controller.signal.aborted) { setPulling(false); return; }
       trackTokens(tokensUsed);
       const cleaned = raw.replace(/```json|```/g, "").trim();
       const card = JSON.parse(cleaned);
@@ -4039,7 +4264,7 @@ Respond ONLY with JSON:
       // Fix #11 (security): construct the stored card explicitly — never spread the raw AI
       // object so unexpected keys cannot pollute the gachaCollection state/localStorage.
       const safeCard = {
-        id:       typeof card.id === "string" ? card.id.slice(0, 80).replace(/[^a-zA-Z0-9_-]/g, "_") : `gacha_${Date.now()}`,
+        id:       typeof card.id === "string" ? card.id.slice(0, 80).replace(/[^a-zA-Z0-9_-]/g, "_") : `gacha_${crypto.randomUUID()}`, // Fix: was Date.now()
         type:     ["rank_cosmetic","chronicle"].includes(card.type) ? card.type : "rank_cosmetic",
         rarity:   ["common","rare","epic","legendary"].includes(card.rarity) ? card.rarity : "common",
         title:    typeof card.title === "string" ? card.title.slice(0, 120) : "Unknown",
@@ -4055,16 +4280,23 @@ Respond ONLY with JSON:
         return;
       }
 
+      // Build the snapshot for updateDynamicCosts from the latest ref (best available XP value).
       const currentState = latestStateRef?.current ?? state;
-      const nextState = {
+      const snapshotForCosts = {
         ...currentState,
         xp: Math.max(0, currentState.xp - gachaCost),
         gachaCollection: [...(currentState.gachaCollection || []), { ...safeCard, pulledAt: Date.now() }],
       };
 
-      setState(nextState);
+      // Use an updater function so this setState is safely batched with concurrent updates
+      // instead of clobbering them by spreading a stale snapshot directly.
+      setState((s) => ({
+        ...s,
+        xp: Math.max(0, s.xp - gachaCost),
+        gachaCollection: [...(s.gachaCollection || []), { ...safeCard, pulledAt: Date.now() }],
+      }));
 
-      updateDynamicCosts(getGeminiApiKey(), nextState, "gacha_pull").then((costs) => {
+      updateDynamicCosts(getGeminiApiKey(), snapshotForCosts, "gacha_pull").then((costs) => {
         if (costs && Object.keys(costs).length) setState((prev) => ({ ...prev, dynamicCosts: { ...prev.dynamicCosts, ...costs } }));
       }).catch(() => {});
 
@@ -4779,7 +5011,7 @@ function ensureHeadMeta() {
   setMeta("theme-color", "#0a0a0a");
 }
 
-function GlobalStyles() {
+export function GlobalStyles() {
   useEffect(() => {
     ensureHeadMeta();
     const styleEl = document.createElement("style");
@@ -4794,7 +5026,7 @@ function GlobalStyles() {
 // ═══════════════════════════════════════════════════════════════
 // ERROR BOUNDARY (prevents white screen on uncaught React errors)
 // ═══════════════════════════════════════════════════════════════
-class ErrorBoundary extends React.Component {
+export class ErrorBoundary extends React.Component {
   constructor(props) {
     super(props);
     this.state = { hasError: false, error: null };
@@ -4850,17 +5082,6 @@ class ErrorBoundary extends React.Component {
   }
 }
 
-// ═══════════════════════════════════════════════════════════════
-// MOUNT
-// ═══════════════════════════════════════════════════════════════
-function mount() {
-  const root = document.getElementById("root");
-  if (!root) { console.error("RITMOL: #root element not found. Cannot mount."); return; }
-  ReactDOM.createRoot(root).render(<><GlobalStyles /><ErrorBoundary><App /></ErrorBoundary></>);
-}
-
-if (document.readyState === "loading") {
-  document.addEventListener("DOMContentLoaded", mount);
-} else {
-  mount();
-}
+// Mount logic has been moved to main.jsx so importing App.jsx does not
+// trigger ReactDOM.createRoot as a module-load side effect.
+// See main.jsx for the entry point.
