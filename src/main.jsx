@@ -1,6 +1,6 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
-import App, { GlobalStyles, ErrorBoundary } from "./App.jsx";
+import App, { GlobalStyles, ErrorBoundary } from "./App";
 
 // Single entry point for mounting. Keeping this separate from App.jsx means
 // importing App in tests (or alternative entry points) does not trigger

@@ -111,13 +111,16 @@ Contributors and automated tools should **not** add server components or cloud s
    npm install
    ```
 
-3. **Run locally**
+3. **Prepare example data (optional)**
+   If you want to start with the provided sample data, you can **rename the `example-data` folder to `data` (remove the `example-` prefix)** so you are using the example `ritmol-data.json` as your app data.
+
+4. **Run locally**
    ```bash
    npm run dev
    ```
    For **single-account access**, create a `.env` from `.env.example` and set `VITE_ALLOWED_EMAIL` and `VITE_GOOGLE_CLIENT_ID`. To run **without the gate**, leave those two empty. The Gemini key comes from your sync file — see the **Gemini API Key** section below.
 
-4. **(Optional) Local `.env` reference**
+5. **(Optional) Local `.env` reference**
    The only build-time variables are the two auth vars. `VITE_SYNC_FILE_PATH` is a display-only path hint shown in Settings (e.g. `/Users/you/Syncthing/ritmol-data.json`). The Gemini key is not an env var — it lives in `ritmol-data.json`.
 
 ---
