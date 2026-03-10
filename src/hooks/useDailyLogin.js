@@ -39,16 +39,16 @@ export function useDailyLogin({ profile, setState, setModal, setLevelUpData, sho
       return new Date(Date.UTC(y, m - 1, d));
     };
 
+    const effectiveDate = todayUTC();
+    const maxDateSeen = getMaxDateSeen();
+    if (maxDateSeen && effectiveDate < maxDateSeen) {
+      setState((s) => ({ ...s, lastLoginDate: effectiveDate, streak: 0 }));
+      loginInProgressRef.current = false;
+      return;
+    }
+    updateMaxDateSeen(effectiveDate);
+
     setState((s) => {
-      const effectiveDate = todayUTC();
-
-      // Anti-rollback: reject dates that are earlier than the max seen
-      const maxDateSeen = getMaxDateSeen();
-      if (maxDateSeen && effectiveDate < maxDateSeen) {
-        return { ...s, lastLoginDate: effectiveDate, streak: 0 };
-      }
-      updateMaxDateSeen(effectiveDate);
-
       // Reject future-dated lastLoginDate from a crafted sync file
       if (s.lastLoginDate && s.lastLoginDate > effectiveDate) {
         return { ...s, lastLoginDate: effectiveDate, streak: 0 };

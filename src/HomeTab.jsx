@@ -1,12 +1,12 @@
 import { useState, useEffect, useRef } from "react";
 import { useAppContext } from "./context/AppContext";
-import { today, nowHour } from "./utils/storage";
+import { today, todayUTC, nowHour, sanitizeForDisplay } from "./utils/storage";
 import { sanitizeForPrompt } from "./api/systemPrompt";
 import { DAILY_TOKEN_LIMIT } from "./constants";
 
 export default function HomeTab() {
   const { state, setState, rank, dailyQuote, logHabit, showBanner, setTab, profile } = useAppContext();
-  const todayLog = state.habitLog[today()] || [];
+  const todayLog = state.habitLog[todayUTC()] || [];
   const totalHabits = state.habits.length;
   const doneHabits = todayLog.length;
 
@@ -46,10 +46,10 @@ export default function HomeTab() {
           border: "1px solid #333", padding: "16px",
         }}>
           <div style={{ fontFamily: "'IM Fell English', serif", fontSize: "13px", fontStyle: "italic", color: "#ccc", lineHeight: "1.6" }}>
-            &ldquo;{sanitizeForPrompt(dailyQuote.quote ?? "", 500)}&rdquo;
+            &ldquo;{sanitizeForDisplay(dailyQuote.quote ?? "", 500)}&rdquo;
           </div>
           <div style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: "10px", color: "#555", marginTop: "8px" }}>
-            — {sanitizeForPrompt(dailyQuote.author ?? "", 100)}
+            — {sanitizeForDisplay(dailyQuote.author ?? "", 100)}
           </div>
         </div>
       )}
@@ -107,9 +107,7 @@ export default function HomeTab() {
         <div style={{ border: "1px solid #333", padding: "12px", fontFamily: "'Share Tech Mono', monospace" }}>
           <div style={{ fontSize: "9px", color: "#555", letterSpacing: "2px" }}>DAILY OBJECTIVE</div>
           <div style={{ fontSize: "13px", marginTop: "4px" }}>
-            {sanitizeForPrompt(state.dailyGoal ?? "", 200)
-              .replace(/['"\\]/g, "")
-              .replace(/[\u27E8\u27E9\u276C-\u276F\uFE3D\uFE3E\u2329\u232A]/g, "")}
+            {sanitizeForDisplay(state.dailyGoal ?? "", 200)}
           </div>
         </div>
       )}

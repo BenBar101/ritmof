@@ -15,8 +15,8 @@
 // if the IDB store is later cleared.
 // ═══════════════════════════════════════════════════════════════
 
-import { LS, storageKey, IDB_KEYS, IS_DEV, DEV_PREFIX } from "./storage";
-import { idbGet, idbSet } from "./idb";
+import { LS, storageKey, IS_DEV, DEV_PREFIX, today, todayUTC } from "./storage";
+import { store } from "./db";
 
 const MIGRATION_FLAG_KEY = IS_DEV ? `${DEV_PREFIX}jv_idb_migrated` : "jv_idb_migrated";
 
@@ -27,12 +27,13 @@ export async function migrateLocalStorageToIdb() {
   if (migrated === "1" && !cleanupPending) return;
 
   // IDB already has a profile — nothing to migrate (new install or already migrated)
-  const idbProfile = idbGet(storageKey("jv_profile"), null);
+  const idbProfile = store.getValue(storageKey("jv_profile")) ?? null;
   if (idbProfile !== null) {
     // If cleanup was pending and IDB has a profile, we can safely clear
     // any leftover localStorage copies.
     if (cleanupPending) {
-      for (const key of IDB_KEYS) {
+      const keys = Object.keys(store.getValues());
+      for (const key of keys) {
         const prefixed = storageKey(key);
         LS.del(prefixed);
       }
@@ -53,12 +54,25 @@ export async function migrateLocalStorageToIdb() {
 
   console.info("[RITMOL] Migrating data from localStorage to IndexedDB…");
 
-  // Copy every IDB_KEY from localStorage to IDB
-  for (const key of IDB_KEYS) {
+  // Copy every old jv_* key from localStorage into TinyBase store
+  for (let i = 0; i < localStorage.length; i += 1) {
+    const rawKey = localStorage.key(i);
+    if (!rawKey || !rawKey.startsWith("jv_")) continue;
+    const key = rawKey;
     const prefixed = storageKey(key);
-    const value    = LS.get(prefixed, null);
+    let value    = LS.get(prefixed, null);
     if (value !== null) {
-      idbSet(prefixed, value);
+      // One-off habit-log migration: if the user previously logged today's habits
+      // under a local-date key that differs from todayUTC(), re-key that single
+      // entry so missions and streak logic (which use UTC) continue to see it.
+      if (key === "jv_habit_log" && value && typeof value === "object") {
+        const localToday = today();
+        const utcToday = todayUTC();
+        if (localToday !== utcToday && value[localToday] && !value[utcToday]) {
+          value = { ...value, [utcToday]: value[localToday] };
+        }
+      }
+      store.setValue(prefixed, value);
     }
   }
 

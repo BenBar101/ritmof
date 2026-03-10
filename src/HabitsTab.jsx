@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { useAppContext } from "./context/AppContext";
-import { today, todayUTC } from "./utils/storage";
+import { todayUTC } from "./utils/storage";
 import { STYLE_CSS, DAILY_TOKEN_LIMIT } from "./constants";
 import { callGemini } from "./api/gemini";
 // Fix [H-1]: import the canonical sanitizeForPrompt instead of maintaining a local copy.
@@ -12,7 +12,7 @@ import GeometricCorners from "./GeometricCorners";
 
 export default function HabitsTab() {
   const { state, setState, logHabit, showBanner, profile, apiKey, trackTokens } = useAppContext();
-  const todayLog = state.habitLog[today()] || [];
+  const todayLog = state.habitLog[todayUTC()] || [];
   const categories = ["body", "mind", "work"];
   const [initializing, setInitializing] = useState(false);
   // Abort controller so navigating away mid-init cancels the Gemini request.
@@ -34,12 +34,14 @@ export default function HabitsTab() {
     // so all prompt-injection fixes (U+2028/2029, single-quote, zero-width chars) apply
     // here. The local copy previously defined inline was missing those fixes.
 
+    const safeBooksInterests = `${sanitizeForPrompt(profile?.books ?? "", 100)}, ${sanitizeForPrompt(profile?.interests ?? "", 100)}`.slice(0, 200);
+
     const prompt = `You are RITMOL initializing a personalized habit protocol for a new hunter.
 
 Hunter profile:
 - Name: ${sanitizeForPrompt(profile?.name ?? "Hunter", 60)}
 - Major: ${sanitizeForPrompt(profile?.major ?? "", 80)}
-- Books/Interests: ${sanitizeForPrompt(profile?.books ?? "", 150)}, ${sanitizeForPrompt(profile?.interests ?? "", 150)}
+- Books/Interests: ${safeBooksInterests}
 - Semester goal: ${sanitizeForPrompt(profile?.semesterGoal ?? "", 200)}
 
 Current base habits (keep these, don't duplicate): water, sleep11, wake7, sunlight, read, deepwork, journal
@@ -79,7 +81,7 @@ Respond ONLY with JSON array:
               label:    typeof h.label === "string" ? h.label.replace(/[\u0000-\u001F\u007F-\u009F\u200B-\u200D\uFEFF]/g, "").replace(/[<>"'`&]/g, "").slice(0, 80) : "Habit",
               category: ["body","mind","work"].includes(h.category) ? h.category : "mind",
               xp:       typeof h.xp === "number" ? Math.min(Math.max(1, Math.round(h.xp)), 200) : 25,
-              icon:     typeof h.icon === "string" ? h.icon.slice(0, 2) : "◈",
+              icon:     typeof h.icon === "string" ? [...h.icon].slice(0, 2).join("") : "◈",
               style:    ["ascii","dots","geometric","typewriter"].includes(h.style) ? h.style : "ascii",
               // eslint-disable-next-line no-control-regex
               desc:     typeof h.desc === "string" ? h.desc.replace(/[\u0000-\u001F\u007F-\u009F\u200B-\u200D\uFEFF]/g, "").replace(/[<>"'`&]/g, "").slice(0, 200) : "",

@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { useAppContext } from "./context/AppContext";
-import { todayUTC, getGeminiApiKey, setGeminiApiKey } from "./utils/storage";
+import { todayUTC, getGeminiApiKey, setGeminiApiKey, getMaxDateSeen, storageKey } from "./utils/storage";
 import { ACHIEVEMENT_RARITIES, STYLE_CSS, DAILY_TOKEN_LIMIT, RANKS, GACHA_RARITY_WEIGHTS } from "./constants";
 import { DATA_DISCLOSURE_SEEN_KEY, THEME_KEY } from "./constants";
 import { getLevelProgress } from "./utils/xp";
@@ -9,7 +9,7 @@ import { fetchGCalEvents, loadGoogleGIS } from "./api/gcal";
 import { SyncManager, FSAPI_SUPPORTED } from "./sync/SyncManager";
 import GeometricCorners from "./GeometricCorners";
 import { primaryBtn } from "./Onboarding";
-import { idbClearAll } from "./utils/idb";
+import { idbClearAll, idbSet } from "./utils/idb";
 import { updateDynamicCosts } from "./api/dynamicCosts";
 import { sanitizeForPrompt } from "./api/systemPrompt";
 
@@ -120,6 +120,11 @@ function ProfileOverview({ state, setState, profile, level, streakShieldCost, ap
     if (!canBuyShield || !apiKey) return;
 
     setState((s) => {
+      // NOTE: lastShieldBuyDate is tracked in UTC rather than local time. This means
+      // hunters near the UTC date boundary (UTC+12–UTC+14) may appear to get two
+      // purchases within a single local calendar day when buying just before and
+      // just after UTC midnight, but the economic impact is limited and keeps
+      // streak logic consistent with other UTC-based checks.
       const t = todayUTC();
       if (s.lastShieldBuyDate === t) return s;
       const currentCost = s.dynamicCosts?.streakShieldCost ?? streakShieldCost;
@@ -867,10 +872,19 @@ function SettingsSection({ profile, setState, showBanner, syncStatus, lastSynced
     clearTimeout(confirmResetTimerRef.current);
     setConfirmReset(false);
 
-    // 1. Wipe all IDB user data
+    // 1. Preserve the anti-rollback watermark before wiping IDB so full reset
+    // does not allow clock rollback exploits on AI XP / streak logic.
+    const maxDateSeen = getMaxDateSeen();
+
+    // 2. Wipe all IDB user data
     await idbClearAll();
 
-    // 2. Clear the residual localStorage keys that belong to this app
+    // 3. Restore the anti-cheat watermark if it existed.
+    if (maxDateSeen) {
+      idbSet(storageKey("jv_max_date_seen"), maxDateSeen);
+    }
+
+    // 4. Clear the residual localStorage keys that belong to this app
     //    (theme, disclosure flag, jv_last_synced, migration flag, quote cache)
     const lsKeysToDelete = [];
     for (let i = 0; i < localStorage.length; i++) {
@@ -885,13 +899,13 @@ function SettingsSection({ profile, setState, showBanner, syncStatus, lastSynced
     }
     lsKeysToDelete.forEach((k) => localStorage.removeItem(k));
 
-    // 3. Forget sync file handle from IDB handles store
+    // 5. Forget sync file handle from IDB handles store
     await SyncManager.forget();
 
-    // 4. Clear in-memory Gemini key
+    // 6. Clear in-memory Gemini key
     setGeminiApiKey("");
 
-    // 5. Reload — no setTimeout needed under write-through IDB persistence
+    // 7. Reload — no setTimeout needed under write-through IDB persistence
     window.location.reload();
   }
 

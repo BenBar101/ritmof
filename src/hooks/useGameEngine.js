@@ -19,7 +19,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { useCallback, useRef } from "react";
-import { storageKey, today, todayUTC } from "../utils/storage";
+import { storageKey, today, todayUTC, getMaxDateSeen } from "../utils/storage";
 import { idbGet } from "../utils/idb";
 import { getLevel, getRank, getXpPerLevel } from "../utils/xp";
 import { getGeminiApiKey } from "../utils/storage";
@@ -105,6 +105,12 @@ export function useGameEngine({ setState, showBanner, showToast, setLevelUpData 
   // ── AI XP budget (ref-based to avoid race conditions) ────
   const consumeAiXpBudget = useCallback((requested) => {
     const t = todayUTC();
+    // Harden against clock rollback: if the current date is earlier than the
+    // anti-rollback watermark, treat the daily AI XP budget as already spent.
+    const maxSeen = getMaxDateSeen();
+    if (maxSeen && t < maxSeen) {
+      return 0;
+    }
     if (aiXpTodayRef.current === null || aiXpTodayRef.current.date !== t) {
       const persisted = idbGet(storageKey("jv_token_usage"), null);
       const baseXp    = (persisted && persisted.date === t ? persisted.aiXpToday : 0) || 0;
@@ -149,7 +155,10 @@ export function useGameEngine({ setState, showBanner, showToast, setLevelUpData 
         lastLevelUpXpRef.current = newXP;
         const snapshot = { ...s, xp: newXP };
         setTimeout(() => {
-          setLevelUpData({ level: newLevel, rank: getRank(newLevel) });
+          setLevelUpData((prev) => {
+            if (prev && prev.level >= newLevel) return prev;
+            return { level: newLevel, rank: getRank(newLevel) };
+          });
           updateDynamicCosts(getGeminiApiKey(), snapshot, "level_up", trackTokens)
             .then((costs) => {
               if (costs && Object.keys(costs).length) {
@@ -225,7 +234,10 @@ export function useGameEngine({ setState, showBanner, showToast, setLevelUpData 
       if (pendingData.levelUp) {
         const { level, rank, snapshot } = pendingData.levelUp;
         setTimeout(() => {
-          setLevelUpData({ level, rank });
+          setLevelUpData((prev) => {
+            if (prev && prev.level >= level) return prev;
+            return { level, rank };
+          });
           updateDynamicCosts(getGeminiApiKey(), snapshot, "level_up", trackTokens)
             .then((costs) => {
               if (costs && Object.keys(costs).length) {
@@ -261,7 +273,7 @@ export function useGameEngine({ setState, showBanner, showToast, setLevelUpData 
     actionLocksRef.current.add(habitId);
     setTimeout(() => actionLocksRef.current.delete(habitId), 500);
 
-    const t = today();
+    const t = todayUTC();
     // pendingRef is a plain object (not useRef) intentionally — it is local to each
     // logHabit invocation. In React Strict Mode the updater runs twice:
     //   - 1st run: log does NOT include habitId → sets didLog=true, xp=h.xp
@@ -379,9 +391,9 @@ export function useGameEngine({ setState, showBanner, showToast, setLevelUpData 
           break;
 
         case "set_daily_goal": {
-          const safeGoal = sanitizeForPrompt(cmd.text ?? "", 500)
-            .replace(/['"\\]/g, "")
-            .replace(/[\u27E8\u27E9\u276C-\u276F\uFE3D\uFE3E\u2329\u232A]/g, "");
+          // Sanitize once at storage time; display uses sanitizeForDisplay and
+          // prompt-context uses sanitizeForPrompt when building the system prompt.
+          const safeGoal = sanitizeForPrompt(cmd.text ?? "", 500);
           setState((s) => ({ ...s, dailyGoal: safeGoal }));
           break;
         }
@@ -398,7 +410,9 @@ export function useGameEngine({ setState, showBanner, showToast, setLevelUpData 
                 label:    incomingLabel,
                 category: ["body","mind","work"].includes(cmd.category) ? cmd.category : "mind",
                 xp:       Math.min(Math.max(1, Number(cmd.xp) || 25), 200),
-                icon:     typeof cmd.icon === "string" ? cmd.icon.slice(0, 2) : "◈",
+                icon:     typeof cmd.icon === "string"
+                  ? [...cmd.icon].slice(0, 2).join("")
+                  : "◈",
                 style:    ["ascii","dots","geometric","typewriter"].includes(cmd.style) ? cmd.style : "ascii",
                 addedBy:  "ritmol",
               }],
@@ -445,7 +459,8 @@ export function useGameEngine({ setState, showBanner, showToast, setLevelUpData 
                       // eslint-disable-next-line no-control-regex
                       .replace(/[\u0000-\u001F\u007F-\u009F\u200B-\u200D\uFEFF]/g, "")
                       .replace(/[<>&"'`]/g, "")
-                      .slice(0, 2)
+                      ? [...cmd.emoji].slice(0, 2).join("")
+                      : "◈"
                   : "◈",
                 endsAt: Date.now() + safeMins * 60000,
               }],

@@ -320,7 +320,7 @@ function ChatMessage({ msg }) {
   const safeContent = typeof msg.content === "string"
     ? msg.content
         // eslint-disable-next-line no-control-regex
-        .replace(/[\u0000-\u001F\u007F-\u009F]/g, "")
+        .replace(/[\u0000-\u001F\u007F-\u009F\u2028\u2029]/g, "")
         .replace(/[\u200B-\u200D\uFEFF\u202A-\u202E\u2066-\u2069]/g, "")
     : String(msg.content ?? "");
   return (

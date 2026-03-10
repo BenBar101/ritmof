@@ -2,6 +2,7 @@ import { useState } from "react";
 import { STYLE_CSS } from "./constants";
 import { sanitizeForPrompt } from "./api/systemPrompt";
 import { SyncManager, FSAPI_SUPPORTED } from "./sync/SyncManager";
+import { setGeminiApiKey } from "./utils/storage";
 import GeometricCorners from "./GeometricCorners";
 
 export const primaryBtn = {
@@ -107,7 +108,7 @@ function SyncOnboardingStep() {
 
 export default function Onboarding({ onComplete }) {
   const [step, setStep] = useState(0);
-  const [form, setForm] = useState({ name: "", major: "", books: "", interests: "", semesterGoal: "" });
+  const [form, setForm] = useState({ name: "", major: "", books: "", interests: "", semesterGoal: "", geminiKey: "" });
   const [error, setError] = useState("");
 
   const steps = [
@@ -186,7 +187,12 @@ export default function Onboarding({ onComplete }) {
     if (step < steps.length - 1) {
       setStep(step + 1);
     } else {
-      onComplete(sanitizeForm(form));
+      const sanitized = sanitizeForm(form);
+      // Persist Gemini key to sessionStorage but never forward it into App state.
+      if (typeof form.geminiKey === "string" && form.geminiKey.trim()) {
+        setGeminiApiKey(form.geminiKey.trim());
+      }
+      onComplete(sanitized);
     }
   }
 

@@ -53,8 +53,9 @@ export function sanitizeForPrompt(str, maxLen = 200) {
   return out
     // Strip ASCII injection characters — square brackets are also stripped to
     // prevent JSON/markdown-style injection patterns in prompt context even
-    // though they are common text.
-    .replace(/[<>{}[\]`"'\\]/g, "")          // ASCII injection chars
+    // though they are common text. Pipe `|` is also stripped so it cannot be
+    // used to spoof turn separators inside RECENT_CONTEXT.
+    .replace(/[<>{}[\]`"'|\\]/g, "")          // ASCII injection chars (+ pipe)
     // Strip Unicode quote-like characters (double/single, guillemets, etc.)
     .replace(/[\u201C\u201D\u2018\u2019\u00AB\u00BB\u2039\u203A]/g, "")
     // Strip angle-bracket homoglyphs that could visually mimic tags.

@@ -64,7 +64,14 @@ Respond ONLY with a JSON object with any of: xpPerLevel, gachaCost, streakShield
     return out;
   } catch (err) {
     if (err?.name !== "AbortError") {
-      console.warn("[dynamicCosts] Failed to update dynamic costs:", err?.message ?? err);
+      const raw = err?.message ?? String(err ?? "");
+      const safeMsg = raw
+        // Strip raw API keys and common token-like blobs defensively even though
+        // callGemini already redacts them — belt-and-suspenders for logging sinks.
+        .replace(/AIza[A-Za-z0-9_-]{34,45}/g, "[key]")
+        .replace(/eyJ[\w.-]+/g, "[token]")
+        .slice(0, 100);
+      console.warn("[dynamicCosts] Failed to update dynamic costs:", safeMsg);
     }
     return {};
   }

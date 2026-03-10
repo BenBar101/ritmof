@@ -37,6 +37,7 @@ export function useSync({ latestStateRef, rehydrate, showBanner }) {
   // closure from passing the ref down through props.
   const isPullingRef = useRef(false);
   const debounceTimerRef = useRef(null);
+  const pageHideInProgressRef = useRef(false);
 
   // ── Check if a sync file is already linked on mount ──
   useEffect(() => {
@@ -69,6 +70,8 @@ export function useSync({ latestStateRef, rehydrate, showBanner }) {
 
     const onVisibility = () => { if (document.visibilityState === "hidden") schedulePush(); };
     const onPageHide   = () => {
+      if (pageHideInProgressRef.current) return;
+      pageHideInProgressRef.current = true;
       // On browser/tab close, flush immediately without debounce so the final
       // state is best-effort pushed even if the 500ms timer would not fire.
       if (debounceTimerRef.current) {
@@ -80,7 +83,10 @@ export function useSync({ latestStateRef, rehydrate, showBanner }) {
           if (!handle || isPullingRef.current || !latestStateRef.current?.profile) return null;
           return SyncManager.push();
         })
-        .catch(() => {});
+        .catch(() => {})
+        .finally(() => {
+          pageHideInProgressRef.current = false;
+        });
     };
 
     document.addEventListener("visibilitychange", onVisibility);
@@ -140,6 +146,20 @@ export function useSync({ latestStateRef, rehydrate, showBanner }) {
       setLastSynced(ts);
       setSyncStatus("synced");
       showBanner("Pulled data from Syncthing file.", "success");
+      // After a successful pull and rehydrate, a full reload ensures any components
+      // with local UI state derived from the old global state are reset to match
+      // the freshly loaded data.
+      setTimeout(() => {
+        try {
+          window.location.reload();
+        } catch {
+          try {
+            window.location.href = window.location.origin + window.location.pathname;
+          } catch {
+            // As a last resort, do nothing — state has already been rehydrated.
+          }
+        }
+      }, 250);
     } catch (e) {
       setSyncStatus("error");
       const msgs = {

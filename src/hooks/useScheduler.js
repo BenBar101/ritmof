@@ -81,10 +81,15 @@ export function useScheduler({ state, profile, showBanner, setModal }) {
         const safeTitle = String(upcoming[0].title || "Event")
           .replace(/[^\x20-\x7E]/g, "").slice(0, 100);
         const minsLeft = Math.round((new Date(upcoming[0].start) - Date.now()) / 60000);
-        showBanner(`${safeTitle} starts in ${minsLeft} minutes.`, "warning");
+        const count = upcoming.length;
+        const summary =
+          count === 1
+            ? `${safeTitle} starts in ${minsLeft} minutes.`
+            : `${safeTitle} starts in ${minsLeft} minutes, plus ${count - 1} more upcoming events.`;
+        showBanner(summary, "warning");
 
-        // Mark reminded — we set this via a custom event so the scheduler doesn't
-        // need direct access to setState (keeps the hook dependency surface small).
+        // Mark all as reminded — we set this via a custom event so the scheduler
+        // doesn't need direct access to setState (keeps the hook dependency surface small).
         window.dispatchEvent(new CustomEvent("ritmol:mark-reminded", {
           detail: { ids: upcoming.map((u) => u.id) },
         }));

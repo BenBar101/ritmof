@@ -65,10 +65,25 @@ function KeysConfigGate() {
     if (!FSAPI_SUPPORTED) return;
     setSyncError(""); setSyncStatus("syncing");
     try {
-      await SyncManager.pull(); setSyncStatus("success");
-      // Wait for pending IDB writes to flush before reloading. The cache is
-      // already updated; 1000 ms is a conservative buffer for slower devices.
-      setTimeout(() => window.location.reload(), 1000);
+      await SyncManager.pull();
+      setSyncStatus("synced");
+      // Wait briefly for any fire-and-forget IDB writes triggered by Pull to
+      // flush, then attempt a hard reload. If reload is blocked (CSP, tests),
+      // fall back to replacing location without query/hash so the new data is
+      // picked up without leaving the app in a half-reloaded state.
+      setTimeout(() => {
+        try {
+          window.location.reload();
+        } catch {
+          try {
+            window.location.href = window.location.origin + window.location.pathname;
+          } catch {
+            // As a last resort, do nothing — state has already been updated
+            // from the sync payload, so the app remains usable even without
+            // a full reload.
+          }
+        }
+      }, 250);
     } catch (e) {
       setSyncStatus("error");
       const msgs = { NO_HANDLE: "No sync file linked yet.", CORRUPT_FILE: "Sync file is corrupt or not valid JSON.", SYNC_SCHEMA_OUTDATED: "Sync file was written by an older version of RITMOL.", SYNC_FILE_TOO_LARGE: "Sync file exceeds 10 MB. Check the file." };
@@ -96,7 +111,11 @@ function KeysConfigGate() {
           </button>
           <div style={{ fontSize: "10px", color: "#777", marginTop: "8px", lineHeight: "1.6" }}>STEP 2 — After your file contains <code>geminiKey</code>, load it:</div>
           <button type="button" onClick={handleLoadFromFile} disabled={!syncFileConnected || syncStatus === "syncing"} style={{ ...btnBase, marginTop: "8px", border: "1px solid #444", background: !syncFileConnected || syncStatus === "syncing" ? "#151515" : "transparent", color: !syncFileConnected || syncStatus === "syncing" ? "#444" : "#ccc" }}>
-            {syncStatus === "syncing" ? "LOADING FROM FILE..." : "LOAD KEY FROM SYNC FILE ↓"}
+            {syncStatus === "syncing"
+              ? "LOADING FROM FILE..."
+              : syncStatus === "synced"
+              ? "✓ LOADED — RELOADING…"
+              : "LOAD KEY FROM SYNC FILE ↓"}
           </button>
           {syncError && <div style={{ marginTop: "8px", color: "#c44", fontSize: "10px" }}>⚠ {syncError}</div>}
         </div>
@@ -124,6 +143,10 @@ export default function App() {
   const { modal, setModal, toast, setToast, banner, setBanner, levelUpData, setLevelUpData, showToast, showBanner } = useUI();
 
   const profile          = state.profile;
+  // apiKey is read from sessionStorage on every render. After a sync Pull that
+  // writes a new key into sessionStorage, rehydrate() triggers a re-render and
+  // this call observes the updated value — there is at most a single render
+  // where the old key remains in scope.
   const apiKey           = getGeminiApiKey();
   const xpPerLevel       = getXpPerLevel(state);
   const level            = getLevel(state.xp, xpPerLevel);
@@ -261,9 +284,7 @@ export default function App() {
   if (showOnboarding) {
     return (
       <Onboarding onComplete={(profile) => {
-        // eslint-disable-next-line no-unused-vars
-        const { geminiKey: _g, ...profileWithoutKey } = profile;
-        setState((s) => ({ ...s, profile: profileWithoutKey }));
+        setState((s) => ({ ...s, profile }));
         setShowOnboarding(false);
       }} />
     );
@@ -352,7 +373,7 @@ export default function App() {
         {modal?.type === "session_log" && (
           <ErrorBoundary>
             <SessionLogModal onClose={() => setModal(null)} state={state} onSubmit={(session) => {
-            const xp = calcSessionXP(session.type, session.duration, session.focus, modal?.streak ?? state.streak);
+              const xp = calcSessionXP(session.type, session.duration, session.focus, state.streak);
               // eslint-disable-next-line no-control-regex
               const san = (v, max) => typeof v === "string" ? v.replace(/[\u0000-\u001F\u007F-\u009F]/g, "").replace(/[<>"'`&]/g, "").slice(0, max) : "";
               const newSession = {
@@ -385,7 +406,7 @@ export default function App() {
             <AchievementToast key={toast._id} toast={toast} onClose={() => setToast(null)} />
           </ErrorBoundary>
         )}
-        <button type="button" onClick={() => setModal({ type: "session_log", streak: state.streak })}
+        <button type="button" onClick={() => setModal({ type: "session_log" })}
           style={{ position: "fixed", bottom: "80px", right: "16px", zIndex: 100, width: "48px", height: "48px", borderRadius: "0", background: "#fff", color: "#000", fontFamily: "'Share Tech Mono', monospace", fontSize: "18px", border: "2px solid #fff", display: "flex", alignItems: "center", justifyContent: "center" }}
           title="Log Study Session">▶</button>
       </div>

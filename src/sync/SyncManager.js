@@ -54,10 +54,32 @@ const DATE_KEY_RE = /^\d{4}-\d{2}-\d{2}$/;
 const MAX_LOG_VALUE_SIZE = 4096; // per-entry byte cap to prevent log value bloat
 const MAX_LOG_OBJECT_BYTES = MAX_LOG_VALUE_SIZE * MAX_LOG_ENTRIES;
 
+// Grapheme-aware length check for emoji / icon strings. Many emoji are composed of
+// multiple UTF-16 code units (and even multiple codepoints joined via ZWJ), so
+// String.length ≤ 2 is NOT a reliable proxy for "one or two emoji". We allow up to
+// 2 grapheme clusters when Intl.Segmenter is available, and fall back to a slightly
+// looser 4-code-unit bound in older environments.
+function iconLengthOk(icon) {
+  if (typeof icon !== "string") return false;
+  try {
+    if (typeof Intl !== "undefined" && Intl.Segmenter) {
+      const segments = [...new Intl.Segmenter().segment(icon)];
+      return segments.length <= 2;
+    }
+  } catch {
+    // Ignore Segmenter failures and fall through to length-based fallback.
+  }
+  return icon.length <= 4;
+}
+
 function isLogObj(v) {
   if (!isObj(v)) return false;
   const keys = Object.keys(v);
   if (keys.length > MAX_LOG_ENTRIES) return false;
+  // Reject log entries dated strictly in the future to prevent crafted sync files
+  // from inflating stats with future-dated sessions or logs.
+  const today = todayUTC();
+  if (keys.some((k) => k > today)) return false;
   let totalBytes = 0;
   for (const k of keys) {
     if (!DATE_KEY_RE.test(k)) return false;
@@ -108,7 +130,10 @@ export const SYNC_VALIDATORS = {
   // Fix: add upper bounds — a crafted sync file with jv_xp: 1e18 would
   // otherwise instantly grant max level or an implausible streak/shield count.
   jv_xp:                  (v) => isNumber(v) && v >= 0 && v <= 100_000_000,
-  jv_streak:              (v) => isNumber(v) && v >= 0 && v <= 3650,
+  // A 10-year streak (3650 days) is wildly implausible for the target audience.
+  // Cap at 3 years of consecutive logins to keep imported data within realistic
+  // bounds while still allowing long-term power users.
+  jv_streak:              (v) => isNumber(v) && v >= 0 && v <= 1095,
   jv_shields:             (v) => isNumber(v) && v >= 0 && v <= 10000,
   // NOTE: todayUTC() is called lazily inside the lambda (at validation time).
   // Do NOT hoist it to a module-level const — it would capture the date at startup.
@@ -143,7 +168,13 @@ export const SYNC_VALIDATORS = {
   jv_sessions:            (v) => isArray(v) && v.length <= 10000 && v.every((s) =>
     isObj(s) &&
     typeof s.id === "string" && s.id.length <= 64 && /^[\w-]+$/.test(s.id) &&
-    (s.date === undefined || (typeof s.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(s.date))) &&
+    (s.date === undefined || (
+      typeof s.date === "string" &&
+      /^\d{4}-\d{2}-\d{2}$/.test(s.date) &&
+      // Reject sessions dated in the future or unreasonably far in the past.
+      s.date <= todayUTC() &&
+      s.date >= "2020-01-01"
+    )) &&
     (s.course === undefined || (typeof s.course === "string" && s.course.length <= 100)) &&
     (s.notes === undefined || (typeof s.notes === "string" && s.notes.length <= 300)) &&
     (s.duration === undefined || (typeof s.duration === "number" && isFinite(s.duration) && s.duration >= 0 && s.duration <= 600)) &&
@@ -160,7 +191,7 @@ export const SYNC_VALIDATORS = {
     typeof a.title === "string" && a.title.length <= 300 &&
     (a.desc        === undefined || (typeof a.desc        === "string" && a.desc.length        <= 300)) &&
     (a.flavorText  === undefined || (typeof a.flavorText  === "string" && a.flavorText.length  <= 300)) &&
-    (a.icon        === undefined || (typeof a.icon        === "string" && a.icon.length        <= 2)) &&
+    (a.icon        === undefined || iconLengthOk(a.icon)) &&
     (a.xp === undefined || (typeof a.xp === "number" && isFinite(a.xp) && a.xp >= 0 && a.xp <= 500)) &&
     (a.unlockedAt === undefined || (
       typeof a.unlockedAt === "number" &&
@@ -207,15 +238,18 @@ export const SYNC_VALIDATORS = {
   // Fix: accept null for unset state in addition to non-empty strings.
   jv_daily_goal:          (v) => v === null || (isString(v) && v.length <= 500),
   jv_timers:              (v) => isArray(v) && v.length <= 50 && v.every((t) =>
-    isObj(t) &&
-    typeof t.id === "string" && t.id.length <= 64 &&
-    typeof t.label === "string" && t.label.length <= 100 &&
-    // 1-hour grace window allows for Syncthing propagation delay. Timers expired
-    // more than 1 hour ago are dropped silently; future timers capped at 24 hours
-    // to prevent long-lived injected timers cluttering the UI.
-    typeof t.endsAt === "number" && isFinite(t.endsAt) &&
-      t.endsAt > Date.now() - 3_600_000 && t.endsAt <= Date.now() + 86_400_000 &&
-    (t.emoji === undefined || (typeof t.emoji === "string" && t.emoji.length <= 2))
+    {
+      const now = Date.now(); // capture once for consistent comparisons
+      return isObj(t) &&
+        typeof t.id === "string" && t.id.length <= 64 &&
+        typeof t.label === "string" && t.label.length <= 100 &&
+        // 1-hour grace window allows for Syncthing propagation delay. Timers expired
+        // more than 1 hour ago are dropped silently; future timers capped at 24 hours
+        // to prevent long-lived injected timers cluttering the UI.
+        typeof t.endsAt === "number" && isFinite(t.endsAt) &&
+          t.endsAt > now - 3_600_000 && t.endsAt <= now + 86_400_000 &&
+        (t.emoji === undefined || iconLengthOk(t.emoji));
+    }
   ),
   jv_sleep_log:           (v) => isLogObj(v),
   jv_screen_log:          (v) => isLogObj(v),
@@ -305,9 +339,14 @@ export function isSafeSyncValue(v, depth = 0) {
   // Depth cap prevents stack overflow on adversarially deep JSON. Legitimate
   // RITMOL data nests at most 4–5 levels deep. Both object and array nesting
   // contribute to depth so that alternating array/object layers cannot bypass
-  // the cap.
+  // the cap. Primitives (string, number, boolean, null) always pass — only
+  // container nodes (objects/arrays) are depth-counted and inspected.
   if (depth >= 12) return false;
   if (isObj(v)) {
+    // NOTE: isSafeSyncValue is called on the ENTIRE parsed payload object
+    // in parseAndValidate(), not just individual values. This means top-level
+    // dangerous keys like "__proto__", "constructor", or "prototype" are
+    // rejected here before any per-key validator or applyPayload logic runs.
     for (const k of Object.getOwnPropertyNames(v)) {
       if (DANGEROUS_KEYS.has(k)) return false;
       if (!isSafeSyncValue(v[k], depth + 1)) return false;
@@ -335,6 +374,7 @@ let _cachedHandle = null;
 let _opInProgress = false;
 let _broadcastChannel = null;
 let _lastPushTime = 0;
+let _lastObjectUrl = null;
 
 function getSyncChannel() {
   if (!_broadcastChannel && typeof BroadcastChannel !== "undefined") {
@@ -355,6 +395,9 @@ export function closeSyncChannel() {
     _broadcastChannel.close();
     _broadcastChannel = null;
   }
+  // Reset mutex on channel close so a dispose in the middle of an operation
+  // (e.g. HMR in development) does not leave SYNC_BUSY latched forever.
+  _opInProgress = false;
 }
 
 function openDB() {
@@ -437,6 +480,38 @@ function applyPayload(payload) {
     if (!isSafeSyncValue(val)) continue;
     if (key === "jv_chat") {
       val = sanitizeChatMessages(val);
+    } else if (key === "jv_gacha" && Array.isArray(val)) {
+      // Sanitize gacha content at storage time so later render paths never have
+      // to worry about control chars, BiDi overrides, or raw HTML-ish strings.
+      // This also protects future implementations that might render gacha
+      // content with richer formatting.
+      val = val.map((card) => {
+        const out = { ...card };
+        if (typeof out.content === "string") {
+          out.content = out.content
+            // eslint-disable-next-line no-control-regex
+            .replace(/[\u0000-\u001F\u007F-\u009F]/g, "")
+            .replace(/[\u200B-\u200D\uFEFF\u202A-\u202E\u2066-\u2069]/g, "")
+            .replace(/[<>"'`&]/g, "")
+            .slice(0, 1000);
+        } else {
+          out.content = "";
+        }
+        if (out.asciiArt != null) {
+          out.asciiArt = String(out.asciiArt)
+            // eslint-disable-next-line no-control-regex
+            .replace(/[\u0000-\u001F\u007F-\u009F]/g, "")
+            .replace(/[\u200B-\u200D\uFEFF\u202A-\u202E\u2066-\u2069]/g, "")
+            .slice(0, 500);
+        } else {
+          out.asciiArt = null;
+        }
+        return out;
+      });
+    } else if (key === "jv_achievements" && Array.isArray(val)) {
+      // Imported achievements carry their own XP values, but those XP amounts are
+      // already baked into the imported jv_xp total. They must never be re-awarded
+      // on import — unlockAchievement only grants XP for newly earned achievements.
     }
     // Write to IDB (sync cache update + fire-and-forget IDB put)
     idbSet(storageKey(key), val);
@@ -566,6 +641,10 @@ export const SyncManager = {
       const payload = buildPayload();
       const text = JSON.stringify(payload, null, 2);
       assertPayloadSize(text);
+      const byteSize = new TextEncoder().encode(text).length;
+      if (byteSize > 7 * 1024 * 1024) {
+        console.warn("[SyncManager] Sync file approaching size limit:", (byteSize / (1024 * 1024)).toFixed(1), "MB");
+      }
 
       const writable = await handle.createWritable();
       await writable.write(text);
@@ -627,7 +706,14 @@ export const SyncManager = {
       return;
     }
     const blob = new Blob([text], { type: "application/json" });
+    // Revoke any previous object URL before creating a new one so repeated
+    // downloads do not accumulate unused Blob URLs.
+    if (_lastObjectUrl) {
+      URL.revokeObjectURL(_lastObjectUrl);
+      _lastObjectUrl = null;
+    }
     const url = URL.createObjectURL(blob);
+    _lastObjectUrl = url;
     const a = document.createElement("a");
     a.href = url;
     a.download = "ritmol-data.json";
@@ -641,8 +727,11 @@ export const SyncManager = {
     // download will silently fail on those browsers.
     a.click();
     document.body.removeChild(a);
-    // Allow extra time for large files to be saved before revoking the URL.
-    setTimeout(() => URL.revokeObjectURL(url), 30000);
+    // Allow a short window for the browser to start the download, then revoke.
+    setTimeout(() => {
+      URL.revokeObjectURL(url);
+      if (_lastObjectUrl === url) _lastObjectUrl = null;
+    }, 5000);
   },
 
   /** Forget the linked sync file handle. */
