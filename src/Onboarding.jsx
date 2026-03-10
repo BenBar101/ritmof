@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { STYLE_CSS } from "./constants";
+import { sanitizeForPrompt } from "./api/systemPrompt";
 import { SyncManager, FSAPI_SUPPORTED } from "./sync/SyncManager";
 import GeometricCorners from "./GeometricCorners";
 
@@ -152,16 +153,8 @@ export default function Onboarding({ onComplete }) {
 
   const current = steps[step];
 
-  // Sanitize free-text profile fields at write-time: strip control chars and
-  // prompt-injection characters before they reach localStorage or the AI prompt.
   function sanitizeField(str, maxLen = 300) {
-    if (typeof str !== "string") return "";
-    return str
-      .replace(/[<>{}[\]`"\\]/g, "")
-      // eslint-disable-next-line no-control-regex
-      .replace(/[\u0000-\u001F\u007F-\u009F\u200B-\u200D\uFEFF]/g, "")
-      .slice(0, maxLen)
-      .trim();
+    return sanitizeForPrompt(str ?? "", maxLen);
   }
 
   function sanitizeForm(f) {
@@ -170,7 +163,7 @@ export default function Onboarding({ onComplete }) {
       major:        sanitizeField(f.major, 80),
       books:        sanitizeField(f.books, 200),
       interests:    sanitizeField(f.interests, 200),
-      semesterGoal: sanitizeField(f.semesterGoal, 200),
+      semesterGoal: sanitizeField(f.semesterGoal, 300),
     };
   }
 

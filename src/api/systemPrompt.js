@@ -34,6 +34,14 @@ export function sanitizeForPrompt(str, maxLen = 200) {
     if (code >= 8203 && code <= 8205) continue;    // U+200B ZWSP, U+200C ZWNJ, U+200D ZWJ
     if (code === 65279) continue;                  // U+FEFF BOM / zero-width no-break space
     if (code === 8239 || code === 8199) continue;  // U+202F Narrow NBSP, U+2007 Figure Space
+    if (code >= 0xFE00 && code <= 0xFE0F) continue;   // Variation Selectors 1-16
+    if (code >= 0x1F3FB && code <= 0x1F3FF) continue; // Emoji skin-tone modifiers
+    if (code >= 0xE0000 && code <= 0xE01FF) continue; // Tags block (invisible / variation supplement)
+    // Mathematical alphanumeric symbols (bold/italic/script/fraktur A–Z, 0–9)
+    // and Letterlike Symbols — visually similar to ASCII and often used in
+    // prompt-injection payloads to bypass simple ASCII-only filters.
+    if (code >= 0x1D400 && code <= 0x1D7FF) continue;
+    if (code >= 0x2100 && code <= 0x214F) continue;
     // Block bidirectional override/embedding/isolate controls
     // U+202A-202E (LTR/RTL embedding, override, pop directional)
     // U+2066-U+2069 (directional isolates)
@@ -43,6 +51,9 @@ export function sanitizeForPrompt(str, maxLen = 200) {
   // Strip XML breakout and injection-risk characters.
   // Fix [P-2]: added single-quote ' to the character class.
   return out
+    // Strip ASCII injection characters — square brackets are also stripped to
+    // prevent JSON/markdown-style injection patterns in prompt context even
+    // though they are common text.
     .replace(/[<>{}[\]`"'\\]/g, "")          // ASCII injection chars
     // Strip Unicode quote-like characters (double/single, guillemets, etc.)
     .replace(/[\u201C\u201D\u2018\u2019\u00AB\u00BB\u2039\u203A]/g, "")
@@ -89,14 +100,17 @@ export function buildSystemPrompt(state, profile) {
   const safeDailyGoal = sanitizeForPrompt(state.dailyGoal ?? "", 200);
 
   // Recent chat history re-sanitized at replay time to prevent stored
-  // injection from breaking out of the HUNTER_DATA boundary.
+  // injection from breaking out of the HUNTER_DATA boundary. Wrap each
+  // turn with an explicit role sigil and hard separator to make it harder
+  // for crafted content to visually spoof RITMOL utterances.
   const recentChatSummary = (state.chatHistory || [])
     .slice(-6)
-    .map(m => {
+    .map((m) => {
       const safe = sanitizeForPrompt(m.content, 300).replace(/\s{2,}/g, " ").trim();
-      return `${m.role === "user" ? "Hunter" : "RITMOL"}: ${safe}`;
+      const role = m.role === "user" ? "[HUNTER]" : "[RITMOL]";
+      return `${role} ${safe}`;
     })
-    .join("\n");
+    .join("\n---\n");
 
   return `You are RITMOL — the AI companion of a gamified life-OS for STEM university students. Solo Leveling RPG aesthetic. Be brief, punchy, motivating. Never break character.
 

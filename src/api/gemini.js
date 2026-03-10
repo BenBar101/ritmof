@@ -73,6 +73,9 @@ export async function callGemini(apiKey, messages, systemPrompt, jsonMode = fals
       method: "POST",
       headers: {
         "Content-Type": "application/json",
+        // NOTE: The API key is visible in the browser's DevTools Network tab.
+        // This is unavoidable for a purely client-side app; warn users in the README
+        // not to share screenshots of request headers or HAR files.
         "x-goog-api-key": apiKey,
       },
       body: JSON.stringify(body),
@@ -81,15 +84,13 @@ export async function callGemini(apiKey, messages, systemPrompt, jsonMode = fals
 
     if (!res.ok) {
       const errBody = await res.text().catch(() => "");
-      // Fix [G-1]: Redact both JWT-format tokens (eyJ...) AND Gemini API key format.
       const safeBody = errBody
-        .replace(/eyJ[\w.-]+/g, "[token]")          // JWT bearer tokens
-        .replace(/AIza[A-Za-z0-9_-]{34,45}/g, "[key]") // Gemini API keys (widened length)
-        .replace(/ya29\.[A-Za-z0-9_-]{20,}/g, "[oauth]") // Google OAuth access tokens
-        .replace(/[A-Za-z0-9_-]{40,}/g, "[token]") // Any other long token-like strings
-        .slice(0, 200);
-      // Final guard: if the re-thrown error message somehow contains the key, redact it.
-      const safeErrorMsg = (`Gemini ${res.status}: ${safeBody}`)
+        .replace(/eyJ[\w.-]+/g, "[token]")
+        .replace(/AIza[A-Za-z0-9_-]{34,45}/g, "[key]")
+        .replace(/ya29\.[A-Za-z0-9_-]{20,}/g, "[oauth]")
+        .replace(/[A-Za-z0-9_-]{40,}/g, "[token]");
+      const slicedBody = safeBody.slice(0, 200);
+      const safeErrorMsg = (`Gemini ${res.status}: ${slicedBody}`)
         .replace(/AIza[A-Za-z0-9_-]{34,45}/g, "[key]")
         .replace(/ya29\.[A-Za-z0-9_-]{20,}/g, "[oauth]");
       throw new Error(safeErrorMsg);

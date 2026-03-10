@@ -7,7 +7,9 @@ import { getLevelProgress } from "./utils/xp";
 // eslint-disable-next-line no-unused-vars
 export function TopBar({ xp, xpPerLevel, level, rank, streak, profile, syncStatus, lastSynced, onPush, onPull, syncFileConnected }) {
   const progress = getLevelProgress(xp, xpPerLevel);
-  const pct = (progress / xpPerLevel) * 100;
+  const pct = xpPerLevel > 0
+    ? Math.min(100, Math.max(0, (progress / xpPerLevel) * 100))
+    : 0;
 
   const syncColor = syncStatus === "error" ? "#888" : syncStatus === "synced" ? "#aaa" : "#555";
   const syncTitle = lastSynced ? `Last synced: ${new Date(lastSynced).toLocaleTimeString()}` : "Not synced yet";
@@ -123,6 +125,10 @@ export function BottomNav({ tab, setTab }) {
 // ═══════════════════════════════════════════════════════════════
 export function Banner({ banner, onClose }) {
   const colors = { info: "#555", warning: "#888", success: "#aaa", alert: "#fff" };
+  const safeBannerText = (typeof banner.text === "string")
+    // eslint-disable-next-line no-control-regex
+    ? banner.text.replace(/[\u0000-\u001F\u007F-\u009F\u200B-\u200D\uFEFF\u202A-\u202E\u2066-\u2069]/g, "").slice(0, 300)
+    : "";
   return (
     <div style={{
       position: "fixed", top: "56px", left: 0, right: 0, zIndex: 500,
@@ -131,7 +137,7 @@ export function Banner({ banner, onClose }) {
       alignItems: "center", fontFamily: "'Share Tech Mono', monospace", fontSize: "12px",
       animation: "slideDown 0.2s ease",
     }}>
-      <span style={{ color: colors[banner.type] || "#ccc" }}>{banner.text}</span>
+      <span style={{ color: colors[banner.type] || "#ccc" }}>{safeBannerText}</span>
       <button onClick={onClose} style={{ color: "#555", fontSize: "14px" }}>×</button>
     </div>
   );

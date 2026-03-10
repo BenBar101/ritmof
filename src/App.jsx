@@ -1,16 +1,16 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 
 // Utils & storage
-import { LS, storageKey, IS_DEV, getGeminiApiKey } from "./utils/storage";
-import { today, nowHour, nowMin } from "./utils/storage";
+import { LS, storageKey, IS_DEV, getGeminiApiKey, getMaxDateSeen, updateMaxDateSeen } from "./utils/storage";
+import { today, todayUTC, nowHour, nowMin } from "./utils/storage";
 import { getLevel, getRank, getXpPerLevel, getGachaCost, getStreakShieldCost, calcSessionXP } from "./utils/xp";
-import { initState, flushStateToStorage } from "./utils/state";
+import { initState } from "./utils/state";
 
 // Constants
 import { DAILY_TOKEN_LIMIT, THEME_KEY, SESSION_TYPES } from "./constants";
 
 // API
-import { buildSystemPrompt } from "./api/systemPrompt";
+import { buildSystemPrompt, sanitizeForPrompt } from "./api/systemPrompt";
 import { fetchDailyQuote } from "./api/quotes";
 import { updateDynamicCosts } from "./api/dynamicCosts";
 
@@ -94,7 +94,9 @@ function KeysConfigGate() {
       await SyncManager.pull();
       setSyncStatus("success");
       // Pull loads geminiKey into sessionStorage; re-render will drop this gate.
-      window.location.reload();
+      // Delay reload slightly to avoid racing with any pending auto-push that may
+      // have been scheduled via visibilitychange while the file picker was open.
+      setTimeout(() => window.location.reload(), 300);
     } catch (e) {
       setSyncStatus("error");
       if (e.message === "NO_HANDLE") {
@@ -281,6 +283,7 @@ export default function App() {
   useEffect(() => { LS.set(storageKey("jv_habits_init"), state.habitsInitialized); }, [state.habitsInitialized]);
   useEffect(() => { if (state.dynamicCosts) LS.set(storageKey("jv_dynamic_costs"), state.dynamicCosts); }, [state.dynamicCosts]);
   useEffect(() => { LS.set(storageKey("jv_last_shield_use_date"), state.lastShieldUseDate ?? null); }, [state.lastShieldUseDate]);
+  useEffect(() => { LS.set(storageKey("jv_last_shield_buy_date"), state.lastShieldBuyDate ?? null); }, [state.lastShieldBuyDate]);
 
   // ── Syncthing: keep a ref to latest state and push on tab hide ──
   const latestStateRef = useRef(null);
@@ -307,22 +310,25 @@ export default function App() {
     const schedulePush = () => {
       if (pushDebounceTimer) return; // already scheduled
       pushDebounceTimer = setTimeout(async () => {
-        pushDebounceTimer = null;
-        // Fix [S-2]: skip auto-push if a Pull is in progress. The Pull will
-        // write its own flush once it completes.
-        if (isPullingRef.current) return;
-        const handle = await SyncManager.getHandle().catch(() => null);
-        if (!handle) return;
-        const s = latestStateRef.current;
-        if (!s?.profile) return;
-        flushStateToStorage(s);
         try {
+          // Fix [S-2]: skip auto-push if a Pull is in progress. The Pull will
+          // write its own flush once it completes.
+          if (isPullingRef.current) return;
+          const handle = await SyncManager.getHandle().catch(() => null);
+          if (!handle) return;
+          const s = latestStateRef.current;
+          if (!s?.profile) return;
+          // Granular persist effects keep localStorage up to date; read the
+          // latest snapshot directly in SyncManager.push() to avoid races where
+          // flushStateToStorage and Push see different snapshots.
           const ts = await SyncManager.push();
           LS.set(storageKey("jv_last_synced"), String(ts));
           setSyncStatus("synced");
           setLastSynced(ts);
         } catch (e) {
           console.warn("Syncthing push on hide failed:", e.message);
+        } finally {
+          pushDebounceTimer = null;
         }
       }, 250);
     };
@@ -342,7 +348,11 @@ export default function App() {
     setSyncStatus("syncing");
     try {
       const s = latestStateRef.current;
-      flushStateToStorage(s);
+      if (!s?.profile) {
+        setSyncStatus("idle");
+        showBanner("Nothing to push yet. Complete onboarding first.", "info");
+        return;
+      }
       const ts = await SyncManager.push();
       LS.set(storageKey("jv_last_synced"), String(ts));
       setLastSynced(ts);
@@ -363,16 +373,17 @@ export default function App() {
     isPullingRef.current = true;
     try {
       const ts = await SyncManager.pull();
-      // Fix [A-4]: call initState() as an invocation (not a function reference) so
-      // React does not treat it as an updater and call it with (prevState) as arg.
-      // initState ignores its argument anyway, but this is semantically correct and
-      // will not break if initState's signature ever changes.
-      setState(initState());
-      // Fix [A-5]: reset the AI XP budget ref so the newly-pulled tokenUsage is
-      // used as the source-of-truth, not the stale pre-Pull accumulated value.
+      // Reset AI XP and level-up detection refs before rehydrating state so any
+      // callbacks that fire during initState() see clean values.
       aiXpTodayRef.current = null;
-      // Reset lastLevelUpXpRef so level-up detection matches the pulled XP value.
       lastLevelUpXpRef.current = -1;
+      try {
+        const freshState = initState();
+        latestStateRef.current = freshState;
+        setState(freshState);
+      } catch (initErr) {
+        console.error("[syncPull] initState failed:", initErr);
+      }
       LS.set(storageKey("jv_last_synced"), String(ts));
       setLastSynced(ts);
       setSyncStatus("synced");
@@ -383,6 +394,7 @@ export default function App() {
       else if (e.message === "CORRUPT_FILE") showBanner("Sync file is corrupt or not valid JSON. Re-export from another device.", "alert");
       else if (e.message === "SYNC_SCHEMA_OUTDATED") showBanner("Sync file was written by an older version of RITMOL. Re-export it from an up-to-date device.", "alert");
       else if (e.message === "SYNC_FILE_TOO_LARGE") showBanner("Sync file exceeds 10 MB — this is unexpected. Check the file.", "alert");
+      else if (e.message === "APPLY_QUOTA_RISK") showBanner("Pull failed: local storage is almost full (~5MB). Clear old chat history or sessions first.", "alert");
       else if (e.message === "SYNC_BUSY") showBanner("Sync already in progress. Please wait.", "warning");
       else showBanner(`Pull failed: ${(e.message || "").slice(0, 80)}`, "alert");
     } finally {
@@ -403,14 +415,25 @@ export default function App() {
 
   const [confirmForgetSync, setConfirmForgetSync] = useState(false);
   const confirmForgetSyncTimerRef = useRef(null);
-  useEffect(() => () => clearTimeout(confirmForgetSyncTimerRef.current), []);
+  useEffect(() => () => {
+    if (confirmForgetSyncTimerRef.current !== null) {
+      clearTimeout(confirmForgetSyncTimerRef.current);
+      confirmForgetSyncTimerRef.current = null;
+    }
+  }, []);
   async function forgetSyncFile() {
     if (!confirmForgetSync) {
       setConfirmForgetSync(true);
-      confirmForgetSyncTimerRef.current = setTimeout(() => setConfirmForgetSync(false), 4000);
+      confirmForgetSyncTimerRef.current = setTimeout(() => {
+        setConfirmForgetSync(false);
+        confirmForgetSyncTimerRef.current = null;
+      }, 4000);
       return;
     }
-    clearTimeout(confirmForgetSyncTimerRef.current);
+    if (confirmForgetSyncTimerRef.current !== null) {
+      clearTimeout(confirmForgetSyncTimerRef.current);
+      confirmForgetSyncTimerRef.current = null;
+    }
     setConfirmForgetSync(false);
     await SyncManager.forget();
     setSyncFileConnected(false);
@@ -422,14 +445,11 @@ export default function App() {
   const _loginInProgressRef = useRef(false);
   useEffect(() => {
     if (!profile) return;
-    const t = today();
-    const lastLogin = (latestStateRef.current ?? state).lastLoginDate;
-    if (lastLogin !== t && !_loginInProgressRef.current) {
-      _loginInProgressRef.current = true;
-      handleDailyLogin(t);
-    }
+    if (_loginInProgressRef.current) return;
+    _loginInProgressRef.current = true;
+    handleDailyLogin();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [profile]);
+  }, [!!profile]);
 
   // ── Daily missions init ──
   useEffect(() => {
@@ -441,10 +461,24 @@ export default function App() {
       setState((s) => ({ ...s, dailyMissions: missions, lastMissionDate: t }));
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [profile, state.lastMissionDate]);
+  }, [!!profile, state.lastMissionDate]);
+
+  // ── UI helpers ──
+  const showToast = useCallback((data) => {
+    clearTimeout(toastTimer.current);
+    const payload = { ...data, _id: data._id || crypto.randomUUID() };
+    setToast(payload);
+    toastTimer.current = setTimeout(() => setToast(null), 5000);
+  }, []);
+
+  const showBanner = useCallback((text, type = "info") => {
+    clearTimeout(bannerTimer.current);
+    setBanner({ text, type });
+    bannerTimer.current = setTimeout(() => setBanner(null), 4000);
+  }, []);
 
   // ── Token tracker ──
-  function trackTokens(amount) {
+  const trackTokens = useCallback((amount) => {
     // Guard: reject non-numeric, NaN, negative, or unreasonably large amounts so
     // a malformed tokensUsed value cannot corrupt the daily budget counter or
     // prematurely disable AI features.
@@ -452,7 +486,7 @@ export default function App() {
       ? Math.min(Math.round(amount), 1_000_000)
       : 0;
     if (safeAmount === 0) return;
-    const t = today();
+    const t = todayUTC();
     setState((s) => {
       const usage = s.tokenUsage || { date: t, tokens: 0, warnedAt: [], aiXpToday: 0 };
       const fresh = usage.date !== t
@@ -478,10 +512,10 @@ export default function App() {
       LS.set(storageKey("jv_token_usage"), updated);
       return { ...s, tokenUsage: updated };
     });
-  }
+  }, [showBanner]);
 
   function consumeAiXpBudget(requested) {
-    const t = today();
+    const t = todayUTC();
     // Fix #5: read and write aiXpTodayRef synchronously so that multiple calls within
     // the same executeCommands run see the accumulated total, not a stale snapshot.
     if (aiXpTodayRef.current === null || aiXpTodayRef.current.date !== t) {
@@ -539,6 +573,7 @@ export default function App() {
   useEffect(() => {
     if (!profile) return;
     const interval = setInterval(() => {
+      if (document.visibilityState !== "visible") return;
       const h = nowHour();
       const m = nowMin();
       const t = today();
@@ -575,8 +610,7 @@ export default function App() {
       }
     }, 60000);
     return () => clearInterval(interval);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [profile]);
+  }, [profile, showBanner]);
 
   // ── Streak panic check ──
   useEffect(() => {
@@ -587,13 +621,12 @@ export default function App() {
     if (todayLog.length === 0 && state.streak > 0) {
       showBanner("⚠ Hunter. Your streak expires at midnight. 0 habits logged.", "alert");
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [profile, state.habitLog, state.streak]);
+  }, [profile, state.habitLog, state.streak, showBanner]);
 
   // ── Daily login handler ──
-  function handleDailyLogin(t) {
+  function handleDailyLogin() {
     setState((s) => {
-      const effectiveDate = t;
+      const effectiveDate = todayUTC();
       const parseDateLocal = (ds) => {
         if (!ds) return new Date(NaN);
         const [y, m, d] = ds.split("-").map(Number);
@@ -608,6 +641,14 @@ export default function App() {
       let newStreak = s.streak;
       let newShields = s.streakShields;
       let bannerMsg = null;
+
+      const maxDateSeen = getMaxDateSeen();
+      if (maxDateSeen && effectiveDate < maxDateSeen) {
+        // Do NOT update maxDateSeen here — effectiveDate is earlier than the known
+        // maximum, indicating a clock rollback. Keep the higher watermark.
+        return { ...s, lastLoginDate: effectiveDate, streak: 0 };
+      }
+      updateMaxDateSeen(effectiveDate);
 
       // Reject future-dated lastLoginDate values that may have arrived via a crafted
       // sync file. Treat as if no prior login exists and reset the streak.
@@ -654,6 +695,7 @@ export default function App() {
       const newLastShieldUseDate = usedShield ? effectiveDate : s.lastShieldUseDate;
 
       if (newLevel > oldLevel) {
+        lastLevelUpXpRef.current = newXP;
         const snapshot = { ...s, xp: newXP, streak: newStreak, streakShields: newShields, lastLoginDate: effectiveDate, lastShieldUseDate: newLastShieldUseDate, dynamicCosts: s.dynamicCosts };
         setTimeout(() => {
           setLevelUpData({ level: newLevel, rank: getRank(newLevel) });
@@ -673,8 +715,9 @@ export default function App() {
       setTimeout(() => setModal({ type: "daily_login", xp: loginXP, streak: newStreak }), 0);
       return { ...s, streak: newStreak, streakShields: newShields, lastLoginDate: effectiveDate, lastShieldUseDate: newLastShieldUseDate, xp: newXP };
     });
-    // Release mutex after setState is enqueued, not inside the updater (safer in React 18 StrictMode).
-    queueMicrotask(() => { _loginInProgressRef.current = false; });
+    queueMicrotask(() => {
+      _loginInProgressRef.current = false;
+    });
   }
 
   function generateDailyMissions() {
@@ -733,8 +776,7 @@ export default function App() {
   }
 
   // ── Mission checker ──
-  // eslint-disable-next-line no-unused-vars
-  function checkMissions(_type) {
+  const checkMissions = useCallback((hintType = null) => {
     const t = today();
     // Fix [A-3]: pendingToasts and pendingLevelUp were declared as plain `let`
     // variables written inside the setState updater and read outside it. In React 18
@@ -751,11 +793,22 @@ export default function App() {
       const toastsThisRun = [];
       const updated = s.dailyMissions.map((m) => {
         if (m.done) return m;
+        if (hintType && m.type !== hintType) return m;
         let progress = 0;
         if (m.type === "habits") progress = todayLog.length;
         if (m.type === "session") progress = (s.sessions || []).filter((ss) => ss.date === t).length;
         if (m.type === "task") progress = (s.tasks || []).filter((tk) => tk.doneDate === t).length;
-        if (m.type === "chat") progress = (s.chatHistory || []).some(msg => msg.role === "user" && msg.date === t) ? 1 : 0;
+        if (m.type === "chat") {
+          progress = (s.chatHistory || []).some(
+            (msg) =>
+              msg.role === "user" &&
+              typeof msg.date === "string" &&
+              /^\d{4}-\d{2}-\d{2}$/.test(msg.date) &&
+              msg.date === t
+          )
+            ? 1
+            : 0;
+        }
         if (progress >= m.target) {
           const missionXp = typeof m.xp === "number" && isFinite(m.xp) && m.xp > 0
             ? Math.min(m.xp, 2000)
@@ -800,20 +853,7 @@ export default function App() {
         }, 300);
       }
     });
-  }
-
-  // ── UI helpers ──
-  const showToast = useCallback((data) => {
-    clearTimeout(toastTimer.current);
-    setToast(data);
-    toastTimer.current = setTimeout(() => setToast(null), 5000);
-  }, []);
-
-  const showBanner = useCallback((text, type = "info") => {
-    clearTimeout(bannerTimer.current);
-    setBanner({ text, type });
-    bannerTimer.current = setTimeout(() => setBanner(null), 4000);
-  }, []);
+  }, [showToast, setLevelUpData, trackTokens]);
 
   // ── Storage quota warning ──
   useEffect(() => {
@@ -846,26 +886,22 @@ export default function App() {
     actionLocksRef.current.add(habitId);
     setTimeout(() => actionLocksRef.current.delete(habitId), 500);
     const t = today();
-    const habit = (latestStateRef.current ?? state).habits.find((h) => h.id === habitId);
-    if (!habit) return;
-    const habitXP = habit.xp;
-    // FIX: logResult was being mutated inside the setState updater (async) and then read
-    // synchronously outside it — the read always saw the initial false value, so awardXP
-    // and checkMissions were never called on the first log of a habit each session.
-    // Use a plain flag ref that is written before the updater returns and read in a
-    // microtask-safe way via queueMicrotask so it runs after React flushes the update.
+    // Use flags captured by the updater so XP is based on the authoritative habit
+    // record at commit time, not a potentially stale snapshot from latestStateRef.
     let didLog = false;
+    let capturedXP = 0;
     setState((s) => {
       const log = s.habitLog[t] || [];
       if (log.includes(habitId)) return s;
+      const h = s.habits.find((h) => h.id === habitId);
+      if (!h) return s;
+      capturedXP = typeof h.xp === "number" && h.xp > 0 ? h.xp : 25;
       didLog = true;
       return { ...s, habitLog: { ...s.habitLog, [t]: [...log, habitId] } };
     });
-    // queueMicrotask runs after the current task (including the setState updater) so
-    // didLog is guaranteed to reflect the updater's decision before we act on it.
     queueMicrotask(() => {
       if (didLog) {
-        awardXP(habitXP, event);
+        awardXP(capturedXP, event);
         checkMissions("habits");
       }
     });
@@ -894,18 +930,22 @@ export default function App() {
 
     const sanitizeStr = (s, max = MAX_STR_LEN) => {
       if (typeof s !== "string") return "";
-      // eslint-disable-next-line no-control-regex
-      const noControl = s.replace(/[\u0000-\u001F\u007F-\u009F\u200B-\u200D\uFEFF]/g, "");
-      // Fix #12: include single-quote in the strip set alongside the existing chars.
-      return noControl.slice(0, max).replace(/[<>"`&']/g, "");
+      return s
+        // eslint-disable-next-line no-control-regex
+        .replace(/[\u0000-\u001F\u007F-\u009F\u200B-\u200D\uFEFF]/g, "")
+        .replace(/[\u202A-\u202E\u2066-\u2069]/g, "") // BiDi overrides/isolates
+        .slice(0, max)
+        .replace(/[<>"`&']/g, "");
     };
 
     commands.slice(0, MAX_COMMANDS_PER_RUN).forEach((cmd) => {
       if (!cmd || typeof cmd !== "object" || Array.isArray(cmd)) return;
       if (!VALID_CMDS.has(cmd.cmd)) return;
       switch (cmd.cmd) {
-        case "add_task":
+        case "add_task": {
           if (tasksAdded >= MAX_TASKS_PER_RUN) break;
+          const safeText = sanitizeStr(cmd.text, 500);
+          if (!safeText.trim()) break;
           tasksAdded++;
           setState((s) => {
             if ((s.tasks || []).length >= MAX_TASKS_TOTAL) return s;
@@ -913,7 +953,7 @@ export default function App() {
               ...s,
               tasks: [...(s.tasks || []), {
                 id: `t_${crypto.randomUUID()}`,
-                text: sanitizeStr(cmd.text),
+                text: safeText,
                 priority: ["low","medium","high"].includes(cmd.priority) ? cmd.priority : "medium",
                 due: typeof cmd.due === "string" && /^\d{4}-\d{2}-\d{2}$/.test(cmd.due) ? cmd.due : null,
                 done: false,
@@ -923,6 +963,7 @@ export default function App() {
           });
           pendingBanners.push([`Task added: ${sanitizeStr(cmd.text, 60)}`, "info"]);
           break;
+        }
         case "add_goal":
           setState((s) => {
             if ((s.goals || []).length >= MAX_GOALS_TOTAL) return s;
@@ -974,9 +1015,13 @@ export default function App() {
         case "announce":
           pendingBanners.push([sanitizeStr(cmd.text, 200), ["info","warning","success","alert"].includes(cmd.type) ? cmd.type : "info"]);
           break;
-        case "set_daily_goal":
-          setState((s) => ({ ...s, dailyGoal: sanitizeStr(cmd.text) }));
+        case "set_daily_goal": {
+          const safeGoal = sanitizeForPrompt(cmd.text ?? "", 500)
+            .replace(/['"\\]/g, "")
+            .replace(/[\u27E8\u27E9\u276C-\u276F\uFE3D\uFE3E\u2329\u232A]/g, "");
+          setState((s) => ({ ...s, dailyGoal: safeGoal }));
           break;
+        }
         case "add_habit": {
           const incomingLabel = sanitizeStr(cmd.label);
           setState((s) => {
@@ -1005,12 +1050,16 @@ export default function App() {
           break;
         }
         case "unlock_achievement": {
+          const safeId = sanitizeStr(cmd.id, 100);
+          if (!/^[\w\-.:@]+$/.test(safeId)) break;
           const achXP = Math.min(Math.max(0, Number(cmd.xp) || 50), MAX_XP_PER_CMD);
+          // achXP is subject to MAX_XP_PER_CMD (500), MAX_XP_PER_RESPONSE (1500) via totalXPThisRun,
+          // and DAILY_AI_XP_LIMIT (5000) via consumeAiXpBudget — three independent caps in series.
           const cappedAchXP = Math.min(achXP, Math.max(0, MAX_XP_PER_RESPONSE - totalXPThisRun));
           const allowedAchXP = consumeAiXpBudget(cappedAchXP);
           totalXPThisRun += allowedAchXP;
           unlockAchievement({
-            id:         sanitizeStr(cmd.id, 100),
+            id:         safeId,
             title:      sanitizeStr(cmd.title),
             desc:       sanitizeStr(cmd.desc),
             flavorText: sanitizeStr(cmd.flavorText),
@@ -1048,7 +1097,11 @@ export default function App() {
   // RENDER
   // ─────────────────────────────────────────────────────────────
   if (!getGeminiApiKey()) {
-    return <KeysConfigGate />;
+    return (
+      <ErrorBoundary>
+        <KeysConfigGate />
+      </ErrorBoundary>
+    );
   }
 
   if (showOnboarding) {
@@ -1084,55 +1137,65 @@ export default function App() {
 
       <div style={{ flex: 1, overflowY: "auto", overflowX: "hidden", paddingBottom: "70px", paddingTop: "56px" }}>
         {tab === "home" && (
-          <HomeTab
-            state={state} setState={setState} profile={profile} apiKey={apiKey}
-            level={level} rank={rank} dailyQuote={dailyQuote}
-            awardXP={awardXP} logHabit={logHabit}
-            showBanner={showBanner} showToast={showToast}
-            executeCommands={executeCommands} setTab={setTab}
-            buildSystemPrompt={buildSystemPrompt}
-          />
+          <ErrorBoundary>
+            <HomeTab
+              state={state} setState={setState} profile={profile} apiKey={apiKey}
+              level={level} rank={rank} dailyQuote={dailyQuote}
+              awardXP={awardXP} logHabit={logHabit}
+              showBanner={showBanner} showToast={showToast}
+              executeCommands={executeCommands} setTab={setTab}
+              buildSystemPrompt={buildSystemPrompt}
+            />
+          </ErrorBoundary>
         )}
         {tab === "habits" && (
-          <HabitsTab
-            state={state} setState={setState} logHabit={logHabit}
-            awardXP={awardXP} showBanner={showBanner}
-            profile={profile} apiKey={apiKey} trackTokens={trackTokens}
-          />
+          <ErrorBoundary>
+            <HabitsTab
+              state={state} setState={setState} logHabit={logHabit}
+              awardXP={awardXP} showBanner={showBanner}
+              profile={profile} apiKey={apiKey} trackTokens={trackTokens}
+            />
+          </ErrorBoundary>
         )}
         {tab === "tasks" && (
-          <TasksTab
-            state={state} setState={setState}
-            awardXP={awardXP} showBanner={showBanner} checkMissions={checkMissions}
-            actionLocksRef={actionLocksRef}
-          />
+          <ErrorBoundary>
+            <TasksTab
+              state={state} setState={setState}
+              awardXP={awardXP} showBanner={showBanner} checkMissions={checkMissions}
+              actionLocksRef={actionLocksRef}
+            />
+          </ErrorBoundary>
         )}
         {tab === "chat" && (
-          <ChatTab
-            state={state} setState={setState} profile={profile} apiKey={apiKey}
-            executeCommands={executeCommands} showBanner={showBanner}
-            buildSystemPrompt={buildSystemPrompt} checkMissions={checkMissions}
-            awardXP={awardXP} trackTokens={trackTokens}
-          />
+          <ErrorBoundary>
+            <ChatTab
+              state={state} setState={setState} profile={profile} apiKey={apiKey}
+              executeCommands={executeCommands} showBanner={showBanner}
+              buildSystemPrompt={buildSystemPrompt} checkMissions={checkMissions}
+              awardXP={awardXP} trackTokens={trackTokens}
+            />
+          </ErrorBoundary>
         )}
         {tab === "profile" && (
-          <ProfileTab
-            state={state} setState={setState} profile={profile}
-            level={level} rank={rank} xpPerLevel={xpPerLevel} streakShieldCost={streakShieldCost} gachaCost={gachaCost}
-            awardXP={awardXP}
-            showBanner={showBanner} showToast={showToast}
-            unlockAchievement={unlockAchievement}
-            executeCommands={executeCommands}
-            apiKey={apiKey} buildSystemPrompt={buildSystemPrompt}
-            syncStatus={syncStatus} lastSynced={lastSynced}
-            syncFileConnected={syncFileConnected}
-            onPush={syncPush} onPull={syncPull}
-            onPickSyncFile={pickSyncFile} onForgetSyncFile={forgetSyncFile}
-            confirmForgetSync={confirmForgetSync}
-            theme={theme} setTheme={setTheme}
-            trackTokens={trackTokens}
-            latestStateRef={latestStateRef}
-          />
+          <ErrorBoundary>
+            <ProfileTab
+              state={state} setState={setState} profile={profile}
+              level={level} rank={rank} xpPerLevel={xpPerLevel} streakShieldCost={streakShieldCost} gachaCost={gachaCost}
+              awardXP={awardXP}
+              showBanner={showBanner} showToast={showToast}
+              unlockAchievement={unlockAchievement}
+              executeCommands={executeCommands}
+              apiKey={apiKey} buildSystemPrompt={buildSystemPrompt}
+              syncStatus={syncStatus} lastSynced={lastSynced}
+              syncFileConnected={syncFileConnected}
+              onPush={syncPush} onPull={syncPull}
+              onPickSyncFile={pickSyncFile} onForgetSyncFile={forgetSyncFile}
+              confirmForgetSync={confirmForgetSync}
+              theme={theme} setTheme={setTheme}
+              trackTokens={trackTokens}
+              latestStateRef={latestStateRef}
+            />
+          </ErrorBoundary>
         )}
       </div>
 
@@ -1182,7 +1245,7 @@ export default function App() {
           onClose={() => setModal(null)}
           state={state}
           onSubmit={(session) => {
-            const xp = calcSessionXP(session.type, session.duration, session.focus, state.streak);
+            const xp = calcSessionXP(session.type, session.duration, session.focus, modal?.streak ?? state.streak);
             // Fix: construct session explicitly (never spread raw modal object) and cap array at 10 000.
             // eslint-disable-next-line no-control-regex
             const sanitizeSessionStr = (v, max) => typeof v === "string" ? v.replace(/[\u0000-\u001F\u007F-\u009F]/g, "").replace(/[<>"'`&]/g, "").slice(0, max) : "";
@@ -1211,12 +1274,12 @@ export default function App() {
       {levelUpData && (
         <LevelUpModal data={levelUpData} onClose={() => setLevelUpData(null)} />
       )}
-      {toast && <AchievementToast toast={toast} onClose={() => setToast(null)} />}
+      {toast && <AchievementToast key={toast._id} toast={toast} onClose={() => setToast(null)} />}
 
       {/* Session log FAB */}
       <button
         type="button"
-        onClick={() => setModal({ type: "session_log" })}
+        onClick={() => setModal({ type: "session_log", streak: state.streak })}
         style={{
           position: "fixed", bottom: "80px", right: "16px", zIndex: 100,
           width: "48px", height: "48px", borderRadius: "0",

@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { today, nowHour } from "./utils/storage";
+import { sanitizeForPrompt } from "./api/systemPrompt";
 import { DAILY_TOKEN_LIMIT } from "./constants";
 
 // eslint-disable-next-line no-unused-vars
@@ -10,7 +11,10 @@ export default function HomeTab({ state, setState, profile, _apiKey, _level, ran
 
   const upcomingExams = (state.calendarEvents || []).filter((e) => {
     if (e.type !== "exam") return false;
-    const diff = (new Date(e.start) - Date.now()) / 86400000;
+    if (typeof e.start !== "string" || !e.start) return false;
+    const startMs = new Date(e.start).getTime();
+    if (isNaN(startMs)) return false;
+    const diff = (startMs - Date.now()) / 86400000;
     return diff >= 0 && diff <= 5;
   });
 
@@ -41,10 +45,10 @@ export default function HomeTab({ state, setState, profile, _apiKey, _level, ran
           border: "1px solid #333", padding: "16px",
         }}>
           <div style={{ fontFamily: "'IM Fell English', serif", fontSize: "13px", fontStyle: "italic", color: "#ccc", lineHeight: "1.6" }}>
-            &ldquo;{dailyQuote.quote}&rdquo;
+            &ldquo;{sanitizeForPrompt(dailyQuote.quote ?? "", 500)}&rdquo;
           </div>
           <div style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: "10px", color: "#555", marginTop: "8px" }}>
-            — {dailyQuote.author}
+            — {sanitizeForPrompt(dailyQuote.author ?? "", 100)}
           </div>
         </div>
       )}
@@ -52,6 +56,7 @@ export default function HomeTab({ state, setState, profile, _apiKey, _level, ran
       {/* Exam warning */}
       {upcomingExams.map((exam) => {
         const days = Math.ceil((new Date(exam.start) - Date.now()) / 86400000);
+        const safeTitle = sanitizeForPrompt(exam.title ?? "", 200);
         return (
           <div key={exam.id} style={{
             border: "2px solid #fff", padding: "12px",
@@ -59,7 +64,7 @@ export default function HomeTab({ state, setState, profile, _apiKey, _level, ran
             background: "#0d0d0d",
           }}>
             <div style={{ fontSize: "9px", color: "#888", letterSpacing: "2px" }}>EXAM WARNING</div>
-            <div style={{ fontSize: "14px", marginTop: "4px" }}>⚠ {exam.title}</div>
+            <div style={{ fontSize: "14px", marginTop: "4px" }}>⚠ {safeTitle}</div>
             <div style={{ fontSize: "11px", color: "#aaa", marginTop: "2px" }}>T-{days} days. Prepare accordingly.</div>
           </div>
         );
@@ -100,7 +105,11 @@ export default function HomeTab({ state, setState, profile, _apiKey, _level, ran
       {state.dailyGoal && (
         <div style={{ border: "1px solid #333", padding: "12px", fontFamily: "'Share Tech Mono', monospace" }}>
           <div style={{ fontSize: "9px", color: "#555", letterSpacing: "2px" }}>DAILY OBJECTIVE</div>
-          <div style={{ fontSize: "13px", marginTop: "4px" }}>{state.dailyGoal}</div>
+          <div style={{ fontSize: "13px", marginTop: "4px" }}>
+            {sanitizeForPrompt(state.dailyGoal ?? "", 200)
+              .replace(/['"\\]/g, "")
+              .replace(/[\u27E8\u27E9\u276C-\u276F\uFE3D\uFE3E\u2329\u232A]/g, "")}
+          </div>
         </div>
       )}
 
@@ -161,10 +170,15 @@ export default function HomeTab({ state, setState, profile, _apiKey, _level, ran
             ACTIVE TIMERS
           </div>
           {state.activeTimers.map((timer) => (
-            <CountdownTimer key={timer.id} timer={timer} onExpire={() => {
-              setState((s) => ({ ...s, activeTimers: s.activeTimers.filter((t) => t.id !== timer.id) }));
-              showBanner(`Timer complete: ${timer.label}`, "success");
-            }} />
+            <CountdownTimer
+              key={timer.id}
+              timer={timer}
+              onExpire={() => {
+                setState((s) => ({ ...s, activeTimers: s.activeTimers.filter((t) => t.id !== timer.id) }));
+                const safeLabel = sanitizeForPrompt(timer.label ?? "", 200);
+                showBanner(`Timer complete: ${safeLabel}`, "success");
+              }}
+            />
           ))}
         </div>
       )}
@@ -196,7 +210,8 @@ function TokenUsageBar({ usage }) {
   // when AI features are disabled — not 5% (50k/1M). Showing "% of 1M" while blocking at
   // 50k meant the bar never appeared to reach critical even when the budget was exhausted.
   const DISPLAY_LIMIT = DAILY_TOKEN_LIMIT;
-  const tokens = usage?.date === today() ? (usage?.tokens || 0) : 0;
+  const isToday = usage?.date === today();
+  const tokens = isToday ? (usage?.tokens || 0) : 0;
   const pct = Math.min(100, (tokens / DISPLAY_LIMIT) * 100);
   const pctDisplay = pct < 0.1 ? "<0.1" : pct.toFixed(1);
   const color = pct > 80 ? "#fff" : pct > 50 ? "#aaa" : "#555";
@@ -213,6 +228,11 @@ function TokenUsageBar({ usage }) {
       <div style={{ fontSize: "8px", color: "#333", marginTop: "3px" }}>
         ~{tokens.toLocaleString()} tokens used · resets midnight
       </div>
+      {!isToday && (
+        <div style={{ fontSize: "8px", color: "#2a4a2a", marginTop: "3px" }}>
+          ↺ Budget reset for today
+        </div>
+      )}
     </div>
   );
 }
@@ -260,7 +280,7 @@ function CountdownTimer({ timer, onExpire }) {
   const secs = Math.floor((remaining % 60000) / 1000);
   return (
     <div style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: "12px", padding: "4px 0", display: "flex", justifyContent: "space-between" }}>
-      <span>{timer.emoji} {timer.label}</span>
+      <span>{sanitizeForPrompt(timer.emoji ?? "", 2)} {sanitizeForPrompt(timer.label ?? "", 200)}</span>
       <span style={{ color: remaining < 60000 ? "#fff" : "#888" }}>{mins}:{secs.toString().padStart(2, "0")}</span>
     </div>
   );

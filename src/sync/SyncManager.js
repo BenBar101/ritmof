@@ -11,7 +11,7 @@
 //     but NEVER written back out on Push.
 // ═══════════════════════════════════════════════════════════════
 
-import { LS, storageKey, setGeminiApiKey, IS_DEV, DEV_PREFIX, today } from "../utils/storage";
+import { LS, storageKey, setGeminiApiKey, IS_DEV, DEV_PREFIX, today, todayUTC } from "../utils/storage";
 
 // ── Schema version ──────────────────────────────────────────────
 export const SYNC_SCHEMA_VERSION = 1;
@@ -35,6 +35,7 @@ export const SYNC_KEYS = [
   "jv_missions", "jv_mission_date", "jv_habit_suggestions",
   "jv_chronicles", "jv_gcal_connected", "jv_token_usage",
   "jv_habits_init", "jv_dynamic_costs", "jv_last_shield_use_date",
+  "jv_max_date_seen", "jv_last_shield_buy_date",
 ];
 
 // ── Simple per-key validators ─────────────────────────────────────
@@ -67,6 +68,10 @@ function isLogObj(v) {
       size = val.length;
     } else if (Array.isArray(val)) {
       if (val.length > 200) return false;
+      // Each array item must be a non-empty string of reasonable length so that
+      // habit IDs or similar keys cannot be replaced with arbitrary objects that
+      // bypass includes() checks in the app logic.
+      if (!val.every((item) => typeof item === "string" && item.length > 0 && item.length <= 64)) return false;
       const serialized = JSON.stringify(val);
       if (serialized.length > MAX_LOG_VALUE_SIZE) return false;
       size = serialized.length;
@@ -102,9 +107,10 @@ export const SYNC_VALIDATORS = {
   jv_xp:                  (v) => isNumber(v) && v >= 0 && v <= 100_000_000,
   jv_streak:              (v) => isNumber(v) && v >= 0 && v <= 36500,
   jv_shields:             (v) => isNumber(v) && v >= 0 && v <= 10000,
-  // NOTE: today() is called lazily inside the lambda (at validation time).
+  // NOTE: todayUTC() is called lazily inside the lambda (at validation time).
   // Do NOT hoist it to a module-level const — it would capture the date at startup.
-  jv_last_login:          (v) => v === null || (isDateStr(v) && v <= today()),
+  // Using UTC here keeps last-login anti-cheat checks consistent across devices.
+  jv_last_login:          (v) => v === null || (isDateStr(v) && v <= todayUTC()),
   jv_habits:              (v) => isArray(v) && v.length <= 500 && v.every((h) =>
     isObj(h) &&
     typeof h.id === "string" && h.id.length <= 64 && /^[\w-]+$/.test(h.id) &&
@@ -122,7 +128,15 @@ export const SYNC_VALIDATORS = {
     (t.priority === undefined || ["low","medium","high"].includes(t.priority)) &&
     (t.due === null || t.due === undefined || (typeof t.due === "string" && /^\d{4}-\d{2}-\d{2}$/.test(t.due)))
   ),
-  jv_goals:               (v) => isArray(v) && v.length <= 1000,
+  jv_goals:               (v) => isArray(v) && v.length <= 1000 && v.every((g) =>
+    isObj(g) &&
+    typeof g.id === "string" && g.id.length <= 64 && /^[\w-]+$/.test(g.id) &&
+    typeof g.title === "string" && g.title.length <= 200 &&
+    typeof g.done === "boolean" &&
+    (g.course === undefined || (typeof g.course === "string" && g.course.length <= 100)) &&
+    (g.due === null || g.due === undefined || (typeof g.due === "string" && /^\d{4}-\d{2}-\d{2}$/.test(g.due))) &&
+    (g.addedBy === undefined || ["user","ritmol","system"].includes(g.addedBy))
+  ),
   jv_sessions:            (v) => isArray(v) && v.length <= 10000 && v.every((s) =>
     isObj(s) &&
     typeof s.id === "string" && s.id.length <= 64 && /^[\w-]+$/.test(s.id) &&
@@ -134,14 +148,17 @@ export const SYNC_VALIDATORS = {
   ),
   jv_achievements:        (v) => isArray(v) && v.length <= 2000 && v.every((a) =>
     isObj(a) &&
-    typeof a.id === "string" && a.id.length <= 100 &&
+    typeof a.id === "string" && a.id.length <= 100 && /^[\w-.:@]+$/.test(a.id) &&
     typeof a.title === "string" && a.title.length <= 300 &&
+    (a.desc        === undefined || (typeof a.desc        === "string" && a.desc.length        <= 300)) &&
+    (a.flavorText  === undefined || (typeof a.flavorText  === "string" && a.flavorText.length  <= 300)) &&
+    (a.icon        === undefined || (typeof a.icon        === "string" && a.icon.length        <= 2)) &&
     (a.xp === undefined || (typeof a.xp === "number" && isFinite(a.xp) && a.xp >= 0 && a.xp <= 500)) &&
     (a.rarity === undefined || ["common","rare","epic","legendary"].includes(a.rarity))
   ),
   jv_gacha:               (v) => isArray(v) && v.length <= 2000 && v.every((c) =>
     isObj(c) &&
-    typeof c.id === "string" && c.id.length <= 80 &&
+    typeof c.id === "string" && c.id.length <= 80 && /^[\w-]+$/.test(c.id) &&
     ["rank_cosmetic","chronicle"].includes(c.type) &&
     ["common","rare","epic","legendary"].includes(c.rarity) &&
     (typeof c.content === "string" && c.content.length <= 1000) &&
@@ -168,6 +185,7 @@ export const SYNC_VALIDATORS = {
       // eslint-disable-next-line no-control-regex
       if (/[\u0000-\u001F\u007F-\u009F\u200B-\u200D\u202A-\u202E\u2066-\u2069\uFEFF]/.test(item.content)) return false;
       if (item.ts !== undefined && !(typeof item.ts === 'number' && isFinite(item.ts) && item.ts > 0)) return false;
+      if (item.date !== undefined && !(typeof item.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(item.date))) return false;
       return true;
     });
   },
@@ -177,7 +195,8 @@ export const SYNC_VALIDATORS = {
     isObj(t) &&
     typeof t.id === "string" && t.id.length <= 64 &&
     typeof t.label === "string" && t.label.length <= 300 &&
-    typeof t.endsAt === "number" && isFinite(t.endsAt) && t.endsAt > 0 && t.endsAt <= Date.now() + 172_800_000
+    typeof t.endsAt === "number" && isFinite(t.endsAt) && t.endsAt > 0 && t.endsAt <= Date.now() + 172_800_000 &&
+    (t.emoji === undefined || (typeof t.emoji === "string" && t.emoji.length <= 2))
   ),
   jv_sleep_log:           (v) => isLogObj(v),
   jv_screen_log:          (v) => isLogObj(v),
@@ -194,7 +213,7 @@ export const SYNC_VALIDATORS = {
       typeof m.target === "number" && isFinite(m.target) && m.target >= 0 && m.target <= 100
     );
   },
-  jv_mission_date:        (v) => isNullOrDateStr(v),
+  jv_mission_date:        (v) => v === null || (isDateStr(v) && v <= today()),
   jv_habit_suggestions:   (v) => isArray(v) && v.length <= 200 && v.every((s) =>
     typeof s === "string" && s.length <= 200
   ),
@@ -202,27 +221,28 @@ export const SYNC_VALIDATORS = {
     isObj(c) &&
     typeof c.id === "string" && c.id.length <= 80 &&
     (c.content === undefined || (typeof c.content === "string" && c.content.length <= 2000)) &&
-    (c.date === undefined || (typeof c.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(c.date)))
+    (c.date === undefined || (typeof c.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(c.date))) &&
+    (c.title  === undefined || (typeof c.title  === "string" && c.title.length  <= 120)) &&
+    (c.source === undefined || (typeof c.source === "string" && c.source.length <= 120))
   ),
   jv_gcal_connected:      (v) => isBool(v),
   // NOTE: today() is called lazily inside the lambda (at validation time).
   // Do NOT hoist it to a module-level const — it would capture the date at startup.
   jv_token_usage:         (v) => {
     if (!isObj(v)) return false;
-    if (v.date !== undefined) {
-      if (!isDateStr(v.date)) return false;
-      // Fix [S-4]: reject future dates. A crafted sync file with date: "2099-12-31"
-      // causes the daily reset branch to fire on every trackTokens call, bypassing
-      // the daily token budget entirely (perpetual free reset).
-      if (v.date > today()) return false;
-    }
+    // date is REQUIRED — a token_usage object without a date would bypass
+    // daily budget checks when compared against todayUTC().
+    if (!isDateStr(v.date)) return false;
+    // Reject future dates using a UTC comparison so timezone changes cannot
+    // be abused to bypass the daily budget.
+    if (v.date > todayUTC()) return false;
     // Fix [S-1]: add upper bounds on tokens and aiXpToday. Without them, a crafted
     // sync file can set tokens to 9 999 999, permanently disabling all AI features,
     // or set aiXpToday to 9 999 999, permanently blocking AI XP awards.
     if (v.tokens !== undefined && !(isNumber(v.tokens) && v.tokens >= 0 && v.tokens <= 10_000_000)) return false;
     if (v.aiXpToday !== undefined && !(isNumber(v.aiXpToday) && v.aiXpToday >= 0 && v.aiXpToday <= 1_000_000)) return false;
     // warnedAt must be an array of safe numeric percentage values (50, 80, 99, etc.)
-    if (v.warnedAt !== undefined && !(isArray(v.warnedAt) && v.warnedAt.length <= 20 && v.warnedAt.every(x => typeof x === "number" && isFinite(x) && x >= 0 && x <= 100))) return false;
+    if (v.warnedAt !== undefined && !(isArray(v.warnedAt) && v.warnedAt.length <= 20 && v.warnedAt.every(x => typeof x === "number" && isFinite(x) && x >= 0 && x <= 99))) return false;
     return true;
   },
   jv_habits_init:         (v) => isBool(v),
@@ -238,6 +258,8 @@ export const SYNC_VALIDATORS = {
     return true;
   },
   jv_last_shield_use_date:(v) => isNullOrDateStr(v),
+  jv_max_date_seen:       (v) => v === null || (isDateStr(v) && v <= todayUTC()),
+  jv_last_shield_buy_date:(v) => v === null || (isDateStr(v) && v <= todayUTC()),
 };
 
 // ── Prototype pollution guard ─────────────────────────────────────
@@ -246,7 +268,7 @@ const DANGEROUS_KEYS = new Set(["__proto__", "constructor", "prototype"]);
 export function isSafeSyncValue(v, depth = 0) {
   if (depth >= 6) return false;
   if (isObj(v)) {
-    for (const k of Object.keys(v)) {
+    for (const k of Object.getOwnPropertyNames(v)) {
       if (DANGEROUS_KEYS.has(k)) return false;
       if (!isSafeSyncValue(v[k], depth + 1)) return false;
     }
@@ -261,6 +283,8 @@ export function isSafeSyncValue(v, depth = 0) {
 
 // ── Payload size guard ────────────────────────────────────────────
 export function assertPayloadSize(text) {
+  // TextEncoder measures UTF-8 bytes — correct for file-size comparison since
+  // FileSystemWritableFileStream.write() encodes strings to UTF-8.
   if (typeof text === "string" && new TextEncoder().encode(text).length > MAX_PAYLOAD_BYTES) {
     throw new Error("SYNC_FILE_TOO_LARGE");
   }
@@ -270,6 +294,21 @@ export function assertPayloadSize(text) {
 // File handles can't be stored in localStorage, use IndexedDB.
 let _cachedHandle = null;
 let _opInProgress = false;
+let _broadcastChannel = null;
+let _lastPushTime = 0;
+
+function getSyncChannel() {
+  if (!_broadcastChannel && typeof BroadcastChannel !== "undefined") {
+    _broadcastChannel = new BroadcastChannel("ritmol_sync");
+    _broadcastChannel.addEventListener("message", (e) => {
+      if (e.data?.type === "sync_start" && !_opInProgress) {
+        _opInProgress = true;
+        setTimeout(() => { _opInProgress = false; }, 5000);
+      }
+    });
+  }
+  return _broadcastChannel;
+}
 
 function openDB() {
   return new Promise((resolve, reject) => {
@@ -315,6 +354,13 @@ function buildPayload() {
   const payload = { _schemaVersion: SYNC_SCHEMA_VERSION };
   for (const key of SYNC_KEYS) {
     let stored = LS.get(storageKey(key));
+    if (stored === null && IS_DEV) {
+      const unprefixed = LS.get(key);
+      if (unprefixed !== null) {
+        console.warn(`[SyncManager] Key "${key}" found at unprefixed location. Consider clearing storage.`);
+        stored = unprefixed;
+      }
+    }
     if (stored !== null && stored !== undefined) {
       if (key === "jv_profile" && stored && typeof stored === "object") {
         // eslint-disable-next-line no-unused-vars
@@ -329,20 +375,37 @@ function buildPayload() {
 
 // ── Apply validated payload to localStorage ───────────────────────
 function applyPayload(payload) {
-  for (const key of SYNC_KEYS) {
-    if (Object.prototype.hasOwnProperty.call(payload, key)) {
-      let val = payload[key];
-      // Belt-and-suspenders: strip secrets from profile even if a future validator regresses.
-      if (key === "jv_profile" && val && typeof val === "object") {
-        // eslint-disable-next-line no-unused-vars
-        const { geminiKey: _gk, googleClientId: _gc, ...safeProfile } = val;
-        val = safeProfile;
-      }
-      const validator = SYNC_VALIDATORS[key];
-      if (validator && !validator(val)) continue; // skip invalid values
-      if (!isSafeSyncValue(val)) continue;        // skip dangerous values
-      LS.set(storageKey(key), val);
+  // Estimate quota risk using UTF-16 storage approximation: browsers store
+  // localStorage as UTF-16 (2 bytes per code unit), so we use (length * 2)
+  // instead of UTF-8 TextEncoder bytes here. This keeps the 4.5 MB guard
+  // meaningfully below typical 10 MB limits on ASCII-heavy data.
+  const payloadSize = JSON.stringify(payload).length * 2;
+  let lsUsed = 0;
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i) ?? "";
+      const v = localStorage.getItem(k) ?? "";
+      lsUsed += (k.length + v.length) * 2;
     }
+  } catch {
+    // ignore estimation failures
+  }
+  if (lsUsed + payloadSize > 4.5 * 1024 * 1024) {
+    throw new Error("APPLY_QUOTA_RISK");
+  }
+
+  for (const key of SYNC_KEYS) {
+    if (!Object.prototype.hasOwnProperty.call(payload, key)) continue;
+    let val = payload[key];
+    if (key === "jv_profile" && val && typeof val === "object") {
+      // eslint-disable-next-line no-unused-vars
+      const { geminiKey: _gk, googleClientId: _gc, ...safeProfile } = val;
+      val = safeProfile;
+    }
+    const validator = SYNC_VALIDATORS[key];
+    if (validator && !validator(val)) continue;
+    if (!isSafeSyncValue(val)) continue;
+    LS.set(storageKey(key), val);
   }
 }
 
@@ -376,9 +439,18 @@ function parseAndValidate(text) {
 
 // ── Read geminiKey / googleClientId into sessionStorage ───────────
 function extractSecretsFromPayload(payload) {
-  if (typeof payload.geminiKey === "string" && payload.geminiKey.trim()) {
-    setGeminiApiKey(payload.geminiKey.trim());
-  }
+    if (typeof payload.geminiKey === "string") {
+      const trimmed = payload.geminiKey.trim();
+      // Accept a range of plausible key lengths so future format changes don't
+      // silently break the config gate. We never log the key value itself.
+      if (/^AIza[A-Za-z0-9_-]{30,50}$/.test(trimmed)) {
+        setGeminiApiKey(trimmed);
+      } else {
+        // Key was present but failed the format check — surface a console warning
+        // so developers can debug why the config gate is still shown.
+        console.warn("[SyncManager] geminiKey present in sync file but did not match expected format. App will show config gate.");
+      }
+    }
   // googleClientId is intentionally not stored here — it would be
   // placed in a dedicated session key if implemented.
 }
@@ -409,6 +481,8 @@ export const SyncManager = {
     const handle = await SyncManager.getHandle();
     if (!handle) throw new Error("NO_HANDLE");
     if (_opInProgress) throw new Error("SYNC_BUSY");
+    const ch = getSyncChannel();
+    ch?.postMessage({ type: "sync_start" });
     _opInProgress = true; // acquire BEFORE any await
     try {
       let perm;
@@ -422,6 +496,23 @@ export const SyncManager = {
       }
       if (perm !== "granted") throw new Error("PERMISSION_DENIED");
 
+      // Last-writer conflict guard: if the backing file was modified very
+      // recently by another tab (within ~800ms), skip this push to avoid
+      // clobbering fresh data with a stale snapshot.
+      try {
+        const currentFile = await handle.getFile();
+        const lastMod = currentFile.lastModified;
+        if (Date.now() - lastMod < 2000 && lastMod > _lastPushTime) {
+          // 2 s window: some filesystems (e.g. FAT32) have 2-second lastModified
+          // resolution; 800 ms was too tight and caused false-positive skips.
+          console.warn("[SyncManager] Skipping push — file was recently modified by another tab.");
+          const ts = Date.now();
+          return ts;
+        }
+      } catch {
+        // If we can't read lastModified, fall through and attempt the push.
+      }
+
       const payload = buildPayload();
       const text = JSON.stringify(payload, null, 2);
       assertPayloadSize(text);
@@ -431,6 +522,8 @@ export const SyncManager = {
       await writable.close();
 
       const ts = Date.now();
+      _lastPushTime = ts;
+      LS.set(IS_DEV ? `${DEV_PREFIX}jv_last_synced` : "jv_last_synced", String(ts));
       return ts;
     } finally {
       _opInProgress = false;
@@ -493,9 +586,13 @@ export const SyncManager = {
     // never start. Remove after click so it doesn't linger in the DOM.
     a.style.display = "none";
     document.body.appendChild(a);
+    // WARNING: a.click() must be synchronously reachable from a user gesture on
+    // iOS Safari. Do NOT add any await or setTimeout before this call or the
+    // download will silently fail on those browsers.
     a.click();
     document.body.removeChild(a);
-    setTimeout(() => URL.revokeObjectURL(url), 5000);
+    // Allow extra time for large files to be saved before revoking the URL.
+    setTimeout(() => URL.revokeObjectURL(url), 30000);
   },
 
   /** Forget the linked sync file handle. */

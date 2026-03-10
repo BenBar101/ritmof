@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
-import { today, getGeminiApiKey } from "./utils/storage";
+import { todayUTC, getGeminiApiKey, setGeminiApiKey } from "./utils/storage";
 import { flushStateToStorage } from "./utils/state";
-import { ACHIEVEMENT_RARITIES, STYLE_CSS, DAILY_TOKEN_LIMIT, RANKS } from "./constants";
+import { ACHIEVEMENT_RARITIES, STYLE_CSS, DAILY_TOKEN_LIMIT, RANKS, GACHA_RARITY_WEIGHTS } from "./constants";
 import { DATA_DISCLOSURE_SEEN_KEY, THEME_KEY } from "./constants";
 import { getLevelProgress } from "./utils/xp";
 import { callGemini } from "./api/gemini";
@@ -107,30 +107,41 @@ function ProfileOverview({ state, setState, profile, level, streakShieldCost, ap
   const totalSessions = (state.sessions || []).length;
   const totalHabitsLogged = Object.values(state.habitLog || {}).reduce((acc, arr) => acc + arr.length, 0);
   const totalTasksDone = (state.tasks || []).filter((t) => t.done).length;
-  const studyHours = (state.sessions || []).reduce((acc, s) => acc + (s.duration || 0), 0);
+  const studyHours = (state.sessions || []).reduce((acc, s) => acc + (Number(s.duration) || 0), 0);
   const canBuyShield = state.xp >= streakShieldCost;
+  const shieldSnapshotRef = useRef(null);
 
   function buyShield() {
     if (!canBuyShield || !apiKey) return;
-
-    // Fix: resolve snapshot synchronously via a Promise so the async cost
-    // update never fires with a null snapshot (the setTimeout approach could
-    // race if React hadn't flushed the updater before the 0ms timer fired).
-    let resolveSnapshot;
-    const snapshotPromise = new Promise((res) => { resolveSnapshot = res; });
+    const t = todayUTC();
+    if (state.lastShieldBuyDate === t) {
+      showBanner("Shield already purchased today. Come back tomorrow.", "info");
+      return;
+    }
 
     setState((s) => {
-      if (s.xp < streakShieldCost) { resolveSnapshot(null); return s; }
-      const next = { ...s, xp: Math.max(0, s.xp - streakShieldCost), streakShields: (s.streakShields || 0) + 1 };
-      resolveSnapshot(next);
+      if (s.xp < streakShieldCost) { return s; }
+      const next = {
+        ...s,
+        xp: Math.max(0, s.xp - streakShieldCost),
+        streakShields: (s.streakShields || 0) + 1,
+        lastShieldBuyDate: t,
+      };
+      shieldSnapshotRef.current = next;
       return next;
     });
 
-    snapshotPromise.then((snapshotForApi) => {
+    queueMicrotask(() => {
+      const snapshotForApi = shieldSnapshotRef.current;
+      shieldSnapshotRef.current = null;
       if (!snapshotForApi) return;
-      updateDynamicCosts(getGeminiApiKey(), snapshotForApi, "streak_shield_use", trackTokens).then((costs) => {
-        if (costs && Object.keys(costs).length) setState((prev) => ({ ...prev, dynamicCosts: { ...prev.dynamicCosts, ...costs } }));
-      }).catch(() => {});
+      updateDynamicCosts(getGeminiApiKey(), snapshotForApi, "streak_shield_use", trackTokens)
+        .then((costs) => {
+          if (costs && Object.keys(costs).length) {
+            setState((prev) => ({ ...prev, dynamicCosts: { ...prev.dynamicCosts, ...costs } }));
+          }
+        })
+        .catch(() => {});
     });
 
     showBanner(`Streak shield purchased. Cost: ${streakShieldCost} XP. Next cost may change.`, "success");
@@ -240,10 +251,14 @@ function AchievementsSection({ state }) {
                   <span style={{ fontSize: "13px" }}>{ach.title}</span>
                   <span style={{ fontSize: "8px", color: r.glow, letterSpacing: "1px" }}>{r.label}</span>
                 </div>
-                <div style={{ fontSize: "11px", color: "#666", marginTop: "2px" }}>{ach.desc}</div>
-                {ach.flavorText && (
+                <div style={{ fontSize: "11px", color: "#666", marginTop: "2px" }}>
+                  {typeof ach.desc === "string"
+                    ? sanitizeForPrompt(ach.desc, 300)
+                    : ""}
+                </div>
+                {ach.flavorText && typeof ach.flavorText === "string" && (
                   <div style={{ fontSize: "10px", color: "#444", marginTop: "4px", fontStyle: "italic", fontFamily: "'IM Fell English', serif" }}>
-                    &ldquo;{ach.flavorText}&rdquo;
+                    &ldquo;{sanitizeForPrompt(ach.flavorText, 300)}&rdquo;
                   </div>
                 )}
               </div>
@@ -309,13 +324,20 @@ function CalendarSection({ state, setState, profile, apiKey, buildSystemPrompt, 
         });
         tokenClient.requestAccessToken({ prompt: "" });
       });
-      const accessToken = tokenResponse.access_token;
+      let accessToken = tokenResponse.access_token;
       if (!accessToken) throw new Error("No access token");
       const events = await fetchGCalEvents(accessToken);
-      setState((s) => {
-        const manualEvents = (s.calendarEvents || []).filter((e) => e.source === "manual");
-        return { ...s, calendarEvents: [...manualEvents, ...events], gCalConnected: true };
-      });
+      accessToken = null; // clear reference promptly
+      try {
+        setState((s) => {
+          const manualEvents = (s.calendarEvents || []).filter((e) => e.source === "manual");
+          return { ...s, calendarEvents: [...manualEvents, ...events], gCalConnected: true };
+        });
+      } catch {
+        // If state update fails, ensure we don't leave gCalConnected stuck true
+        setState((s) => ({ ...s, gCalConnected: false }));
+        throw new Error("GCAL_STATE_UPDATE_FAILED");
+      }
       showBanner(`Synced ${events.length} events from Google Calendar.`, "success");
     } catch (e) {
       if (e?.message === "GCAL_TOKEN_EXPIRED") {
@@ -416,7 +438,10 @@ function CalendarSection({ state, setState, profile, apiKey, buildSystemPrompt, 
           </div>
         )}
         {events.map((ev) => {
-          const daysLeft = Math.ceil((new Date(ev.start) - Date.now()) / 86400000);
+          const startDate = ev.start ? new Date(ev.start) : null;
+          const validStart = startDate && !isNaN(startDate.getTime());
+          const startDisplay = validStart ? startDate.toLocaleDateString() : "TBD";
+          const daysLeft = validStart ? Math.ceil((startDate - Date.now()) / 86400000) : null;
           return (
             <div key={ev.id} style={{
               border: `1px solid ${typeColors[ev.type] || "#333"}`, padding: "10px",
@@ -426,8 +451,10 @@ function CalendarSection({ state, setState, profile, apiKey, buildSystemPrompt, 
               <div>
                 <div style={{ fontSize: "12px" }}>{ev.title}</div>
                 <div style={{ fontSize: "9px", color: "#555", marginTop: "2px" }}>
-                  {ev.type?.toUpperCase()} · {new Date(ev.start).toLocaleDateString()}
-                  {daysLeft >= 0 && daysLeft <= 14 && <span style={{ color: daysLeft <= 3 ? "#fff" : "#888" }}> · {daysLeft}d</span>}
+                  {ev.type?.toUpperCase()} · {startDisplay}
+                  {daysLeft !== null && daysLeft >= 0 && daysLeft <= 14 && (
+                    <span style={{ color: daysLeft <= 3 ? "#fff" : "#888" }}> · {daysLeft}d</span>
+                  )}
                 </div>
               </div>
               <button onClick={() => deleteEvent(ev.id)} style={{ color: "#333", background: "none", border: "none", fontSize: "14px" }}>×</button>
@@ -443,6 +470,7 @@ function GachaSection({ state, setState, profile, apiKey, gachaCost, showBanner,
   const [pulling, setPulling] = useState(false);
   const [lastPull, setLastPull] = useState(null);
   const [showCollection, setShowCollection] = useState(false);
+  const [collectionPage, setCollectionPage] = useState(0);
   const collection = state.gachaCollection || [];
   const canAfford = state.xp >= gachaCost;
   // Abort controller so unmounting mid-pull cancels the Gemini request and prevents
@@ -451,9 +479,21 @@ function GachaSection({ state, setState, profile, apiKey, gachaCost, showBanner,
   // Fix: ref-level guard prevents double-deduction if doPull is called twice
   // before the first setPulling(true) re-render has flushed (e.g. rapid taps).
   const pullingRef = useRef(false);
+  const mountedRef = useRef(true);
 
-  // Cancel any in-flight pull on unmount.
-  useEffect(() => () => { gachaAbortRef.current?.abort(); }, []);
+  // Cancel any in-flight pull on unmount and mark unmounted.
+  useEffect(() => () => {
+    mountedRef.current = false;
+    gachaAbortRef.current?.abort();
+  }, []);
+
+  function rollRarity() {
+    const roll = Math.random() * 100;
+    if (roll < GACHA_RARITY_WEIGHTS.legendary) return "legendary";
+    if (roll < GACHA_RARITY_WEIGHTS.legendary + GACHA_RARITY_WEIGHTS.epic) return "epic";
+    if (roll < GACHA_RARITY_WEIGHTS.legendary + GACHA_RARITY_WEIGHTS.epic + GACHA_RARITY_WEIGHTS.rare) return "rare";
+    return "common";
+  }
 
   async function doPull() {
     if (pullingRef.current || !canAfford || pulling || !apiKey) {
@@ -463,7 +503,7 @@ function GachaSection({ state, setState, profile, apiKey, gachaCost, showBanner,
     }
     pullingRef.current = true;
     const usage = state.tokenUsage;
-    if (usage && usage.date === today() && usage.tokens >= DAILY_TOKEN_LIMIT) {
+    if (usage && usage.date === todayUTC() && usage.tokens >= DAILY_TOKEN_LIMIT) {
       showBanner("SYSTEM: Neural energy depleted. AI functions offline until tomorrow.", "alert");
       // Fix: reset the lock so the button is not permanently disabled after this early return.
       pullingRef.current = false;
@@ -493,7 +533,7 @@ Hunter profile: ${JSON.stringify({
         books:     sanitizedBooks,
         interests: sanitizeForPrompt((profile?.interests || "").replace(/[<>{}[\]`"\\]/g, "")).slice(0, 200),
         major:     sanitizeForPrompt((profile?.major     || "").replace(/[<>{}[\]`"\\]/g, "")).slice(0, 80),
-      })}
+      }).replace(/[`$]/g, "")}
 Existing collection (don't duplicate): ${JSON.stringify(collection.slice(-50).map(c => c.id))}
 
 Generate ONE of these (weighted random — 60% rank_cosmetic, 40% chronicle):
@@ -506,7 +546,6 @@ Respond ONLY with JSON:
 {
   "id": "unique_id_string",
   "type": "rank_cosmetic | chronicle",
-  "rarity": "common | rare | epic | legendary",
   "title": "...",
   "content": "...",
   "style": "ascii | dots | geometric | typewriter",
@@ -515,11 +554,32 @@ Respond ONLY with JSON:
 }`;
 
       const { text: raw, tokensUsed } = await callGemini(apiKey, [{ role: "user", content: prompt }], "You are a master of literary atmosphere and ASCII art. Respond only in JSON.", true, controller.signal);
-      if (controller.signal.aborted) { setPulling(false); pullingRef.current = false; return; }
-      trackTokens(tokensUsed);
+      if (controller.signal.aborted) {
+        if (mountedRef.current) setPulling(false);
+        pullingRef.current = false;
+        return;
+      }
+      if (mountedRef.current) {
+        trackTokens(tokensUsed);
+      }
       const match = raw.match(/\{[\s\S]*\}/);
       if (!match) throw new Error("Failed to parse Gacha JSON");
       const card = JSON.parse(match[0]);
+
+      let contentHash = "";
+      const contentToHash = String(card.content || "") + String(card.title || "");
+      try {
+        if (crypto?.subtle?.digest) {
+          const data = new TextEncoder().encode(contentToHash);
+          const hashBuf = await crypto.subtle.digest("SHA-1", data);
+          contentHash = Array.from(new Uint8Array(hashBuf))
+            .map((b) => b.toString(16).padStart(2, "0"))
+            .join("")
+            .slice(0, 16);
+        }
+      } catch {
+        contentHash = "";
+      }
 
       // Fix #11 (security): construct the stored card explicitly — never spread the raw AI
       // object so unexpected keys cannot pollute the gachaCollection state/localStorage.
@@ -528,9 +588,10 @@ Respond ONLY with JSON:
       // that would be silently stored then rendered or re-injected into prompts.
       const stripGachaStr = (s, max) => typeof s === "string" ? sanitizeForPrompt(s).replace(/[\u200B-\u200D\uFEFF]/g, "").slice(0, max) : null;
       const safeCard = {
-        id:       typeof card.id === "string" ? card.id.slice(0, 80).replace(/[^a-zA-Z0-9_-]/g, "_") : `gacha_${crypto.randomUUID()}`, // Fix: was Date.now()
+        id:       contentHash ? `gacha_${contentHash}` : `gacha_${crypto.randomUUID()}`,
         type:     ["rank_cosmetic","chronicle"].includes(card.type) ? card.type : "rank_cosmetic",
-        rarity:   ["common","rare","epic","legendary"].includes(card.rarity) ? card.rarity : "common",
+        // Client enforces rarity probabilities; ignore AI-suggested rarity.
+        rarity:   rollRarity(),
         title:    stripGachaStr(card.title, 120) ?? "Unknown",
         content:  stripGachaStr(card.content, 1000) ?? "",
         style:    ["ascii","dots","geometric","typewriter"].includes(card.style) ? card.style : "ascii",
@@ -563,8 +624,10 @@ Respond ONLY with JSON:
       });
 
       if (isDuplicate) {
-        showBanner("Duplicate generated or insufficient XP. No XP consumed.", "info");
-        setPulling(false);
+        if (mountedRef.current) {
+          showBanner("Duplicate generated or insufficient XP. No XP consumed.", "info");
+          setPulling(false);
+        }
         pullingRef.current = false;
         return;
       }
@@ -576,15 +639,19 @@ Respond ONLY with JSON:
       };
 
       updateDynamicCosts(getGeminiApiKey(), costsSnapshot, "gacha_pull", trackTokens).then((costs) => {
-        if (costs && Object.keys(costs).length) setState((prev) => ({ ...prev, dynamicCosts: { ...prev.dynamicCosts, ...costs } }));
+        if (costs && Object.keys(costs).length && mountedRef.current) {
+          setState((prev) => ({ ...prev, dynamicCosts: { ...prev.dynamicCosts, ...costs } }));
+        }
       }).catch(() => {});
 
-      setLastPull(safeCard);
-      showToast({ icon: safeCard.type === "chronicle" ? "≡" : "◈", title: safeCard.title, desc: safeCard.rarity.toUpperCase() + " PULL", rarity: safeCard.rarity, isAchievement: false });
+      if (mountedRef.current) {
+        setLastPull(safeCard);
+        showToast({ icon: safeCard.type === "chronicle" ? "≡" : "◈", title: safeCard.title, desc: safeCard.rarity.toUpperCase() + " PULL", rarity: safeCard.rarity, isAchievement: false });
+      }
     } catch {
-      showBanner("Pull failed. System error.", "alert");
+      if (mountedRef.current) showBanner("Pull failed. System error.", "alert");
     }
-    setPulling(false);
+    if (mountedRef.current) setPulling(false);
     pullingRef.current = false;
   }
 
@@ -638,9 +705,60 @@ Respond ONLY with JSON:
               No cards yet. Pull to collect.
             </div>
           )}
-          {[...collection].reverse().map((card) => (
-            <GachaCard key={card.id} card={card} compact />
-          ))}
+          {collection.length > 0 && (() => {
+            const PAGE_SIZE = 20;
+            const pageCount = Math.ceil(collection.length / PAGE_SIZE);
+            const safePage = Math.min(Math.max(0, collectionPage), pageCount - 1);
+            const pageItems = [...collection]
+              .reverse()
+              .slice(safePage * PAGE_SIZE, (safePage + 1) * PAGE_SIZE);
+            return (
+              <>
+                {pageItems.map((card) => (
+                  <GachaCard key={card.id} card={card} compact />
+                ))}
+                {pageCount > 1 && (
+                  <div style={{ display: "flex", gap: "8px", justifyContent: "center", alignItems: "center", marginTop: "4px" }}>
+                    <button
+                      type="button"
+                      onClick={() => setCollectionPage((p) => Math.max(0, p - 1))}
+                      disabled={safePage === 0}
+                      style={{
+                        padding: "4px 10px",
+                        border: "1px solid #333",
+                        background: safePage === 0 ? "#0a0a0a" : "transparent",
+                        color: safePage === 0 ? "#333" : "#888",
+                        fontFamily: "'Share Tech Mono', monospace",
+                        fontSize: "9px",
+                        cursor: safePage === 0 ? "default" : "pointer",
+                      }}
+                    >
+                      ◀ PREV
+                    </button>
+                    <span style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: "9px", color: "#555" }}>
+                      {safePage + 1} / {pageCount}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setCollectionPage((p) => Math.min(pageCount - 1, p + 1))}
+                      disabled={safePage === pageCount - 1}
+                      style={{
+                        padding: "4px 10px",
+                        border: "1px solid #333",
+                        background: safePage === pageCount - 1 ? "#0a0a0a" : "transparent",
+                        color: safePage === pageCount - 1 ? "#333" : "#888",
+                        fontFamily: "'Share Tech Mono', monospace",
+                        fontSize: "9px",
+                        cursor: safePage === pageCount - 1 ? "default" : "pointer",
+                      }}
+                    >
+                      NEXT ▶
+                    </button>
+                  </div>
+                )}
+              </>
+            );
+          })()}
         </div>
       )}
     </div>
@@ -713,7 +831,7 @@ function SettingsSection({ profile, setState, showBanner, syncStatus, lastSynced
   const [confirmReset, setConfirmReset] = useState(false);
   const confirmResetTimerRef = useRef(null);
 
-  function resetAll() {
+  async function resetAll() {
     if (!confirmReset) {
       setConfirmReset(true);
       confirmResetTimerRef.current = setTimeout(() => setConfirmReset(false), 4000);
@@ -730,7 +848,11 @@ function SettingsSection({ profile, setState, showBanner, syncStatus, lastSynced
       }
     }
     keysToDelete.forEach(k => localStorage.removeItem(k));
-    window.location.reload();
+    await SyncManager.forget();
+    // Also clear the in-memory Gemini key for this tab so the config gate
+    // is shown again after reset (no phantom API key persists in sessionStorage).
+    setGeminiApiKey("");
+    setTimeout(() => window.location.reload(), 100);
   }
 
   async function handleImportFile(e) {
@@ -738,10 +860,12 @@ function SettingsSection({ profile, setState, showBanner, syncStatus, lastSynced
     if (!file) return;
     try {
       await SyncManager.importFile(file);
-      window.location.reload(); // reload so all state rehydrates from new localStorage
+      setTimeout(() => window.location.reload(), 100); // allow storage flush before reload
     } catch (err) {
       if (err.message === "SYNC_SCHEMA_OUTDATED") {
         showBanner("Import failed: file was written by an older version of RITMOL. Re-export it from an up-to-date device.", "alert");
+      } else if (err.message === "APPLY_QUOTA_RISK") {
+        showBanner("Import failed: local storage is almost full. Clear data first.", "alert");
       } else {
         showBanner("Import failed. File may be corrupt.", "alert");
       }

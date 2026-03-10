@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from "react";
-import { today, LS, storageKey } from "./utils/storage";
+import { today, todayUTC, LS, storageKey } from "./utils/storage";
 import { DAILY_TOKEN_LIMIT, DATA_DISCLOSURE_SEEN_KEY } from "./constants";
 import { callGemini } from "./api/gemini";
 
@@ -18,18 +18,27 @@ export default function ChatTab({ state, setState, profile, apiKey, executeComma
   // Fix #12: AbortController so navigating away mid-request cancels the fetch and prevents
   // trackTokens / setState from firing against an unmounted component.
   const abortRef = useRef(null);
+  const mountedRef = useRef(true);
 
   const messages = useMemo(() => state.chatHistory || [], [state.chatHistory]);
 
   useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
 
+  const userMsgCount = useMemo(
+    () => messages.filter((m) => m.role === "user").length,
+    [messages],
+  );
+
   useEffect(() => {
-    checkMissions("chat");
+    if (userMsgCount > 0) checkMissions("chat");
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [messages.length]); // checkMissions identity is stable (defined in App root) — dep omitted intentionally
+  }, [userMsgCount]); // only fires on new user messages
 
   // Fix #12: cancel any in-flight Gemini request when the tab unmounts (user navigates away).
-  useEffect(() => () => { abortRef.current?.abort(); }, []);
+  useEffect(() => () => {
+    mountedRef.current = false;
+    abortRef.current?.abort();
+  }, []);
 
   const MAX_INPUT_LENGTH = 4000; // ~1k tokens; prevents accidental budget burn on huge pastes
 
@@ -43,7 +52,7 @@ export default function ChatTab({ state, setState, profile, apiKey, executeComma
     }
     if (!apiKey) { showBanner("No Gemini API key configured.", "alert"); return; }
     const usage = state.tokenUsage;
-    if (usage && usage.date === today() && usage.tokens >= DAILY_TOKEN_LIMIT) {
+    if (usage && usage.date === todayUTC() && usage.tokens >= DAILY_TOKEN_LIMIT) {
       showBanner("SYSTEM: Neural energy depleted. AI functions offline until tomorrow.", "alert");
       return;
     }
@@ -122,19 +131,27 @@ export default function ChatTab({ state, setState, profile, apiKey, executeComma
         setTimeout(() => executeCommands(parsed.commands), 300);
       }
     } catch (e) {
-      // Fix #12: AbortError means the user navigated away or sent a new message — not a real
-      // error. Silently discard it so no spurious error message appears in the chat.
-      if (e?.name === "AbortError") { setLoading(false); return; }
-      console.error("RITMOL error:", e);
-      const safeMsg = (e?.message || "").replace(/eyJ[\w.-]+/g, "[token]").slice(0, 60) || "System error";
+      if (e?.name === "AbortError") {
+        if (mountedRef.current) setLoading(false);
+        return;
+      }
+      const redactedMsg = (e?.message || "")
+        .replace(/AIza[A-Za-z0-9_-]{34,45}/g, "[key]")
+        .replace(/eyJ[\w.-]+/g, "[token]")
+        .replace(/ya29\.[A-Za-z0-9_-]{20,}/g, "[oauth]");
+      console.error("RITMOL error:", redactedMsg);
+      const safeMsg = redactedMsg.slice(0, 60) || "System error";
       const errMsg = {
         role: "assistant",
         content: `Connection error: ${safeMsg}. Check your API key in Profile → Settings.`,
-        ts: Date.now()
+        ts: Date.now(),
+        date: today(),
       };
-      setState((s) => ({ ...s, chatHistory: [...s.chatHistory, errMsg].slice(-1000) }));
+      if (mountedRef.current) {
+        setState((s) => ({ ...s, chatHistory: [...s.chatHistory, errMsg].slice(-1000) }));
+      }
     } finally {
-      setLoading(false);
+      if (mountedRef.current) setLoading(false);
     }
   }
 

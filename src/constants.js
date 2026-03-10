@@ -14,6 +14,14 @@ export const DEFAULT_XP_PER_LEVEL = 1000;
 export const DEFAULT_GACHA_COST = 100;
 export const DEFAULT_STREAK_SHIELD_COST = 300;
 
+// Client-enforced rarity probabilities for gacha pulls.
+export const GACHA_RARITY_WEIGHTS = {
+  common: 60,
+  rare: 25,
+  epic: 12,
+  legendary: 3,
+};
+
 // Session types & focus levels used by XP calc and UI.
 export const SESSION_TYPES = [
   { id: "lecture", label: "Lecture", baseXP: 40, style: "ascii" },

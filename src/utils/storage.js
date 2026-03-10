@@ -39,6 +39,7 @@ export const today = () => {
   const day = String(d.getDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
 };
+export const todayUTC = () => new Date().toISOString().slice(0, 10);
 export const nowHour = () => new Date().getHours();
 export const nowMin = () => new Date().getMinutes();
 
@@ -65,6 +66,17 @@ export function storageKey(k) {
   if (!IS_DEV) return k;
   if (k.startsWith("jv_") || APP_CONSTANT_KEYS.has(k)) return DEV_PREFIX + k;
   return k;
+}
+
+export function getMaxDateSeen() {
+  return LS.get(storageKey("jv_max_date_seen"), null);
+}
+
+export function updateMaxDateSeen(dateStr) {
+  const current = getMaxDateSeen();
+  if (!current || dateStr > current) {
+    LS.set(storageKey("jv_max_date_seen"), dateStr);
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════

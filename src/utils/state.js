@@ -62,6 +62,7 @@ export function initState() {
     habitsInitialized: LS.get(storageKey("jv_habits_init"), false),
     dynamicCosts: LS.get(storageKey("jv_dynamic_costs"), null) || { xpPerLevel: DEFAULT_XP_PER_LEVEL, gachaCost: DEFAULT_GACHA_COST, streakShieldCost: DEFAULT_STREAK_SHIELD_COST },
     lastShieldUseDate: LS.get(storageKey("jv_last_shield_use_date"), null),
+    lastShieldBuyDate: LS.get(storageKey("jv_last_shield_buy_date"), null),
     syncFileConnected: false, // updated async after mount by SyncManager.getHandle()
   };
 }
@@ -112,4 +113,5 @@ export function flushStateToStorage(s) {
   if (s.dynamicCosts) LS.set(storageKey("jv_dynamic_costs"), s.dynamicCosts);
   // Always write lastShieldUseDate including null — null means "no shield used yet".
   LS.set(storageKey("jv_last_shield_use_date"), s.lastShieldUseDate ?? null);
+  LS.set(storageKey("jv_last_shield_buy_date"), s.lastShieldBuyDate ?? null);
 }

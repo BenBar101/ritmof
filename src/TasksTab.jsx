@@ -28,6 +28,14 @@ export default function TasksTab({ state, setState, awardXP, showBanner, checkMi
     if (!newTask.trim()) return;
     const safeText = sanitizeText(newTask, 500);
     if (!safeText) return;
+    const totalTasks = (state.tasks || []).length;
+    if (totalTasks >= 480 && totalTasks < 500) {
+      showBanner("Approaching task capacity (500). Consider clearing completed tasks.", "warning");
+    }
+    if ((state.tasks || []).length >= 500) {
+      showBanner("Task limit reached (500). Clear completed tasks first.", "alert");
+      return;
+    }
     setState((s) => ({
       ...s,
       tasks: [...(s.tasks || []), { id: `t_${crypto.randomUUID()}`, text: safeText, priority: newPriority, done: false, addedBy: "user" }],
@@ -97,12 +105,24 @@ export default function TasksTab({ state, setState, awardXP, showBanner, checkMi
     setTimeout(() => actionLocksRef.current.delete(id), 500);
 
     const doneDate = today(); // Fix: capture outside updater — clock call is impure
+    let isFirstSubmission = false;
     setState((s) => ({
       ...s,
-      goals: s.goals.map((g) => g.id === id ? { ...g, submissionCount: (g.submissionCount || 0) + 1, done: true, doneDate } : g),
+      goals: s.goals.map((g) => {
+        if (g.id !== id) return g;
+        const count = g.submissionCount || 0;
+        if (count === 0) isFirstSubmission = true;
+        return { ...g, submissionCount: count + 1, done: true, doneDate };
+      }),
     }));
-    awardXP(50, null, true);
-    showBanner("Goal submitted. +50 XP", "success");
+    queueMicrotask(() => {
+      if (isFirstSubmission) {
+        awardXP(50, null, true);
+        showBanner("Goal submitted. +50 XP", "success");
+      } else {
+        showBanner("Goal re-submitted. XP already awarded.", "info");
+      }
+    });
   }
 
   const priorityLabel = { low: "▁", medium: "▃", high: "█" };
@@ -185,6 +205,22 @@ export default function TasksTab({ state, setState, awardXP, showBanner, checkMi
           {doneTasks.length > 0 && (
             <div>
               <div style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: "9px", color: "#333", letterSpacing: "2px", marginBottom: "6px" }}>COMPLETED</div>
+              <button
+                onClick={() => setState((s) => ({ ...s, tasks: (s.tasks || []).filter((t) => !t.done) }))}
+                style={{
+                  marginBottom: "8px",
+                  padding: "6px 10px",
+                  border: "1px solid #333",
+                  background: "transparent",
+                  color: "#666",
+                  fontFamily: "'Share Tech Mono', monospace",
+                  fontSize: "9px",
+                  letterSpacing: "1px",
+                  cursor: "pointer",
+                }}
+              >
+                CLEAR ALL COMPLETED ({doneTasks.length})
+              </button>
               {doneTasks.slice(-5).map((task) => (
                 <div key={task.id} style={{ padding: "8px 0", borderBottom: "1px solid #111", fontFamily: "'Share Tech Mono', monospace", fontSize: "11px", color: "#444", display: "flex", justifyContent: "space-between" }}>
                   <span style={{ textDecoration: "line-through" }}>✓ {task.text}</span>

@@ -1,5 +1,5 @@
 import { callGemini } from "./gemini";
-import { LS, storageKey, today } from "../utils/storage";
+import { LS, storageKey, todayUTC } from "../utils/storage";
 import { DAILY_TOKEN_LIMIT, DEFAULT_XP_PER_LEVEL, DEFAULT_GACHA_COST, DEFAULT_STREAK_SHIELD_COST } from "../constants";
 import { getLevel } from "../utils/xp";
 
@@ -9,7 +9,7 @@ export async function updateDynamicCosts(apiKey, state, event, onTokensUsed) {
   if (!apiKey) return {};
   // Honour the daily token budget.
   const storedUsage = LS.get(storageKey("jv_token_usage"));
-  if (storedUsage && storedUsage.date === today() && storedUsage.tokens >= DAILY_TOKEN_LIMIT) return {};
+  if (storedUsage && storedUsage.date === todayUTC() && storedUsage.tokens >= DAILY_TOKEN_LIMIT) return {};
   const d = state.dynamicCosts || {};
   const xpPerLevel = Math.floor(
     Math.max(200, Math.min(10000, Number(d.xpPerLevel ?? DEFAULT_XP_PER_LEVEL) || DEFAULT_XP_PER_LEVEL)),

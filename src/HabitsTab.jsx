@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { today } from "./utils/storage";
+import { today, todayUTC } from "./utils/storage";
 import { STYLE_CSS, DAILY_TOKEN_LIMIT } from "./constants";
 import { callGemini } from "./api/gemini";
 // Fix [H-1]: import the canonical sanitizeForPrompt instead of maintaining a local copy.
@@ -20,7 +20,7 @@ export default function HabitsTab({ state, setState, logHabit, showBanner, profi
   useEffect(() => {
     if (state.habitsInitialized || !apiKey || !profile || initializing) return;
     const usage = state.tokenUsage;
-    if (usage && usage.date === today() && usage.tokens >= DAILY_TOKEN_LIMIT) return;
+    if (usage && usage.date === todayUTC() && usage.tokens >= DAILY_TOKEN_LIMIT) return;
     setInitializing(true);
 
     // Cancel any previous in-flight request and start a fresh one.
@@ -114,7 +114,7 @@ Respond ONLY with JSON array:
       })
       .finally(() => setInitializing(false));
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state.habitsInitialized, apiKey, profile]);
+  }, [state.habitsInitialized, apiKey, !!profile]);
 
   // Cancel any in-flight habit-init request on unmount.
   useEffect(() => () => { habitInitAbortRef.current?.abort(); }, []);
