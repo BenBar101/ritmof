@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { useAppContext } from "./context/AppContext";
 import { todayUTC, getGeminiApiKey, setGeminiApiKey } from "./utils/storage";
 import { flushStateToStorage } from "./utils/state";
 import { ACHIEVEMENT_RARITIES, STYLE_CSS, DAILY_TOKEN_LIMIT, RANKS, GACHA_RARITY_WEIGHTS } from "./constants";
@@ -45,8 +46,8 @@ function SyncthingSetupGuide() {
   );
 }
 
-// eslint-disable-next-line no-unused-vars
-export default function ProfileTab({ state, setState, profile, level, rank, xpPerLevel, awardXP, showBanner, showToast, unlockAchievement, executeCommands, apiKey, buildSystemPrompt, syncStatus, lastSynced, syncFileConnected, onPush, onPull, onPickSyncFile, onForgetSyncFile, confirmForgetSync, theme, setTheme, streakShieldCost, gachaCost, trackTokens, latestStateRef }) {
+export default function ProfileTab() {
+  const { state, setState, latestStateRef, profile, level, rank, xpPerLevel, showBanner, showToast, executeCommands, apiKey, buildSystemPrompt, syncStatus, lastSynced, syncFileConnected, confirmForgetSync, syncPush: onPush, syncPull: onPull, pickSyncFile: onPickSyncFile, forgetSyncFile: onForgetSyncFile, theme, setTheme, streakShieldCost, gachaCost, trackTokens } = useAppContext();
   const [section, setSection] = useState("overview");
   // showGacha state is reserved for future gacha modal implementation
   // eslint-disable-next-line no-unused-vars

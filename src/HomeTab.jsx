@@ -1,10 +1,11 @@
 import { useState, useEffect, useRef } from "react";
+import { useAppContext } from "./context/AppContext";
 import { today, nowHour } from "./utils/storage";
 import { sanitizeForPrompt } from "./api/systemPrompt";
 import { DAILY_TOKEN_LIMIT } from "./constants";
 
-// eslint-disable-next-line no-unused-vars
-export default function HomeTab({ state, setState, profile, _apiKey, _level, rank, dailyQuote, _awardXP, logHabit, showBanner, _showToast, _executeCommands, setTab, _buildSystemPrompt }) {
+export default function HomeTab() {
+  const { state, setState, rank, dailyQuote, logHabit, showBanner, setTab, profile } = useAppContext();
   const todayLog = state.habitLog[today()] || [];
   const totalHabits = state.habits.length;
   const doneHabits = todayLog.length;

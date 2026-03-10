@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { useAppContext } from "./context/AppContext";
 import { today, todayUTC } from "./utils/storage";
 import { STYLE_CSS, DAILY_TOKEN_LIMIT } from "./constants";
 import { callGemini } from "./api/gemini";
@@ -9,7 +10,8 @@ import { callGemini } from "./api/gemini";
 import { sanitizeForPrompt } from "./api/systemPrompt";
 import GeometricCorners from "./GeometricCorners";
 
-export default function HabitsTab({ state, setState, logHabit, showBanner, profile, apiKey, trackTokens }) {
+export default function HabitsTab() {
+  const { state, setState, logHabit, showBanner, profile, apiKey, trackTokens } = useAppContext();
   const todayLog = state.habitLog[today()] || [];
   const categories = ["body", "mind", "work"];
   const [initializing, setInitializing] = useState(false);

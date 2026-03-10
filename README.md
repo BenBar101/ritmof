@@ -1,6 +1,6 @@
 # RITMOL
 
-A gamified life companion PWA for STEM university students. Solo Leveling RPG aesthetic. Black and white. No server — runs entirely in your browser. **Stack:** React, Vite; data lives in **localStorage**. Application logic and UI are split across modular `src/` files (root: **`src/App.jsx`**). Sync across devices by **reading and writing a single JSON file** with [Syncthing](https://syncthing.net/) via the browser File System Access API.
+A gamified life companion PWA for STEM university students. Solo Leveling RPG aesthetic. Black and white. No server — runs entirely in your browser. **Stack:** React, Vite; data lives in **localStorage**. Logic is split across focused hooks (`hooks/`) consumed via `AppContext`; tabs call `useAppContext()` rather than receiving prop bundles. Application logic and UI are split across modular `src/` files (root: **`src/App.jsx`**). Sync across devices by **reading and writing a single JSON file** with [Syncthing](https://syncthing.net/) via the browser File System Access API.
 
 **Using the app (static site):** You don't need to clone this repo — just open the deployed static site (e.g. GitHub Pages). The app expects a single JSON data file in the same format as **`example-data/ritmol-data.json`** (with `_schemaVersion`, `geminiKey`, and your app data). In the app, go to **Profile → Settings → SYNCTHING SYNC** to link or import that file.
 
@@ -17,7 +17,17 @@ A gamified life companion PWA for STEM university students. Solo Leveling RPG ae
 
 ```
 src/
-  App.jsx               — root state, sync wiring, XP/mission/streak logic
+  App.jsx               — orchestration only (~280 lines); mounts hooks, renders tabs
+  theme.js              — single source of truth for colours, fonts, button/input styles
+  context/
+    AppContext.js        — React context; useAppContext() hook for tabs to consume
+  hooks/
+    useAppState.js      — all React state + write-through localStorage persistence
+    useSync.js          — Syncthing push/pull/pick/forget + auto-push on tab hide
+    useGameEngine.js    — XP, missions, achievements, AI command executor, habit logger
+    useDailyLogin.js    — daily login streak math and login XP
+    useScheduler.js     — timed prompts: sleep check-in, screen time, lecture reminders
+    useUI.js            — ephemeral UI state: banner, toast, modal, levelUpData
   ChatTab.jsx           — AI chat UI
   HabitsTab.jsx         — habit tracking and AI-personalised protocol init
   TasksTab.jsx          — tasks and goals
@@ -49,6 +59,30 @@ src/
 - **`api/verify-google-id.js`** — optional serverless JWT verification (e.g. Vercel); used when configured in your data file.
 - **`manifest.json`**, **`sw.js`** — PWA manifest and service worker.
 - **`public/404.html`** — copied to `dist`; redirects 404s to the SPA so client-side routes and OAuth callbacks work on GitHub Pages.
+
+## Architecture
+
+`App.jsx` is pure orchestration — it mounts hooks and renders tabs. All logic lives in hooks:
+
+| Hook | Owns |
+|---|---|
+| `useAppState` | React state + write-through localStorage (replaces 25 individual `useEffect` flushes) |
+| `useSync` | Syncthing push/pull, auto-push on tab hide, pull mutex to prevent push/pull race |
+| `useGameEngine` | XP awards, mission checking, achievement unlock, AI command executor, habit logger |
+| `useDailyLogin` | Streak math, login XP, shield consumption |
+| `useScheduler` | Timed modals/banners: sleep check-in, screen time, lecture reminders, streak panic |
+| `useUI` | Ephemeral UI state: banner, toast, modal, level-up overlay |
+
+Tabs consume everything via `useAppContext()` — no more 15-prop function signatures.
+
+### Key fixes in this refactor
+
+**Write-through persistence** — `useAppState` wraps `setState` so localStorage is written synchronously inside the React updater, not in a downstream `useEffect`. This eliminates the render-cycle gap where localStorage lagged React state and caused stale auto-pushes to overwrite fresh Pull data.
+
+**Sync mutex ownership** — `isPullingRef` now lives inside `useSync` alongside the auto-push effect. Previously it lived in App and was captured by a stale closure, sometimes missing the flag entirely. Both sides now always share the same object.
+
+**Scheduler isolation** — The `useScheduler` interval reads state via a `scheduledStateRef` that is updated on every render, so the callback always sees fresh data without the interval effect having stale deps.
+
 
 ## Design Philosophy & Security Model
 

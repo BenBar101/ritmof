@@ -1,8 +1,10 @@
+import { useAppContext } from "./context/AppContext";
 import { useState } from "react";
 import { today } from "./utils/storage";
 import { primaryBtn } from "./Onboarding";
 
-export default function TasksTab({ state, setState, awardXP, showBanner, checkMissions, actionLocksRef }) {
+export default function TasksTab() {
+  const { state, setState, awardXP, showBanner, checkMissions, actionLocksRef } = useAppContext();
   const [newTask, setNewTask] = useState("");
   const [newPriority, setNewPriority] = useState("medium");
   const [showGoalForm, setShowGoalForm] = useState(false);
