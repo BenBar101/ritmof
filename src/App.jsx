@@ -14,7 +14,7 @@ import { AppContext } from "./context/AppContext";
 // Utils
 import { LS, storageKey, IS_DEV, getGeminiApiKey, todayUTC, APP_ICON_URL } from "./utils/storage";
 import { getLevel, getRank, getXpPerLevel, getGachaCost, getStreakShieldCost, calcSessionXP } from "./utils/xp";
-import { THEME_KEY, SESSION_TYPES } from "./constants";
+import { THEME_KEY, SESSION_TYPES, DEFAULT_XP_PER_LEVEL, DEFAULT_GACHA_COST, DEFAULT_STREAK_SHIELD_COST } from "./constants";
 import { buildSystemPrompt } from "./api/systemPrompt";
 import { fetchDailyQuote } from "./api/quotes";
 import { SyncManager, FSAPI_SUPPORTED } from "./sync/SyncManager";
@@ -153,17 +153,17 @@ export default function App() {
 
   const { modal, setModal, toast, setToast, banner, setBanner, levelUpData, setLevelUpData, showToast, showBanner } = useUI();
 
-  const profile          = state.profile;
+  const profile          = state?.profile;
   // apiKey is read from sessionStorage on every render. After a sync Pull that
   // writes a new key into sessionStorage, rehydrate() triggers a re-render and
   // this call observes the updated value — there is at most a single render
   // where the old key remains in scope.
   const apiKey           = getGeminiApiKey();
-  const xpPerLevel       = getXpPerLevel(state);
-  const level            = getLevel(state.xp, xpPerLevel);
+  const xpPerLevel       = state ? getXpPerLevel(state) : DEFAULT_XP_PER_LEVEL;
+  const level            = state ? getLevel(state.xp, xpPerLevel) : 0;
   const rank             = getRank(level);
-  const gachaCost        = getGachaCost(state);
-  const streakShieldCost = getStreakShieldCost(state);
+  const gachaCost        = state ? getGachaCost(state) : DEFAULT_GACHA_COST;
+  const streakShieldCost = state ? getStreakShieldCost(state) : DEFAULT_STREAK_SHIELD_COST;
 
   const { awardXP, checkMissions, unlockAchievement, executeCommands, trackTokens, logHabit, actionLocksRef, lastLevelUpXpRef } =
     useGameEngine({ setState, latestStateRef, showBanner, showToast, setLevelUpData });

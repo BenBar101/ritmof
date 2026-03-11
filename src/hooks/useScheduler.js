@@ -25,13 +25,14 @@ export function useScheduler({ state, profile, showBanner, setModal }) {
   const sleepModalShownRef = useRef(null);
   const screenModalShownRef = useRef({});
   const scheduledStateRef = useRef({
-    sleepLog:       state.sleepLog,
-    screenTimeLog:  state.screenTimeLog,
-    calendarEvents: state.calendarEvents,
-    habitLog:       state.habitLog,
-    streak:         state.streak,
+    sleepLog:       state?.sleepLog,
+    screenTimeLog:  state?.screenTimeLog,
+    calendarEvents: state?.calendarEvents,
+    habitLog:       state?.habitLog,
+    streak:         state?.streak,
   });
   useEffect(() => {
+    if (!state) return;
     scheduledStateRef.current = {
       sleepLog:       state.sleepLog,
       screenTimeLog:  state.screenTimeLog,
@@ -39,7 +40,7 @@ export function useScheduler({ state, profile, showBanner, setModal }) {
       habitLog:       state.habitLog,
       streak:         state.streak,
     };
-  }, [state.sleepLog, state.screenTimeLog, state.calendarEvents, state.habitLog, state.streak]);
+  }, [state, state?.sleepLog, state?.screenTimeLog, state?.calendarEvents, state?.habitLog, state?.streak]);
 
   // ── Timed modal / banner checks ──────────────────────────
   useEffect(() => {
