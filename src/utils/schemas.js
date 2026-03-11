@@ -19,22 +19,26 @@ const iconStr = z.string().refine(
 ).optional()
 
 // ── Schemas ────────────────────────────────────────────────────
+
+// Keep as a raw ZodObject so .omit() can be called on it
 const ProfileSchemaBase = z.object({
-  name:         z.string().max(60).optional(),
-  major:        z.string().max(80).optional(),
-  interests:    z.string().max(200).optional(),
-  books:        z.string().max(200).optional(),
-  semesterGoal: z.string().max(300).optional(),
+  name:           z.string().max(60).optional(),
+  major:          z.string().max(80).optional(),
+  interests:      z.string().max(200).optional(),
+  books:          z.string().max(200).optional(),
+  semesterGoal:   z.string().max(300).optional(),
   // geminiKey must never appear in sync payload
-  geminiKey:    z.undefined({ message: 'geminiKey must not be in sync payload' }),
-  googleClientId: z.undefined({ message: 'googleClientId must not be in sync payload' }),
+  geminiKey:      z.undefined(),
+  googleClientId: z.undefined(),
 })
 
 export const ProfileSchema = ProfileSchemaBase.strip().nullable()
 
-// Relax ProfileSchema for partial profile objects (geminiKey may simply be absent)
-// Omit must be called on the object schema, not on .strip().nullable() (Zod v4)
-export const SafeProfileSchema = ProfileSchemaBase.omit({ geminiKey: true, googleClientId: true }).strip().nullable()
+// .omit() is called on the raw ZodObject, THEN .strip().nullable()
+export const SafeProfileSchema = ProfileSchemaBase
+  .omit({ geminiKey: true, googleClientId: true })
+  .strip()
+  .nullable()
 
 export const HabitSchema = z.object({
   id:       z.string().max(64).regex(/^[\w-]+$/),
@@ -200,4 +204,3 @@ export const SyncPayloadSchema = z.object({
   // but is never written back out on push
   geminiKey:                z.string().optional(),
 })
-
