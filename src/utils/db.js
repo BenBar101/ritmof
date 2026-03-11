@@ -99,6 +99,11 @@ export const store = createStore()
 export const getMaxDateSeen = () => {
   const v = store.getValue('jv_max_date_seen')
   if (v != null) return v
+  try {
+    const lsKey = (IS_DEV ? DEV_PREFIX : '') + 'jv_max_date_seen'
+    const raw = localStorage.getItem(lsKey)
+    if (raw) return JSON.parse(raw)
+  } catch { /* localStorage unavailable or invalid JSON */ }
   return idbGet('jv_max_date_seen', null)
 }
 export const updateMaxDateSeen = (dateStr) => {
@@ -106,6 +111,9 @@ export const updateMaxDateSeen = (dateStr) => {
   if (!current || dateStr > current) {
     store.setValue('jv_max_date_seen', dateStr)
     idbSet('jv_max_date_seen', dateStr)
+    try {
+      localStorage.setItem((IS_DEV ? DEV_PREFIX : '') + 'jv_max_date_seen', JSON.stringify(dateStr))
+    } catch { /* localStorage full or unavailable */ }
   }
 }
 

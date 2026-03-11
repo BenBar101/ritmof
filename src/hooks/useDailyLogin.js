@@ -34,7 +34,7 @@ export function useDailyLogin({ profile, setState, setModal, setLevelUpData, sho
       return `${yyyy}-${mm}-${dd}`;
     };
 
-    const parseDateLocal = (utcDateStr) => {
+    const parseDateUTC = (utcDateStr) => {
       const [y, m, d] = utcDateStr.split("-").map(Number);
       return new Date(Date.UTC(y, m - 1, d));
     };
@@ -59,7 +59,7 @@ export function useDailyLogin({ profile, setState, setModal, setLevelUpData, sho
       const yesterday = getUTCYesterday(effectiveDate);
 
       let newStreak  = s.streak;
-      let newShields = s.streakShields;
+      let newShields = typeof s.streakShields === "number" && isFinite(s.streakShields) && s.streakShields >= 0 ? Math.floor(s.streakShields) : 0;
       let bannerMsg  = null;
       let clearShieldBuyDate = false;
 
@@ -70,8 +70,8 @@ export function useDailyLogin({ profile, setState, setModal, setLevelUpData, sho
       } else {
         const daysSinceLast = (() => {
           if (!s.lastLoginDate) return Infinity;
-          const last = parseDateLocal(s.lastLoginDate);
-          const now  = parseDateLocal(effectiveDate);
+          const last = parseDateUTC(s.lastLoginDate);
+          const now  = parseDateUTC(effectiveDate);
           return Math.round((now - last) / 86400000);
         })();
         const missedExactlyOneDay = daysSinceLast === 2;
@@ -94,7 +94,9 @@ export function useDailyLogin({ profile, setState, setModal, setLevelUpData, sho
       }
 
       // [A-2] Cap loginXP — a crafted streak of 3650 would award 36 550 XP
-      const loginXP  = Math.min(50 + newStreak * 10, 5000);
+      // Award 0 XP on forced-reset login (clock rollback) to avoid rewarding the exploit.
+      const streakWasReset = newStreak === 0 && (s.streak ?? 0) > 0;
+      const loginXP  = streakWasReset ? 0 : Math.min(50 + newStreak * 10, 5000);
       const newXP    = s.xp + loginXP;
       const xpPl     = getXpPerLevel(s);
       const oldLevel = getLevel(s.xp, xpPl);
@@ -155,7 +157,7 @@ export function useDailyLogin({ profile, setState, setModal, setLevelUpData, sho
     });
     const resetTimer = setTimeout(() => {
       loginInProgressRef.current = false;
-    }, 2000);
+    }, 500);
 
     return () => {
       loginInProgressRef.current = false;

@@ -512,13 +512,19 @@ function GachaSection({ state, setState, profile, apiKey, gachaCost, showBanner,
   }, []);
 
   function rollRarity() {
+    const totalWeight = Object.values(GACHA_RARITY_WEIGHTS).reduce((a, b) => a + b, 0);
+    if (totalWeight <= 0) return "common";
     const buf = new Uint32Array(1);
     crypto.getRandomValues(buf);
-    const roll = (buf[0] / 0x100000000) * 100; // 2^32 so roll is in [0, 100), never exactly 100
-    if (roll < GACHA_RARITY_WEIGHTS.legendary) return "legendary";
-    if (roll < GACHA_RARITY_WEIGHTS.legendary + GACHA_RARITY_WEIGHTS.epic) return "epic";
-    if (roll < GACHA_RARITY_WEIGHTS.legendary + GACHA_RARITY_WEIGHTS.epic + GACHA_RARITY_WEIGHTS.rare) return "rare";
-    return "common";
+    const roll = (buf[0] / 0x100000000) * totalWeight;
+    let acc = 0;
+    let chosenRarity = null;
+    for (const r of ["legendary", "epic", "rare", "common"]) {
+      acc += GACHA_RARITY_WEIGHTS[r] ?? 0;
+      if (roll < acc) { chosenRarity = r; break; }
+    }
+    const safeRarity = chosenRarity ?? "common";
+    return safeRarity;
   }
 
   async function doPull() {
@@ -866,6 +872,25 @@ function GachaCard({ card, compact }) {
 // eslint-disable-next-line no-unused-vars
 function SettingsSection({ profile, setState, showBanner, syncStatus, lastSynced, syncFileConnected, onPush, onPull, onPickSyncFile, onForgetSyncFile, confirmForgetSync, theme, setTheme, latestStateRef }) {
   const importRef = useRef(null);
+  const [clientIdInput, setClientIdInput] = useState(profile?.googleClientId || "");
+
+  useEffect(() => {
+    setClientIdInput(profile?.googleClientId || "");
+  }, [profile?.googleClientId]);
+
+  function saveClientId() {
+    const trimmed = clientIdInput.trim();
+    if (trimmed && !/^[\w.-]+\.apps\.googleusercontent\.com$/.test(trimmed)) {
+      showBanner("Invalid Client ID format. Must end in .apps.googleusercontent.com", "alert");
+      return;
+    }
+    setState((s) => ({
+      ...s,
+      profile: { ...(s.profile || {}), googleClientId: trimmed || undefined },
+    }));
+    showBanner(trimmed ? "Google Client ID saved." : "Google Client ID cleared.", "success");
+  }
+
   // Fix: replace window.confirm with a two-step in-app confirmation — window.confirm() is
   // blocked in PWA standalone mode and some embedded contexts (same reason forgetSyncFile was fixed).
   const [confirmReset, setConfirmReset] = useState(false);
@@ -1082,6 +1107,35 @@ function SettingsSection({ profile, setState, showBanner, syncStatus, lastSynced
           4. On each device: link your Syncthing folder file above.
         </div>
       </div>
+
+      <div style={{ height: "1px", background: "#333", margin: "8px 0" }} />
+      <div style={{ fontSize: "9px", color: "#444", letterSpacing: "2px" }}>GOOGLE CALENDAR</div>
+      <div style={{ fontSize: "10px", color: "#555", lineHeight: "1.8" }}>
+        Paste your Google OAuth Client ID to enable Calendar sync.<br />
+        Get one free at <span style={{ color: "#888" }}>console.cloud.google.com</span> → APIs & Services → Credentials.
+      </div>
+      <input
+        type="text"
+        value={clientIdInput}
+        onChange={(e) => setClientIdInput(e.target.value)}
+        placeholder="xxxxx.apps.googleusercontent.com"
+        style={{
+          width: "100%", padding: "8px", background: "#0a0a0a",
+          border: "1px solid #333", color: "#ccc", boxSizing: "border-box",
+          fontFamily: "'Share Tech Mono', monospace", fontSize: "10px",
+        }}
+      />
+      <button
+        type="button"
+        onClick={saveClientId}
+        style={{
+          padding: "8px", border: "1px solid #444", background: "transparent",
+          color: "#888", fontFamily: "'Share Tech Mono', monospace",
+          fontSize: "10px", letterSpacing: "1px", cursor: "pointer",
+        }}
+      >
+        SAVE CLIENT ID
+      </button>
 
       <button onClick={resetAll} style={{
         marginTop: "8px", padding: "10px",

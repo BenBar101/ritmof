@@ -56,7 +56,7 @@ export function sanitizeForPrompt(str, maxLen = 200) {
     // though they are common text. Pipe `|` is also stripped so it cannot be
     // used to spoof turn separators inside RECENT_CONTEXT.
     // Pipe is intentionally stripped to prevent turn-separator spoofing in recentChatSummary.
-    .replace(/[<>{}[\]`"'|\\]/g, "")          // ASCII injection chars (+ pipe)
+    .replace(/[<>{}[\]`"'|\u2223\uFF5C\u01C0\u0964\u0965\\]/g, "")          // ASCII injection chars + pipe + homoglyphs
     // Strip Unicode quote-like characters (double/single, guillemets, etc.)
     .replace(/[\u201C\u201D\u2018\u2019\u00AB\u00BB\u2039\u203A]/g, "")
     // Strip angle-bracket homoglyphs that could visually mimic tags.

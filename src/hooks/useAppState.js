@@ -25,7 +25,6 @@ import { useState, useCallback, useRef, useEffect } from "react";
 import { storageKey } from "../utils/storage";
 import { idbSet } from "../utils/db";
 import { initState } from "../utils/state";
-import { migrateLocalStorageToIdb } from "../utils/migrate";
 
 function persistState(s) {
   if (!s?.profile) return;
@@ -56,7 +55,7 @@ function persistState(s) {
   idbSet(storageKey("jv_mission_date"),       s.lastMissionDate);
   idbSet(storageKey("jv_chronicles"),         s.chronicles);
   idbSet(storageKey("jv_token_usage"),        s.tokenUsage);
-  idbSet(storageKey("jv_timers"),             Array.isArray(s.activeTimers) ? s.activeTimers : []);
+  idbSet(storageKey("jv_timers"),             Array.isArray(s.activeTimers) ? s.activeTimers.filter(t => typeof t.endsAt === "number" && t.endsAt > Date.now() - 3_600_000) : []);
   idbSet(storageKey("jv_habit_suggestions"),  Array.isArray(s.pendingHabitSuggestions) ? s.pendingHabitSuggestions : []);
   idbSet(storageKey("jv_gcal_connected"),     s.gCalConnected);
   idbSet(storageKey("jv_habits_init"),        s.habitsInitialized);
@@ -70,16 +69,14 @@ export function useAppState() {
   // null = still loading from IDB; actual state object = ready
   const [state, _setState] = useState(null);
   const [idbReady, setIdbReady] = useState(false);
+  const [rehydrateCount, setRehydrateCount] = useState(0);
   const latestStateRef = useRef(null);
 
-  // ── Async boot: migrate (if needed) → initState ──
+  // ── Async boot: initState ──
   useEffect(() => {
     let cancelled = false;
     async function boot() {
       try {
-        // Migrate from localStorage if this is an existing user's first
-        // run after the IDB migration ships. No-op for new users.
-        await migrateLocalStorageToIdb();
         // Store is already populated by bootDb() in main.jsx — initState() is safe
         if (!cancelled) {
           const fresh = initState();
@@ -155,9 +152,10 @@ export function useAppState() {
     const fresh = initState();
     latestStateRef.current = fresh;
     _setState(fresh);
+    setRehydrateCount((c) => c + 1);
     return fresh;
   }, []);
 
-  return { state, setState, latestStateRef, rehydrate, idbReady };
+  return { state, setState, latestStateRef, rehydrate, idbReady, rehydrateCount };
 }
 

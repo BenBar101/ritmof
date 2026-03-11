@@ -39,7 +39,7 @@ export function useScheduler({ state, profile, showBanner, setModal }) {
       habitLog:       state.habitLog,
       streak:         state.streak,
     };
-  });
+  }, [state.sleepLog, state.screenTimeLog, state.calendarEvents, state.habitLog, state.streak]);
 
   // ── Timed modal / banner checks ──────────────────────────
   useEffect(() => {

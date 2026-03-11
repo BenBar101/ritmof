@@ -248,5 +248,6 @@ export function useSync({ latestStateRef, rehydrate, showBanner }) {
     syncPull,
     pickSyncFile,
     forgetSyncFile,
+    resetPullMutex: useCallback(() => { isPullingRef.current = false; }, []),
   };
 }

@@ -47,7 +47,7 @@ import ProfileTab from "./ProfileTab";
 // ─────────────────────────────────────────────────────────────
 // KEYS CONFIG GATE
 // ─────────────────────────────────────────────────────────────
-function KeysConfigGate() {
+function KeysConfigGate({ resetPullMutex }) {
   const [syncFileConnected, setSyncFileConnected] = useState(false);
   const [syncChecking,      setSyncChecking]      = useState(true);
   const [syncError,         setSyncError]         = useState("");
@@ -89,7 +89,9 @@ function KeysConfigGate() {
           } catch {
             // As a last resort, do nothing — state has already been updated
             // from the sync payload, so the app remains usable even without
-            // a full reload.
+            // a full reload. Release pull mutex so auto-push can resume if
+            // we're in a context that uses it.
+            resetPullMutex?.();
           }
         }
       }, 250);
@@ -142,7 +144,7 @@ function KeysConfigGate() {
 // MAIN APP
 // ─────────────────────────────────────────────────────────────
 export default function App() {
-  const { state, setState, latestStateRef, rehydrate, idbReady } = useAppState();
+  const { state, setState, latestStateRef, rehydrate, idbReady, rehydrateCount } = useAppState();
   const [tab, setTab]               = useState("home");
   const [theme, setThemeState]      = useState(() => LS.get(storageKey(THEME_KEY), "dark"));
   const [dailyQuote, setDailyQuote] = useState(null);
@@ -166,7 +168,7 @@ export default function App() {
   const { awardXP, checkMissions, unlockAchievement, executeCommands, trackTokens, logHabit, actionLocksRef, lastLevelUpXpRef } =
     useGameEngine({ setState, latestStateRef, showBanner, showToast, setLevelUpData });
 
-  const { syncFileConnected, syncStatus, lastSynced, confirmForgetSync, syncPush, syncPull, pickSyncFile, forgetSyncFile } =
+  const { syncFileConnected, syncStatus, lastSynced, confirmForgetSync, syncPush, syncPull, pickSyncFile, forgetSyncFile, resetPullMutex } =
     useSync({ latestStateRef, rehydrate, showBanner });
 
   useDailyLogin({ profile, setState, setModal, setLevelUpData, showBanner, trackTokens, lastLevelUpXpRef });
@@ -255,7 +257,7 @@ export default function App() {
   }
 
 
-  if (!apiKey) return <ErrorBoundary><KeysConfigGate /></ErrorBoundary>;
+  if (!apiKey) return <ErrorBoundary><KeysConfigGate resetPullMutex={resetPullMutex} /></ErrorBoundary>;
   if (showOnboarding) {
     return (
       <Onboarding onComplete={(profile) => {
@@ -288,6 +290,7 @@ export default function App() {
     syncStatus, lastSynced, syncFileConnected, confirmForgetSync,
     syncPush, syncPull, pickSyncFile, forgetSyncFile,
     dailyQuote, buildSystemPrompt, setTab,
+    rehydrateCount,
   };
 
   return (

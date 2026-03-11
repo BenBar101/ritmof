@@ -56,7 +56,9 @@ export default function HomeTab() {
 
       {/* Exam warning */}
       {upcomingExams.map((exam) => {
-        const days = Math.ceil((new Date(exam.start) - Date.now()) / 86400000);
+        const rawDiff = (new Date(exam.start) - Date.now()) / 86400000;
+        const days = rawDiff <= 0 ? 0 : Math.ceil(rawDiff);
+        if (rawDiff < -0.05) return null;
         const safeTitle = sanitizeForPrompt(exam.title ?? "", 200);
         return (
           <div key={exam.id} style={{
@@ -205,6 +207,7 @@ export default function HomeTab() {
 
 function TokenUsageBar({ usage }) {
   if (!usage) return null;
+  if (typeof usage.date !== "string") return null;
   // Fix: use DAILY_TOKEN_LIMIT (the actual enforcement ceiling) so the bar fills to 100%
   // when AI features are disabled — not 5% (50k/1M). Showing "% of 1M" while blocking at
   // 50k meant the bar never appeared to reach critical even when the budget was exhausted.
@@ -269,7 +272,10 @@ function CountdownTimer({ timer, onExpire }) {
 
   useEffect(() => {
     if (timer.endsAt <= Date.now()) {
-      if (!expiredRef.current) { expiredRef.current = true; if (mountedRef.current) onExpireRef.current(); }
+      if (!expiredRef.current) {
+        expiredRef.current = true;
+        setTimeout(() => { if (mountedRef.current && expiredRef.current) onExpireRef.current(); }, 0);
+      }
       return;
     }
     expiredRef.current = false;

@@ -26,9 +26,9 @@ export async function updateDynamicCosts(apiKey, state, event, onTokensUsed) {
   );
   const level = Math.floor(Math.max(0, Number(getLevel(state.xp, xpPerLevel)) || 0));
   const now = new Date();
-  const day = now.getDay();
+  const day = now.getUTCDay();
   const weekend = day === 0 || day === 6;
-  const month = now.getMonth(), date = now.getDate();
+  const month = now.getUTCMonth(), date = now.getUTCDate();
   const holidayHint = (month === 11 && date === 25) ? "Christmas" : (month === 0 && date === 1) ? "New Year" : (month === 6 && date === 4) ? "US Independence Day" : null;
   const safeHolidayHint = holidayHint ? holidayHint.replace(/[^a-zA-Z]/g, "").slice(0, 30) : null;
   const VALID_EVENTS = new Set(["level_up", "gacha_pull", "streak_shield_use"]);

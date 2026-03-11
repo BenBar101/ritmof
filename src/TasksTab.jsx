@@ -19,7 +19,7 @@ export default function TasksTab() {
   function sanitizeText(str, maxLen = 300) {
     if (typeof str !== "string") return "";
     return str
-      .replace(/[<>{}[\]`"\\]/g, "")
+      .replace(/[<>{}[\]`"'\\]/g, "")
       // eslint-disable-next-line no-control-regex
       .replace(/[\u0000-\u001F\u007F-\u009F\u200B-\u200D\uFEFF]/g, "")
       .slice(0, maxLen)

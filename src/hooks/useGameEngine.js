@@ -18,7 +18,7 @@
 //           executeCommands calls from each reading a stale total
 // ═══════════════════════════════════════════════════════════════
 
-import { useCallback, useRef } from "react";
+import { useCallback, useRef, useEffect } from "react";
 import { storageKey, todayUTC, getMaxDateSeen } from "../utils/storage";
 import { idbGet } from "../utils/db";
 import { getLevel, getRank, getXpPerLevel } from "../utils/xp";
@@ -53,11 +53,11 @@ const INJECT_RE = /[<>"`&'[\]]/g;
 
 function sanitizeStr(s, max = MAX_STR_LEN) {
   if (typeof s !== "string") return "";
-  return s.replace(CTRL_RE, "").replace(BIDI_RE, "").slice(0, max).replace(INJECT_RE, "");
+  return s.replace(CTRL_RE, "").replace(BIDI_RE, "").replace(INJECT_RE, "").slice(0, max);
 }
 
 // ─────────────────────────────────────────────────────────────
-export function useGameEngine({ setState, showBanner, showToast, setLevelUpData }) {
+export function useGameEngine({ setState, latestStateRef, showBanner, showToast, setLevelUpData }) {
   // ── Refs that must survive render cycles ─────────────────
   // aiXpTodayRef: updated synchronously so concurrent executeCommands
   // calls in the same event loop all see the accumulated total [Fix #5]
@@ -102,6 +102,9 @@ export function useGameEngine({ setState, showBanner, showToast, setLevelUpData 
     });
   }, [setState, showBanner]);
 
+  const trackTokensRef = useRef(trackTokens);
+  useEffect(() => { trackTokensRef.current = trackTokens; }, [trackTokens]);
+
   // ── AI XP budget (ref-based to avoid race conditions) ────
   const consumeAiXpBudget = useCallback((requested) => {
     const t = todayUTC();
@@ -113,7 +116,8 @@ export function useGameEngine({ setState, showBanner, showToast, setLevelUpData 
     }
     if (aiXpTodayRef.current === null || aiXpTodayRef.current.date !== t) {
       const persisted = idbGet(storageKey("jv_token_usage"), null);
-      const baseXp    = (persisted && persisted.date === t ? persisted.aiXpToday : 0) || 0;
+      const live = latestStateRef?.current?.tokenUsage;
+      const baseXp = (live?.date === t ? live.aiXpToday : (persisted?.date === t ? persisted.aiXpToday : 0)) || 0;
       aiXpTodayRef.current = { date: t, value: baseXp };
     }
     const alreadyAwarded = aiXpTodayRef.current.value;
@@ -130,7 +134,7 @@ export function useGameEngine({ setState, showBanner, showToast, setLevelUpData 
       });
     }
     return allowed;
-  }, [setState]);
+  }, [setState, latestStateRef]);
 
   // ── Core XP award ─────────────────────────────────────────
   const awardXP = useCallback((amount, _event, silent = false) => {
@@ -159,7 +163,7 @@ export function useGameEngine({ setState, showBanner, showToast, setLevelUpData 
             if (prev && prev.level >= newLevel) return prev;
             return { level: newLevel, rank: getRank(newLevel) };
           });
-          updateDynamicCosts(getGeminiApiKey(), snapshot, "level_up", trackTokens)
+          updateDynamicCosts(getGeminiApiKey(), snapshot, "level_up", trackTokensRef.current)
             .then((costs) => {
               if (costs && Object.keys(costs).length) {
                 setState((prev) => ({ ...prev, dynamicCosts: { ...prev.dynamicCosts, ...costs } }));
@@ -174,7 +178,7 @@ export function useGameEngine({ setState, showBanner, showToast, setLevelUpData 
       }
       return { ...s, xp: newXP };
     });
-  }, [setState, setLevelUpData, trackTokens]);
+  }, [setState, setLevelUpData]);
 
   // ── Mission checker ───────────────────────────────────────
   // [A-3] pendingData object prevents double-toasts in React Strict Mode
@@ -222,7 +226,6 @@ export function useGameEngine({ setState, showBanner, showToast, setLevelUpData 
         const oldLevel = getLevel(effectiveOldXp, xpPl);
         const newLevel = getLevel(newXP, xpPl);
         if (newLevel > oldLevel) {
-          lastLevelUpXpRef.current = newXP;
           pendingData.levelUp = { level: newLevel, rank: getRank(newLevel), snapshot: { ...s, xp: newXP, dailyMissions: updated } };
         }
       }
@@ -235,30 +238,27 @@ export function useGameEngine({ setState, showBanner, showToast, setLevelUpData 
       if (pendingData.levelUp) {
         const { level, rank, snapshot } = pendingData.levelUp;
         const newXP = snapshot.xp;
+        lastLevelUpXpRef.current = newXP;
         setTimeout(() => {
-          if (lastLevelUpXpRef.current > newXP) return;
-          lastLevelUpXpRef.current = newXP;
-          setTimeout(() => {
-            setLevelUpData((prev) => {
-              if (prev && prev.level >= level) return prev;
-              return { level, rank };
+          setLevelUpData((prev) => {
+            if (prev && prev.level >= level) return prev;
+            return { level, rank };
+          });
+          updateDynamicCosts(getGeminiApiKey(), snapshot, "level_up", trackTokensRef.current)
+            .then((costs) => {
+              if (costs && Object.keys(costs).length) {
+                setState((prev) => ({ ...prev, dynamicCosts: { ...prev.dynamicCosts, ...costs } }));
+              }
+            })
+            .catch((err) => {
+              if (import.meta.env.DEV) {
+                console.warn("[useGameEngine] updateDynamicCosts (mission level_up) failed:", err?.message || err);
+              }
             });
-            updateDynamicCosts(getGeminiApiKey(), snapshot, "level_up", trackTokens)
-              .then((costs) => {
-                if (costs && Object.keys(costs).length) {
-                  setState((prev) => ({ ...prev, dynamicCosts: { ...prev.dynamicCosts, ...costs } }));
-                }
-              })
-              .catch((err) => {
-                if (import.meta.env.DEV) {
-                  console.warn("[useGameEngine] updateDynamicCosts (mission level_up) failed:", err?.message || err);
-                }
-              });
-          }, 300);
-        }, 0);
+        }, 300);
       }
     });
-  }, [setState, showToast, setLevelUpData, trackTokens]);
+  }, [setState, showToast, setLevelUpData]);
 
   // ── Achievement unlock ────────────────────────────────────
   const unlockAchievement = useCallback((data, skipXP = false) => {
@@ -372,7 +372,7 @@ export function useGameEngine({ setState, showBanner, showToast, setLevelUpData 
             if (idx >= 0) tasks[idx] = { ...tasks[idx], done: true, doneDate };
             return { ...s, tasks };
           });
-          checkMissions("task");
+          queueMicrotask(() => { checkMissions("task"); });
           break;
         }
 

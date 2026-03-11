@@ -4,7 +4,7 @@
 // Security model:
 //   - Key allowlist: only SYNC_KEYS are written from an incoming payload.
 //   - Schema version check: files from older schema versions are rejected.
-//   - Per-key validators (SYNC_VALIDATORS): range, length, shape checks.
+//   - Zod validation (SyncPayloadSchema): strips unknown keys, enforces shapes and bounds.
 //   - Prototype pollution guard: __proto__ / constructor / prototype rejected.
 //   - Payload size cap: >10 MB rejected before any write.
 //   - geminiKey and googleClientId are read from the file into sessionStorage
@@ -13,9 +13,9 @@
 //     incoming (prevents crafted sync from resetting once-per-day shield limit).
 // ═══════════════════════════════════════════════════════════════
 
-import { LS, storageKey, setGeminiApiKey, IS_DEV, DEV_PREFIX, todayUTC } from "../utils/storage";
+import { LS, storageKey, setGeminiApiKey, IS_DEV, DEV_PREFIX } from "../utils/storage";
 import { idbGet, idbSet, store } from "../utils/db";
-import { calcSessionXP } from "../utils/xp";
+import { SyncPayloadSchema } from "../utils/schemas.js";
 
 // ── Schema version ──────────────────────────────────────────────
 export const SYNC_SCHEMA_VERSION = 1;
@@ -44,291 +44,13 @@ export const SYNC_KEYS = [
   "jv_last_shield_buy_date",
 ];
 
-// ── Simple per-key validators ─────────────────────────────────────
-const isString = (v) => typeof v === "string";
-const isNumber = (v) => typeof v === "number" && isFinite(v);
-const isBool   = (v) => typeof v === "boolean";
+// ── Helpers (used by sanitizeChatMessages and isSafeSyncValue) ─────
 const isArray  = (v) => Array.isArray(v);
 const isObj    = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
-const isDateStr = (v) => isString(v) && /^\d{4}-\d{2}-\d{2}$/.test(v);
-const isNullOrDateStr = (v) => v === null || isDateStr(v);
-const MAX_LOG_ENTRIES = 800; // ~2 years of daily entries
-const DATE_KEY_RE = /^\d{4}-\d{2}-\d{2}$/;
-const MAX_LOG_VALUE_SIZE = 4096; // per-entry byte cap to prevent log value bloat
-const MAX_LOG_OBJECT_BYTES = MAX_LOG_VALUE_SIZE * MAX_LOG_ENTRIES;
-
 const _logEnc = new TextEncoder();
 function byteLen(str) {
   return _logEnc.encode(str).length;
 }
-
-// Grapheme-aware length check for emoji / icon strings. Many emoji are composed of
-// multiple UTF-16 code units (and even multiple codepoints joined via ZWJ), so
-// String.length ≤ 2 is NOT a reliable proxy for "one or two emoji". We allow up to
-// 2 grapheme clusters when Intl.Segmenter is available, and fall back to a slightly
-// looser 4-code-unit bound in older environments.
-function iconLengthOk(icon) {
-  if (typeof icon !== "string") return false;
-  try {
-    if (typeof Intl !== "undefined" && Intl.Segmenter) {
-      const segments = [...new Intl.Segmenter().segment(icon)];
-      return segments.length <= 2;
-    }
-  } catch {
-    // Ignore Segmenter failures and fall through to length-based fallback.
-  }
-  return icon.length <= 4;
-}
-
-function isLogObj(v) {
-  if (!isObj(v)) return false;
-  const keys = Object.keys(v);
-  if (keys.length > MAX_LOG_ENTRIES) return false;
-  // Reject log entries dated strictly in the future to prevent crafted sync files
-  // from inflating stats with future-dated sessions or logs.
-  const today = todayUTC();
-  if (keys.some((k) => k > today)) return false;
-  let totalBytes = 0;
-  for (const k of keys) {
-    if (!DATE_KEY_RE.test(k)) return false;
-    const val = v[k];
-    // Allow: null, bool, number — do not contribute to byte budget.
-    if (val === null || typeof val === "boolean" || typeof val === "number") continue;
-
-    let size = 0;
-    if (typeof val === "string") {
-      if (byteLen(val) > MAX_LOG_VALUE_SIZE) return false;
-      size = byteLen(val);
-    } else if (Array.isArray(val)) {
-      if (val.length > 200) return false;
-      // Each array item must be a non-empty string of reasonable length so that
-      // habit IDs or similar keys cannot be replaced with arbitrary objects that
-      // bypass includes() checks in the app logic.
-      if (!val.every((item) => typeof item === "string" && item.length > 0 && item.length <= 64)) return false;
-      const serialized = JSON.stringify(val);
-      if (byteLen(serialized) > MAX_LOG_VALUE_SIZE) return false;
-      size = byteLen(serialized);
-    } else if (isObj(val)) {
-      const serialized = JSON.stringify(val);
-      if (byteLen(serialized) > MAX_LOG_VALUE_SIZE) return false;
-      size = byteLen(serialized);
-    } else {
-      return false;
-    }
-
-    totalBytes += size;
-    if (totalBytes > MAX_LOG_OBJECT_BYTES) return false;
-  }
-  return true;
-}
-
-export const SYNC_VALIDATORS = {
-  jv_profile:             (v) => {
-    if (v === null) return true;
-    if (!isObj(v)) return false;
-    if (Object.prototype.hasOwnProperty.call(v, "geminiKey")) return false;
-    if (Object.prototype.hasOwnProperty.call(v, "googleClientId")) return false;
-    if (v.name !== undefined && !(typeof v.name === "string" && v.name.length <= 60)) return false;
-    if (v.major !== undefined && !(typeof v.major === "string" && v.major.length <= 80)) return false;
-    if (v.interests !== undefined && !(typeof v.interests === "string" && v.interests.length <= 200)) return false;
-    if (v.books !== undefined && !(typeof v.books === "string" && v.books.length <= 200)) return false;
-    if (v.semesterGoal !== undefined && !(typeof v.semesterGoal === "string" && v.semesterGoal.length <= 300)) return false;
-    return true;
-  },
-  // Fix: add upper bounds — a crafted sync file with jv_xp: 1e18 would
-  // otherwise instantly grant max level or an implausible streak/shield count.
-  jv_xp:                  (v) => isNumber(v) && v >= 0 && v <= 100_000_000,
-  // A 10-year streak (3650 days) is wildly implausible for the target audience.
-  // Cap at 3 years of consecutive logins to keep imported data within realistic
-  // bounds while still allowing long-term power users.
-  jv_streak:              (v) => isNumber(v) && v >= 0 && v <= 1095,
-  jv_shields:             (v) => isNumber(v) && v >= 0 && v <= 10000,
-  // NOTE: todayUTC() is called lazily inside the lambda (at validation time).
-  // Do NOT hoist it to a module-level const — it would capture the date at startup.
-  // Using UTC here keeps last-login anti-cheat checks consistent across devices.
-  jv_last_login:          (v) => v === null || (isDateStr(v) && v <= todayUTC()),
-  jv_habits:              (v) => isArray(v) && v.length <= 500 && v.every((h) =>
-    isObj(h) &&
-    typeof h.id === "string" && h.id.length <= 64 && /^[\w-]+$/.test(h.id) &&
-    typeof h.label === "string" && h.label.length <= 200 &&
-    typeof h.xp === "number" && isFinite(h.xp) && h.xp >= 1 && h.xp <= 200 &&
-    ["body","mind","work"].includes(h.category) &&
-    (h.icon === undefined || iconLengthOk(h.icon))
-  ),
-  jv_habit_log:           (v) => isLogObj(v),
-  jv_tasks:               (v) => isArray(v) && v.length <= 5000 && v.every((t) =>
-    isObj(t) &&
-    typeof t.id === "string" && t.id.length <= 64 && /^[\w-]+$/.test(t.id) &&
-    typeof t.text === "string" && t.text.length <= 500 &&
-    typeof t.done === "boolean" &&
-    (t.priority === undefined || ["low","medium","high"].includes(t.priority)) &&
-    (t.due === null || t.due === undefined || (typeof t.due === "string" && /^\d{4}-\d{2}-\d{2}$/.test(t.due)))
-  ),
-  jv_goals:               (v) => isArray(v) && v.length <= 1000 && v.every((g) =>
-    isObj(g) &&
-    typeof g.id === "string" && g.id.length <= 64 && /^[\w-]+$/.test(g.id) &&
-    typeof g.title === "string" && g.title.length <= 200 &&
-    typeof g.done === "boolean" &&
-    (g.course === undefined || (typeof g.course === "string" && g.course.length <= 100)) &&
-    (g.due === null || g.due === undefined || (typeof g.due === "string" && /^\d{4}-\d{2}-\d{2}$/.test(g.due))) &&
-    (g.addedBy === undefined || ["user","ritmol","system"].includes(g.addedBy))
-  ),
-  jv_sessions:            (v) => isArray(v) && v.length <= 10000 && v.every((s) =>
-    isObj(s) &&
-    typeof s.id === "string" && s.id.length <= 64 && /^[\w-]+$/.test(s.id) &&
-    (s.date === undefined || (
-      typeof s.date === "string" &&
-      /^\d{4}-\d{2}-\d{2}$/.test(s.date) &&
-      // Reject sessions dated in the future or unreasonably far in the past.
-      s.date <= todayUTC() &&
-      // Lower bound: 2010 allows imported historical data while preventing epoch-zero placeholders.
-      s.date >= "2010-01-01"
-    )) &&
-    (s.course === undefined || (typeof s.course === "string" && s.course.length <= 100)) &&
-    (s.notes === undefined || (typeof s.notes === "string" && s.notes.length <= 300)) &&
-    (s.duration === undefined || (typeof s.duration === "number" && isFinite(s.duration) && s.duration >= 0 && s.duration <= 600)) &&
-    // type is optional for legacy sessions; when present it must match the
-    // SESSION_TYPES allowlist used in the UI / XP calculator.
-    (s.type === undefined || ["lecture","self_study","project","exam_prep"].includes(s.type)) &&
-    // focus is optional; when present it must match the FOCUS_LEVELS ids.
-    (s.focus === undefined || ["low","medium","high"].includes(s.focus)) &&
-    (s.xp === undefined || (typeof s.xp === "number" && isFinite(s.xp) && s.xp >= 0 && s.xp <= 10000 &&
-      (() => {
-        const maxPlausibleXP = calcSessionXP(s.type || "exam_prep", Math.min(s.duration ?? 0, 600), "high", 7);
-        return s.xp <= maxPlausibleXP * 2;
-      })()))
-  ),
-  jv_achievements:        (v) => isArray(v) && v.length <= 2000 && v.every((a) =>
-    isObj(a) &&
-    typeof a.id === "string" && a.id.length <= 100 && /^[\w-.:@]+$/.test(a.id) &&
-    typeof a.title === "string" && a.title.length <= 300 &&
-    (a.desc        === undefined || (typeof a.desc        === "string" && a.desc.length        <= 300)) &&
-    (a.flavorText  === undefined || (typeof a.flavorText  === "string" && a.flavorText.length  <= 300)) &&
-    (a.icon        === undefined || iconLengthOk(a.icon)) &&
-    (a.xp === undefined || (typeof a.xp === "number" && isFinite(a.xp) && a.xp >= 0 && a.xp <= 500)) &&
-    (a.unlockedAt === undefined || (
-      typeof a.unlockedAt === "number" &&
-      isFinite(a.unlockedAt) &&
-      a.unlockedAt > 0 &&
-      a.unlockedAt <= Date.now() + 86_400_000
-    )) &&
-    (a.rarity === undefined || ["common","rare","epic","legendary"].includes(a.rarity))
-  ),
-  jv_gacha:               (v) => isArray(v) && v.length <= 2000 && v.every((c) =>
-    isObj(c) &&
-    typeof c.id === "string" && c.id.length <= 80 && /^[\w-]+$/.test(c.id) &&
-    ["rank_cosmetic","chronicle"].includes(c.type) &&
-    ["common","rare","epic","legendary"].includes(c.rarity) &&
-    (typeof c.content === "string" && c.content.length <= 1000) &&
-    (c.asciiArt === null || c.asciiArt === undefined || (typeof c.asciiArt === "string" && c.asciiArt.length <= 500))
-  ),
-  jv_cal_events:          (v) => isArray(v) && v.length <= 2000 && v.every((e) =>
-    isObj(e) &&
-    typeof e.id === "string" && e.id.length <= 150 && /^[\w@._\-:]+$/.test(e.id) &&
-    typeof e.title === "string" && e.title.length <= 200 &&
-    // Approximate Tags block characters (U+E0000–U+E01FF) via their UTF-16 surrogate
-    // range U+DB40 U+DC00–DFFF and reject titles containing them to avoid storing large
-    // invisible payloads.
-    !/\uDB40[\uDC00-\uDFFF]/.test(e.title) &&
-    (e.start === null || (typeof e.start === "string" && !isNaN(new Date(e.start).getTime()) && new Date(e.start).getTime() <= Date.now() + 365 * 5 * 86400000)) &&
-    (e.type === undefined || ["lecture","tirgul","exam","assignment","other"].includes(e.type))
-  ),
-  jv_chat:                (v) => {
-    if (!isArray(v)) return false;
-    if (v.length > 5000) return false;
-    // Per-message sanitization is applied in applyPayload; here we only enforce
-    // basic shape and length constraints.
-    return v.every(item => {
-      if (!isObj(item)) return false;
-      if (!['user', 'assistant'].includes(item.role)) return false;
-      if (typeof item.content !== 'string') return false;
-      if (byteLen(item.content) > 16000) return false; // 16 KB per message
-      if (item.ts !== undefined && !(typeof item.ts === 'number' && isFinite(item.ts) && item.ts > 0)) return false;
-      if (item.date !== undefined && !(typeof item.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(item.date))) return false;
-      return true;
-    });
-  },
-  // Fix: accept null for unset state in addition to non-empty strings.
-  jv_daily_goal:          (v) => v === null || (isString(v) && v.length <= 500),
-  jv_timers:              (v) => isArray(v) && v.length <= 50 && v.every((t) =>
-    {
-      const now = Date.now(); // capture once for consistent comparisons
-      return isObj(t) &&
-        typeof t.id === "string" && t.id.length <= 64 &&
-        typeof t.label === "string" && t.label.length <= 100 &&
-        // 1-hour grace window allows for Syncthing propagation delay. Timers expired
-        // more than 1 hour ago are dropped silently; future timers capped at 24 hours
-        // to prevent long-lived injected timers cluttering the UI.
-        typeof t.endsAt === "number" && isFinite(t.endsAt) &&
-          t.endsAt > now - 3_600_000 && t.endsAt <= now + 86_400_000 &&
-        (t.emoji === undefined || iconLengthOk(t.emoji));
-    }
-  ),
-  jv_sleep_log:           (v) => isLogObj(v),
-  jv_screen_log:          (v) => isLogObj(v),
-  jv_missions:            (v) => {
-    if (v === null) return true;
-    if (!isArray(v) || v.length > 20) return false;
-    return v.every((m) =>
-      isObj(m) &&
-      typeof m.id === "string" && m.id.length <= 40 &&
-      typeof m.desc === "string" && m.desc.length <= 200 &&
-      typeof m.xp === "number" && isFinite(m.xp) && m.xp >= 0 && m.xp <= 2000 &&
-      typeof m.done === "boolean" &&
-      ["habits", "session", "task", "chat"].includes(m.type) &&
-      typeof m.target === "number" && isFinite(m.target) && m.target >= 0 && m.target <= 100
-    );
-  },
-  // Use todayUTC() to match the date comparison in the mission reset effect (App.jsx)
-  // and prevent timezone-based bypass.
-  jv_mission_date:        (v) => v === null || (isDateStr(v) && v <= todayUTC()),
-  jv_habit_suggestions:   (v) => isArray(v) && v.length <= 200 && v.every((s) =>
-    typeof s === "string" && s.length <= 200
-  ),
-  jv_chronicles:          (v) => isArray(v) && v.length <= 500 && v.every((c) =>
-    isObj(c) &&
-    typeof c.id === "string" && c.id.length <= 80 &&
-    (c.content === undefined || (typeof c.content === "string" && c.content.length <= 2000)) &&
-    (c.date === undefined || (typeof c.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(c.date))) &&
-    (c.title  === undefined || (typeof c.title  === "string" && c.title.length  <= 120)) &&
-    (c.source === undefined || (typeof c.source === "string" && c.source.length <= 120)) &&
-    (c.xp === undefined || (typeof c.xp === "number" && isFinite(c.xp) && c.xp >= 0 && c.xp <= 500))
-  ),
-  jv_gcal_connected:      (v) => isBool(v),
-  // NOTE: today() is called lazily inside the lambda (at validation time).
-  // Do NOT hoist it to a module-level const — it would capture the date at startup.
-  jv_token_usage:         (v) => {
-    if (!isObj(v)) return false;
-    // date is REQUIRED — a token_usage object without a date would bypass
-    // daily budget checks when compared against todayUTC().
-    if (!isDateStr(v.date)) return false;
-    // Reject future dates using a UTC comparison so timezone changes cannot
-    // be abused to bypass the daily budget.
-    if (v.date > todayUTC()) return false;
-    // Fix [S-1]: add upper bounds on tokens and aiXpToday. Without them, a crafted
-    // sync file can set tokens to 9 999 999, permanently disabling all AI features,
-    // or set aiXpToday to 9 999 999, permanently blocking AI XP awards.
-    if (v.tokens !== undefined && !(isNumber(v.tokens) && v.tokens >= 0 && v.tokens <= 10_000_000)) return false;
-    if (v.aiXpToday !== undefined && !(isNumber(v.aiXpToday) && v.aiXpToday >= 0 && v.aiXpToday <= 1_000_000)) return false;
-    // warnedAt must be an array of safe numeric percentage values (50, 80, 99, etc.)
-    if (v.warnedAt !== undefined && !(isArray(v.warnedAt) && v.warnedAt.length <= 20 && v.warnedAt.every(x => typeof x === "number" && isFinite(x) && x >= 0 && x <= 99))) return false;
-    return true;
-  },
-  jv_habits_init:         (v) => isBool(v),
-  // Fix: validate dynamic cost fields and enforce the same numeric bounds as
-  // dynamicCosts.js so a crafted sync file cannot smuggle out-of-range economy
-  // values past this validator.
-  jv_dynamic_costs:       (v) => {
-    if (v === null) return true;
-    if (!isObj(v)) return false;
-    if (v.xpPerLevel !== undefined && !(isNumber(v.xpPerLevel) && v.xpPerLevel >= 200 && v.xpPerLevel <= 10000)) return false;
-    if (v.gachaCost !== undefined && !(isNumber(v.gachaCost) && v.gachaCost >= 50 && v.gachaCost <= 5000)) return false;
-    if (v.streakShieldCost !== undefined && !(isNumber(v.streakShieldCost) && v.streakShieldCost >= 100 && v.streakShieldCost <= 5000)) return false;
-    return true;
-  },
-  jv_last_shield_use_date:(v) => isNullOrDateStr(v),
-  jv_last_shield_buy_date:(v) => v === null || (isDateStr(v) && v <= todayUTC()),
-};
 
 // ── Prototype pollution guard ─────────────────────────────────────
 const DANGEROUS_KEYS = new Set(["__proto__", "constructor", "prototype"]);
@@ -488,8 +210,6 @@ function applyPayload(payload) {
       const { geminiKey: _gk, googleClientId: _gc, ...safeProfile } = val;
       val = safeProfile;
     }
-    const validator = SYNC_VALIDATORS[key];
-    if (validator && !validator(val)) continue;
     if (!isSafeSyncValue(val)) continue;
     // Anti-cheat: do not overwrite last shield buy date with an older sync value.
     if (key === "jv_last_shield_buy_date") {
@@ -549,9 +269,6 @@ function parseAndValidate(text) {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
     throw new Error("CORRUPT_FILE");
   }
-  // Fix: the previous check `DANGEROUS_KEYS.has("__proto__")` was always true
-  // (a dead condition). The actual guard is isSafeSyncValue which traverses the
-  // entire payload tree looking for dangerous keys.
   if (!isSafeSyncValue(payload)) {
     throw new Error("CORRUPT_FILE");
   }
@@ -560,13 +277,22 @@ function parseAndValidate(text) {
     throw new Error("CORRUPT_FILE");
   }
   const schemaVersion = payload._schemaVersion;
-  // Fix: also reject schemaVersion < 1 (zero, negative, or NaN) — only positive
-  // integer values up to SYNC_SCHEMA_VERSION are valid.
-  if (typeof schemaVersion !== "number" || !Number.isInteger(schemaVersion) ||
-      schemaVersion < 1 || schemaVersion > SYNC_SCHEMA_VERSION) {
+  if (
+    typeof schemaVersion !== "number" ||
+    !Number.isInteger(schemaVersion) ||
+    schemaVersion < 1 ||
+    schemaVersion > SYNC_SCHEMA_VERSION
+  ) {
     throw new Error("SYNC_SCHEMA_OUTDATED");
   }
-  return payload;
+  // Zod validation — strip unknown keys, enforce shapes and bounds.
+  const result = SyncPayloadSchema.safeParse(payload);
+  if (!result.success) {
+    console.warn("[RITMOL] Zod parse errors:", result.error.issues);
+    throw new Error("CORRUPT_FILE");
+  }
+  // Return the Zod-parsed (stripped) object so applyPayload only sees known keys.
+  return result.data;
 }
 
 // ── Read geminiKey / googleClientId into sessionStorage ───────────
@@ -578,7 +304,7 @@ function extractSecretsFromPayload(payload) {
     const trimmed = payload.geminiKey.trim();
     // Accept a range of plausible key lengths so future format changes don't
     // silently break the config gate. We never log the key value itself.
-    if (/^AIza[A-Za-z0-9_-]{35}$/.test(trimmed)) {
+    if (/^AIza[A-Za-z0-9_-]{35,50}$/.test(trimmed)) {
       setGeminiApiKey(trimmed);
     } else {
       // Key was present but failed the format check — surface a console warning
@@ -619,13 +345,19 @@ export const SyncManager = {
 
   /** Write current localStorage state to the linked sync file. */
   async push() {
-    const handle = await SyncManager.getHandle();
-    if (!handle) throw new Error("NO_HANDLE");
     if (_opInProgress) throw new Error("SYNC_BUSY");
-    if (!store) throw new Error("IDB_NOT_READY");
+    _opInProgress = true;
+    const handle = await SyncManager.getHandle();
+    if (!handle) {
+      _opInProgress = false;
+      throw new Error("NO_HANDLE");
+    }
+    if (!store) {
+      _opInProgress = false;
+      throw new Error("IDB_NOT_READY");
+    }
     const ch = getSyncChannel();
     ch?.postMessage({ type: "sync_start" });
-    _opInProgress = true; // acquire BEFORE any await
     try {
       let perm;
       try {

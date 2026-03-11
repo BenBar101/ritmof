@@ -28,7 +28,7 @@ export const ProfileSchema = z.object({
   // geminiKey must never appear in sync payload
   geminiKey:    z.undefined({ message: 'geminiKey must not be in sync payload' }),
   googleClientId: z.undefined({ message: 'googleClientId must not be in sync payload' }),
-}).passthrough().nullable()
+}).strip().nullable()
 
 // Relax ProfileSchema for partial profile objects (geminiKey may simply be absent)
 export const SafeProfileSchema = ProfileSchema.omit({ geminiKey: true, googleClientId: true })
@@ -81,7 +81,7 @@ export const AchievementSchema = z.object({
   flavorText: z.string().max(300).optional(),
   icon:       iconStr,
   xp:         z.number().min(0).max(500).optional(),
-  unlockedAt: z.number().positive().max(Date.now() + 86_400_000).optional(),
+  unlockedAt: z.number().positive().max(Date.now() + 300_000).optional(),
   rarity:     z.enum(['common', 'rare', 'epic', 'legendary']).optional(),
 })
 
@@ -94,7 +94,7 @@ export const GachaCardSchema = z.object({
 })
 
 export const CalEventSchema = z.object({
-  id:    z.string().max(150).regex(/^[\w@._\-:]+$/),
+  id:    z.string().max(150).regex(/^[\w@._\-:+=]+$/),
   title: z.string().max(200),
   start: z.string().nullable(),
   type:  z.enum(['lecture', 'tirgul', 'exam', 'assignment', 'other']).optional(),

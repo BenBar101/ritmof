@@ -11,7 +11,7 @@ import { sanitizeForPrompt } from "./api/systemPrompt";
 import GeometricCorners from "./GeometricCorners";
 
 export default function HabitsTab() {
-  const { state, setState, logHabit, showBanner, profile, apiKey, trackTokens } = useAppContext();
+  const { state, setState, logHabit, showBanner, profile, apiKey, trackTokens, rehydrateCount } = useAppContext();
   const todayLog = state.habitLog[todayUTC()] || [];
   const categories = ["body", "mind", "work"];
   const [initializing, setInitializing] = useState(false);
@@ -128,7 +128,7 @@ Respond ONLY with JSON array:
       habitInitAbortRef.current?.abort();
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state.habitsInitialized, apiKey, !!profile]);
+  }, [state.habitsInitialized, apiKey, !!profile, rehydrateCount]);
 
   function deleteHabit(id) {
     setState((s) => ({ ...s, habits: s.habits.filter((h) => h.id !== id) }));
