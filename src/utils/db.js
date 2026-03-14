@@ -134,12 +134,17 @@ export const store = createStore()
 // jv_max_date_seen is device-local and must never be synced or reset.
 // Dual-read/write with idb.js so the watermark survives reloads even when
 // TinyBase store is not yet booted.
+// NOTE: store.getValue / store.setValue use a raw key — NOT the storageKey()-prefixed form.
+// The TinyBase persister maps store keys directly to IDB values. storageKey() is only
+// used for legacy localStorage and for IDB keys written outside TinyBase.
+// jv_max_date_seen is stored under the bare key in the TinyBase store in all environments.
+const _MAX_DATE_STORE_KEY = 'jv_max_date_seen';
 const _DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 export const getMaxDateSeen = () => {
-  const v = store.getValue('jv_max_date_seen')
+  const v = store.getValue(_MAX_DATE_STORE_KEY)
   if (typeof v === 'string' && _DATE_RE.test(v)) return v
   try {
-    const lsKey = (IS_DEV ? DEV_PREFIX : '') + 'jv_max_date_seen'
+    const lsKey = (IS_DEV ? DEV_PREFIX : '') + _MAX_DATE_STORE_KEY
     const raw = localStorage.getItem(lsKey)
     if (raw) {
       try {
@@ -148,17 +153,20 @@ export const getMaxDateSeen = () => {
       } catch { /* ignore */ }
     }
   } catch { /* localStorage unavailable or invalid JSON */ }
-  const legacy = idbGet(storageKey('jv_max_date_seen'), null)
+  const legacy = idbGet(_MAX_DATE_STORE_KEY, null)
   return (typeof legacy === 'string' && _DATE_RE.test(legacy)) ? legacy : null
 }
 export const updateMaxDateSeen = (dateStr) => {
   if (typeof dateStr !== 'string' || !_DATE_RE.test(dateStr)) return
   const current = getMaxDateSeen()
   if (!current || dateStr > current) {
-    store.setValue(storageKey('jv_max_date_seen'), dateStr)
-    idbSet(storageKey('jv_max_date_seen'), dateStr)
+    // Write to TinyBase store under the bare key (consistent with getMaxDateSeen read).
+    store.setValue(_MAX_DATE_STORE_KEY, dateStr)
+    // Write to legacy IDB via idbSet (also uses bare key for TinyBase path).
+    idbSet(_MAX_DATE_STORE_KEY, dateStr)
+    // Write to localStorage for cross-boot persistence fallback.
     try {
-      localStorage.setItem((IS_DEV ? DEV_PREFIX : '') + 'jv_max_date_seen', JSON.stringify(dateStr))
+      localStorage.setItem((IS_DEV ? DEV_PREFIX : '') + _MAX_DATE_STORE_KEY, JSON.stringify(dateStr))
     } catch { /* localStorage full or unavailable */ }
   }
 }

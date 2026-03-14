@@ -64,13 +64,22 @@ Respond ONLY with JSON array:
 
     callGemini(apiKey, [{ role: "user", content: prompt }],
       "You generate personalized habit protocols. Respond only in JSON.", true, controller.signal)
-      .then(({ text, tokensUsed }) => {
+      .then(async ({ text, tokensUsed }) => {
         if (controller.signal.aborted || !mounted) return;
         trackTokens?.(tokensUsed);
         const match = text.match(/\[[\s\S]*\]/);
         if (!match) throw new Error("Expected array from Gemini");
-        const newHabits = JSON.parse(match[0]);
+        let newHabits;
+        try {
+          newHabits = JSON.parse(match[0]);
+        } catch {
+          throw new Error("Expected array from Gemini");
+        }
         if (!Array.isArray(newHabits)) throw new Error("Expected array from Gemini");
+        // Prototype-pollution guard: reject any parsed value that contains __proto__,
+        // constructor, or prototype keys at any depth before the mapper runs.
+        const { isSafeSyncValue } = await import("./sync/SyncManager.js");
+        if (!isSafeSyncValue(newHabits)) throw new Error("Expected array from Gemini");
         if (!mounted) return;
         setState((s) => ({
           ...s,

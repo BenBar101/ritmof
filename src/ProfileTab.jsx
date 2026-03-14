@@ -1,6 +1,6 @@
-import { useState, useEffect, useRef, flushSync } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useAppContext } from "./context/AppContext";
-import { todayUTC, getGeminiApiKey, setGeminiApiKey, getMaxDateSeen, storageKey } from "./utils/storage";
+import { todayUTC, localDateFromUTC, getGeminiApiKey, setGeminiApiKey, getMaxDateSeen } from "./utils/storage";
 import { ACHIEVEMENT_RARITIES, STYLE_CSS, DAILY_TOKEN_LIMIT, RANKS, sampleGachaRarity } from "./constants";
 import { DATA_DISCLOSURE_SEEN_KEY, THEME_KEY } from "./constants";
 import { getLevelProgress } from "./utils/xp";
@@ -106,7 +106,7 @@ function ProfileOverview({ state, setState, profile, level, streakShieldCost, ap
       // purchases within a single local calendar day when buying just before and
       // just after UTC midnight, but the economic impact is limited and keeps
       // streak logic consistent with other UTC-based checks.
-      const t = todayUTC();
+      const t = localDateFromUTC();
       if (s.lastShieldBuyDate === t) {
         // Mark as skipped — mutex will be released after setState commits
         buyShieldSkipReasonRef.current = "already_purchased";
@@ -114,15 +114,20 @@ function ProfileOverview({ state, setState, profile, level, streakShieldCost, ap
         return s;
       }
       const currentCost = s.dynamicCosts?.streakShieldCost ?? streakShieldCost;
-      if (s.xp < currentCost) {
+      const MAX_SAFE_XP = 10_000_000;
+      const safeXp = typeof s.xp === "number" && isFinite(s.xp) && s.xp >= 0
+        ? Math.min(Math.floor(s.xp), MAX_SAFE_XP)
+        : 0;
+      if (safeXp < currentCost) {
         buyShieldSkipReasonRef.current = "insufficient_xp";
+        shieldSnapshotRef.current = null;
         return s;
       }
       appliedCost = currentCost;
       const next = {
         ...s,
-        xp: Math.max(0, s.xp - currentCost),
-        streakShields: (s.streakShields || 0) + 1,
+        xp: Math.max(0, safeXp - currentCost),
+        streakShields: Math.min((s.streakShields || 0) + 1, 50),
         lastShieldBuyDate: t,
       };
       shieldSnapshotRef.current = next;
@@ -514,44 +519,26 @@ function GachaSection({ state, setState, profile, apiKey, gachaCost, showBanner,
       if (!apiKey) showBanner("No API key. Configure in settings.", "alert");
       return;
     }
-
-    // Guard 1: token budget — check BEFORE any XP deduction
     const usage = state.tokenUsage;
     if (usage && usage.date === todayUTC() && usage.tokens >= DAILY_TOKEN_LIMIT) {
       showBanner("SYSTEM: Neural energy depleted. AI functions offline until tomorrow.", "alert");
       return;
     }
-
-    // Guard 2: online — check BEFORE any XP deduction
-    if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+    if (typeof navigator !== "undefined" && navigator.onLine === false) {
       showBanner("SYSTEM: No network connection. Gacha requires connectivity.", "alert");
       return;
     }
 
-    // Optimistic XP deduction (only reached when guards pass)
+    // Set the ref-level guard immediately so rapid taps are blocked even before
+    // setPulling re-renders. No XP deduction happens until the API call succeeds.
     pullingRef.current = true;
-    let optimisticDeducted = false;
-    let deductedCost = 0;
-    flushSync(() => {
-      setState((s) => {
-        const cost = s.dynamicCosts?.gachaCost ?? gachaCost;
-        if (s.xp < cost) return s;
-        optimisticDeducted = true;
-        deductedCost = cost;
-        return { ...s, xp: Math.max(0, s.xp - cost) };
-      });
-    });
-    if (!optimisticDeducted) {
-      pullingRef.current = false;
-      showBanner(`Insufficient XP. Need ${gachaCost} XP to pull`, "alert");
-      return;
-    }
+    setPulling(true);
 
-    // Cancel any previous in-flight pull before starting a new one.
     gachaAbortRef.current?.abort();
     const controller = new AbortController();
+    // SAFETY: assign gachaAbortRef before any await so the useEffect cleanup
+    // (which calls gachaAbortRef.current?.abort()) always sees the latest controller.
     gachaAbortRef.current = controller;
-    setPulling(true);
 
     try {
       // Fix [PR-2]: extract sanitized books once and reuse it in BOTH the JSON block
@@ -613,7 +600,16 @@ Respond ONLY with JSON:
       }
       const match = raw.match(/\{[\s\S]*\}/);
       if (!match) throw new Error("Failed to parse Gacha JSON");
-      const card = JSON.parse(match[0]);
+      let card;
+      try {
+        card = JSON.parse(match[0]);
+      } catch {
+        throw new Error("Failed to parse Gacha JSON");
+      }
+      if (!card || typeof card !== "object" || Array.isArray(card)) throw new Error("Failed to parse Gacha JSON");
+      // Prototype-pollution guard before any property access.
+      const { isSafeSyncValue } = await import("./sync/SyncManager.js");
+      if (!isSafeSyncValue(card)) throw new Error("Failed to parse Gacha JSON");
 
       let contentHash = "";
       const contentToHash = String(card.content || "") + String(card.title || "");
@@ -648,44 +644,42 @@ Respond ONLY with JSON:
         asciiArt: stripGachaStr(card.asciiArt, 500),
       };
 
-      // Build the snapshot for updateDynamicCosts from the latest ref (best available XP value).
-      const currentState = latestStateRef?.current ?? state;
-
-      // Duplicate check and XP deduction both happen inside the updater so they read
-      // authoritative (latest-committed) state. A stale-closure check here would allow
-      // a rapid double-tap to pass both checks and store two identical cards.
-      let isDuplicate = false;
+      // ATOMIC: deduct XP and add card in a single setState updater so no intermediate
+      // state is observable. A DevTools breakpoint between deduction and card-addition
+      // is no longer possible because both mutations are committed in one synchronous pass.
+      let committed = false;
       let snapshotForCosts = null;
       setState((s) => {
-        // Fix: cap gachaCollection to match sync validator bound.
-        if ((s.gachaCollection || []).length >= 2000) { isDuplicate = true; return s; }
-        // Authoritative duplicate check using committed state.
-        if ((s.gachaCollection || []).find(c => c.id === safeCard.id)) { isDuplicate = true; return s; }
-        // XP already deducted optimistically before API call.
+        const cost = s.dynamicCosts?.gachaCost ?? gachaCost;
+        const MAX_SAFE_XP = 10_000_000;
+        const safeXp = typeof s.xp === "number" && isFinite(s.xp) && s.xp >= 0
+          ? Math.min(Math.floor(s.xp), MAX_SAFE_XP) : 0;
+        // Re-check affordability inside the updater against live s — guards against
+        // state manipulation between the pre-call check and this commit.
+        if (safeXp < cost) return s;
+        if ((s.gachaCollection || []).length >= 2000) return s;
+        if ((s.gachaCollection || []).find(c => c.id === safeCard.id)) return s;
+        committed = true;
         const next = {
           ...s,
+          xp: Math.max(0, safeXp - cost),
           gachaCollection: [...(s.gachaCollection || []), { ...safeCard, pulledAt: Date.now() }],
         };
         snapshotForCosts = next;
         return next;
       });
 
-      if (isDuplicate) {
-        setState((s) => ({ ...s, xp: s.xp + deductedCost }));
+      if (!committed) {
         if (mountedRef.current) {
-          showBanner("Duplicate generated or insufficient XP. No XP consumed.", "info");
+          showBanner("Insufficient XP or duplicate card. No XP consumed.", "info");
           setPulling(false);
         }
         pullingRef.current = false;
         return;
       }
 
-      const costsSnapshot = snapshotForCosts ?? {
-        ...currentState,
-        xp: Math.max(0, currentState.xp - (currentState.dynamicCosts?.gachaCost ?? gachaCost)),
-        gachaCollection: [...(currentState.gachaCollection || []), { ...safeCard, pulledAt: Date.now() }],
-      };
-
+      const currentState = latestStateRef?.current ?? state;
+      const costsSnapshot = snapshotForCosts ?? currentState;
       updateDynamicCosts(getGeminiApiKey(), costsSnapshot, "gacha_pull", trackTokens).then((costs) => {
         if (costs && Object.keys(costs).length && mountedRef.current) {
           setState((prev) => ({ ...prev, dynamicCosts: { ...prev.dynamicCosts, ...costs } }));
@@ -700,18 +694,22 @@ Respond ONLY with JSON:
       if (mountedRef.current) {
         setLastPull(safeCard);
         showToast({ icon: safeCard.type === "chronicle" ? "≡" : "◈", title: safeCard.title, desc: safeCard.rarity.toUpperCase() + " PULL", rarity: safeCard.rarity, isAchievement: false });
+        showBanner(`${safeCard.rarity.toUpperCase()} — ${safeCard.title}`, "success");
+        setPulling(false);
       }
+      pullingRef.current = false;
     } catch (err) {
       if (err?.name === "AbortError") {
-        // Request was cancelled (unmount or new pull started). Refund XP silently.
-        setState((s) => ({ ...s, xp: s.xp + deductedCost }));
-      } else {
-        setState((s) => ({ ...s, xp: s.xp + deductedCost }));
-        if (mountedRef.current) showBanner("Pull failed. System error.", "alert");
+        if (mountedRef.current) setPulling(false);
+        pullingRef.current = false;
+        return;
       }
-    } finally {
+      // No XP to refund — deduction only happened inside setState on success.
+      if (mountedRef.current) {
+        showBanner("Gacha pull failed. No XP consumed.", "alert");
+        setPulling(false);
+      }
       pullingRef.current = false;
-      if (mountedRef.current) setPulling(false);
     }
   }
 
@@ -886,6 +884,7 @@ function GachaCard({ card, compact }) {
 // eslint-disable-next-line no-unused-vars
 function SettingsSection({ profile, setState, showBanner, syncStatus, lastSynced, syncFileConnected, dropboxConnected, onPush, onPull, onPickSyncFile, onForgetSyncFile, confirmForgetSync, connectDropbox, disconnectDropbox, theme, setTheme, latestStateRef }) {
   const importRef = useRef(null);
+  const [importLoading, setImportLoading] = useState(false);
   const [clientIdInput, setClientIdInput] = useState(profile?.googleClientId || "");
 
   useEffect(() => {
@@ -932,7 +931,7 @@ function SettingsSection({ profile, setState, showBanner, syncStatus, lastSynced
 
     // 3. Restore the anti-cheat watermark if it existed.
     if (maxDateSeen) {
-      idbSet(storageKey("jv_max_date_seen"), maxDateSeen);
+      idbSet("jv_max_date_seen", maxDateSeen);
       await new Promise((r) => setTimeout(r, 100));
     }
 
@@ -962,9 +961,15 @@ function SettingsSection({ profile, setState, showBanner, syncStatus, lastSynced
   }
 
   async function handleImportFile(e) {
+    if (importLoading || syncStatus === "syncing") {
+      showBanner("Sync already in progress. Please wait.", "alert");
+      try { e.target.value = ""; } catch { /* ignore */ }
+      return;
+    }
+    setImportLoading(true);
     try {
       const file = e.target.files?.[0];
-      if (!file) return;
+      if (!file) { setImportLoading(false); return; }
       try {
         await SyncManager.importFile(file);
         window.dispatchEvent(new CustomEvent("ritmol:block-autopush", { detail: { ms: 3000 } }));
@@ -975,13 +980,16 @@ function SettingsSection({ profile, setState, showBanner, syncStatus, lastSynced
           SYNC_SCHEMA_OUTDATED: "Import failed: file was written by an older version of RITMOL. Re-export it from an up-to-date device.",
           SYNC_FILE_TOO_LARGE: "Import failed: file exceeds 10 MB.",
           APPLY_QUOTA_RISK: "Import failed: local storage is almost full. Clear data first.",
+          SYNC_BUSY: "Sync already in progress. Please wait.",
         };
         showBanner(msgs[err?.message] ?? "Import failed. Check the file.", "alert");
       } finally {
+        setImportLoading(false);
         e.target.value = "";
       }
     } catch {
       showBanner("Import failed unexpectedly.", "alert");
+      setImportLoading(false);
       try { if (importRef.current) importRef.current.value = ""; } catch { /* ignore */ }
     }
   }
@@ -1045,7 +1053,13 @@ function SettingsSection({ profile, setState, showBanner, syncStatus, lastSynced
           <div style={{ display: "flex", gap: "8px" }}>
             <button
               type="button"
-              onClick={onPush}
+              onClick={() => {
+                if (typeof navigator !== "undefined" && navigator.onLine === false) {
+                  showBanner("No network connection. Sync requires connectivity.", "alert");
+                  return;
+                }
+                onPush();
+              }}
               disabled={typeof navigator !== "undefined" && navigator.onLine === false}
               style={{
                 flex: 1, padding: "10px", border: "1px solid #555",
@@ -1057,7 +1071,13 @@ function SettingsSection({ profile, setState, showBanner, syncStatus, lastSynced
             </button>
             <button
               type="button"
-              onClick={onPull}
+              onClick={() => {
+                if (typeof navigator !== "undefined" && navigator.onLine === false) {
+                  showBanner("No network connection. Sync requires connectivity.", "alert");
+                  return;
+                }
+                onPull();
+              }}
               disabled={typeof navigator !== "undefined" && navigator.onLine === false}
               style={{
                 flex: 1, padding: "10px", border: "1px solid #444",
@@ -1111,7 +1131,13 @@ function SettingsSection({ profile, setState, showBanner, syncStatus, lastSynced
                 </button>
                 <button
                   type="button"
-                  onClick={onPush}
+                  onClick={() => {
+                    if (typeof navigator !== "undefined" && navigator.onLine === false) {
+                      showBanner("No network connection. Sync requires connectivity.", "alert");
+                      return;
+                    }
+                    onPush();
+                  }}
                   disabled={typeof navigator !== "undefined" && navigator.onLine === false}
                   style={{
                     padding: "10px", border: "1px solid #555", background: "transparent",
@@ -1122,7 +1148,13 @@ function SettingsSection({ profile, setState, showBanner, syncStatus, lastSynced
                 </button>
                 <button
                   type="button"
-                  onClick={onPull}
+                  onClick={() => {
+                    if (typeof navigator !== "undefined" && navigator.onLine === false) {
+                      showBanner("No network connection. Sync requires connectivity.", "alert");
+                      return;
+                    }
+                    onPull();
+                  }}
                   disabled={typeof navigator !== "undefined" && navigator.onLine === false}
                   style={{
                     padding: "10px", border: "1px solid #444", background: "transparent",
@@ -1152,12 +1184,26 @@ function SettingsSection({ profile, setState, showBanner, syncStatus, lastSynced
               }}>
                 EXPORT ↓
               </button>
-              <input ref={importRef} type="file" accept=".json" onChange={handleImportFile} style={{ display: "none" }} />
-              <button onClick={() => importRef.current?.click()} style={{
-                padding: "10px", border: "1px solid #444", background: "transparent",
-                color: "#888", fontFamily: "'Share Tech Mono', monospace", fontSize: "11px", cursor: "pointer",
-              }}>
-                IMPORT ↑
+              <input
+                ref={importRef}
+                type="file"
+                accept=".json"
+                disabled={importLoading || syncStatus === "syncing"}
+                onChange={handleImportFile}
+                style={{ display: "none" }}
+              />
+              <button
+                type="button"
+                disabled={importLoading || syncStatus === "syncing"}
+                onClick={() => { if (!importLoading && syncStatus !== "syncing") importRef.current?.click(); }}
+                style={{
+                  padding: "10px", border: "1px solid #444", background: "transparent",
+                  color: importLoading || syncStatus === "syncing" ? "#444" : "#888",
+                  fontFamily: "'Share Tech Mono', monospace", fontSize: "11px",
+                  cursor: importLoading || syncStatus === "syncing" ? "default" : "pointer",
+                }}
+              >
+                {importLoading ? "IMPORTING..." : "IMPORT ↑"}
               </button>
             </div>
           )}

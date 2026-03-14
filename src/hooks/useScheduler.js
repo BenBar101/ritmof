@@ -59,14 +59,14 @@ export function useScheduler({ state, profile, showBanner, setModal }) {
       const t = localDateFromUTC();
       const { sleepLog, screenTimeLog, calendarEvents, habitLog, streak } = scheduledStateRef.current;
 
-      // Sleep check-in at 07:30 UTC
+      // Sleep check-in at 07:30 local time (h/m are from localHour()/localMin(), not UTC).
       if (h === 7 && m >= 30 && m < 35 && !sleepLog?.[t]) {
         if (sleepModalShownRef.current === t) return;
         sleepModalShownRef.current = t;
         setModal({ type: "sleep_checkin" });
       }
 
-      // Screen time at 13:00 UTC and 20:00 UTC
+      // Screen time at 13:00 and 20:00 local time (h/m are local, not UTC).
       if (h === 13 && m >= 0 && m < 5 && !screenTimeLog?.[t]?.afternoon) {
         if (screenModalShownRef.current.afternoon === t) return;
         screenModalShownRef.current.afternoon = t;
@@ -114,6 +114,9 @@ export function useScheduler({ state, profile, showBanner, setModal }) {
       }
     };
 
+    // IMPORTANT: runChecks must remain synchronous. If you add an async
+    // operation here, wrap it in .catch() to prevent unhandled Promise
+    // rejections from silently stopping the interval on some runtimes.
     const interval = setInterval(runChecks, 60_000);
     // Run once immediately on mount so we don't miss narrow trigger windows
     // when the app becomes visible mid-window.

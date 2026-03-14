@@ -130,6 +130,13 @@ export default function ChatTab() {
         }
       }
 
+      // Prototype-pollution guard: reject parsed objects with __proto__ / constructor / prototype keys.
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        const { isSafeSyncValue } = await import("./sync/SyncManager.js");
+        if (!isSafeSyncValue(parsed)) {
+          parsed = { message: String(parsed), commands: [] };
+        }
+      }
       const rawContent = parsed.message || parsed.text || String(parsed);
       // Fix: sanitize AI-returned message content before persisting to localStorage and
       // the sync file using the same canonical strip set used when replaying history

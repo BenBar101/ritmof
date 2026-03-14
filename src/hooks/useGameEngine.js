@@ -48,7 +48,7 @@ const BIDI_RE   = /[\u202A-\u202E\u2066-\u2069]/g;
 // Include square brackets in the injection character set so prompt-injection
 // patterns that rely on [SYSTEM]/[INSTRUCTION] style markers are stripped
 // consistently with sanitizeForPrompt in systemPrompt.js.
-const INJECT_RE = /[<>"`&'[\]\u2223\uFF5C\u01C0]/g;
+const INJECT_RE = /[<>"`&'[\]|\u007C\u2223\uFF5C\u01C0\u01C1\u0964\u0965\uFE31\uFE32\u2758\u2506\u254E\u2502\u2503\u2016\u2225\\]/g;
 
 function sanitizeStr(s, max = MAX_STR_LEN) {
   if (typeof s !== "string") return "";
@@ -113,6 +113,8 @@ export function useGameEngine({ setState, latestStateRef, showBanner, showToast,
     const t = todayUTC();
     // Harden against clock rollback: if the current date is earlier than the
     // anti-rollback watermark, treat the daily AI XP budget as already spent.
+    // getMaxDateSeen() reads from the TinyBase store singleton — it is a module-level
+    // function, not a React dep. Do NOT add it to the useCallback deps array.
     const maxSeen = getMaxDateSeen();
     if (maxSeen && t < maxSeen) {
       return 0;
@@ -151,7 +153,7 @@ export function useGameEngine({ setState, latestStateRef, showBanner, showToast,
     if (safeAmount === 0) return;
 
     setState((s) => {
-      const newXP  = (s.xp || 0) + safeAmount;
+      const newXP  = Math.min((s.xp || 0) + safeAmount, 10_000_000);
       const xpPl   = getXpPerLevel(s);
       const baseXp = Math.max(
         typeof s.xp === "number" && isFinite(s.xp) ? s.xp : 0,
@@ -165,13 +167,14 @@ export function useGameEngine({ setState, latestStateRef, showBanner, showToast,
         lastLevelUpXpRef.current = newXP;
         const snapshot = { ...s, xp: newXP };
         setTimeout(() => {
+          if (!_engineMountedRef.current) return;
           setLevelUpData((prev) => {
             if (prev && prev.level >= newLevel) return prev;
             return { level: newLevel, rank: getRank(newLevel) };
           });
           updateDynamicCosts(getGeminiApiKey(), snapshot, "level_up", trackTokensRef.current)
             .then((costs) => {
-              if (costs && Object.keys(costs).length) {
+              if (costs && Object.keys(costs).length && _engineMountedRef.current) {
                 setState((prev) => ({ ...prev, dynamicCosts: { ...prev.dynamicCosts, ...costs } }));
               }
             })
@@ -247,13 +250,14 @@ export function useGameEngine({ setState, latestStateRef, showBanner, showToast,
         const newXP = snapshot.xp;
         lastLevelUpXpRef.current = newXP;
         setTimeout(() => {
+          if (!_engineMountedRef.current) return;
           setLevelUpData((prev) => {
             if (prev && prev.level >= level) return prev;
             return { level, rank };
           });
           updateDynamicCosts(getGeminiApiKey(), snapshot, "level_up", trackTokensRef.current)
             .then((costs) => {
-              if (costs && Object.keys(costs).length) {
+              if (costs && Object.keys(costs).length && _engineMountedRef.current) {
                 setState((prev) => ({ ...prev, dynamicCosts: { ...prev.dynamicCosts, ...costs } }));
               }
             })

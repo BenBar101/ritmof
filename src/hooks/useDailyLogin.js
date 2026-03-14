@@ -121,17 +121,19 @@ export function useDailyLogin({ profile, setState, setModal, setLevelUpData, sho
         pendingData.shieldUpdate = { newShields, lastShieldUseDate: effectiveDate };
       }
 
-      pendingData.modal = { type: "daily_login", xp: loginXP, streak: newStreak };
-
-      return {
+      // Capture full next-state snapshot for updateDynamicCosts calls in queueMicrotask.
+      const nextState = {
         ...s,
         streak:             newStreak,
         streakShields:      newShields,
         lastLoginDate:      effectiveDate,
         lastShieldUseDate:  newLastShieldUseDate,
-        lastShieldBuyDate:   clearShieldBuyDate ? null : s.lastShieldBuyDate,
+        lastShieldBuyDate:  clearShieldBuyDate ? null : s.lastShieldBuyDate,
         xp:                 newXP,
       };
+      pendingData.fullSnapshot = nextState;
+      pendingData.modal = { type: "daily_login", xp: loginXP, streak: newStreak };
+      return nextState;
     });
     queueMicrotask(() => {
       if (cancelled) return;
@@ -157,7 +159,8 @@ export function useDailyLogin({ profile, setState, setModal, setLevelUpData, sho
       if (pendingData.shieldUpdate) {
         const { newShields, lastShieldUseDate } = pendingData.shieldUpdate;
         if (typeof navigator === "undefined" || navigator.onLine !== false) {
-          updateDynamicCosts(getGeminiApiKey(), { streakShields: newShields, lastShieldUseDate }, "streak_shield_use", trackTokens)
+          const shieldSnapshot = pendingData.fullSnapshot ?? { streakShields: newShields, lastShieldUseDate };
+          updateDynamicCosts(getGeminiApiKey(), shieldSnapshot, "streak_shield_use", trackTokens)
             .then((costs) => {
               if (costs && Object.keys(costs).length) {
                 setState((prev) => ({ ...prev, dynamicCosts: { ...prev.dynamicCosts, ...costs } }));

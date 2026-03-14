@@ -50,39 +50,23 @@ Keep values within these strict bounds: xpPerLevel 200–10000, gachaCost 50–5
 Typical reasonable values: xpPerLevel 300–1500, gachaCost 80–400, streakShieldCost 150–600.
 Respond ONLY with a JSON object with any of: xpPerLevel, gachaCost, streakShieldCost (only include keys you want to change). Example: {"gachaCost": 180} or {"xpPerLevel": 550, "streakShieldCost": 320}. No explanation.`;
 
+    // _dcInFlight is already true here (set at function entry).
+    // The outer try/finally resets it unconditionally even on synchronous throws.
     const _dcAbort = new AbortController();
     _dcTimeout = setTimeout(() => _dcAbort.abort(), 15000);
+    let callResult;
     try {
-      const { text, tokensUsed } = await callGemini(
+      callResult = await callGemini(
         apiKey,
         [{ role: "user", content: prompt }],
         "You output only valid JSON with numeric values.",
         true,
         _dcAbort.signal,
       );
-      if (onTokensUsed && tokensUsed > 0) onTokensUsed(tokensUsed);
-      const match = text.match(/\{[\s\S]*\}/);
-      const data = match ? JSON.parse(match[0]) : {};
-      const out = {};
-      if (typeof data.xpPerLevel === "number" && data.xpPerLevel >= 200 && data.xpPerLevel <= 10000) {
-        const proposed = Math.round(data.xpPerLevel);
-        out.xpPerLevel = Math.max(Math.min(proposed, xpPerLevel * 2), Math.max(Math.ceil(xpPerLevel / 2), 300));
-      }
-      if (typeof data.gachaCost === "number" && data.gachaCost >= 50 && data.gachaCost <= 5000) {
-        const proposed = Math.round(data.gachaCost);
-        out.gachaCost = Math.max(Math.min(proposed, gachaCost * 2), Math.ceil(gachaCost / 2));
-      }
-      if (typeof data.streakShieldCost === "number" && data.streakShieldCost >= 100 && data.streakShieldCost <= 5000) {
-        const proposed = Math.round(data.streakShieldCost);
-        out.streakShieldCost = Math.max(Math.min(proposed, streakShieldCost * 2), Math.ceil(streakShieldCost / 2));
-      }
-      return out;
     } catch (err) {
       if (err?.name !== "AbortError") {
         const raw = err?.message ?? String(err ?? "");
         const safeMsg = raw
-          // Strip raw API keys and common token-like blobs defensively even though
-          // callGemini already redacts them — belt-and-suspenders for logging sinks.
           .replace(/AIza[A-Za-z0-9_-]{35,45}/g, "[key]")
           .replace(/eyJ[\w.-]+/g, "[token]")
           .slice(0, 100);
@@ -90,6 +74,31 @@ Respond ONLY with a JSON object with any of: xpPerLevel, gachaCost, streakShield
       }
       return {};
     }
+    const { text, tokensUsed } = callResult;
+    if (onTokensUsed && tokensUsed > 0) onTokensUsed(tokensUsed);
+    const match = text.match(/\{[\s\S]*\}/);
+    let rawParsed;
+    try {
+      rawParsed = match ? JSON.parse(match[0]) : {};
+    } catch {
+      rawParsed = {};
+    }
+    const { isSafeSyncValue } = await import("../sync/SyncManager.js");
+    const data = (rawParsed && typeof rawParsed === "object" && !Array.isArray(rawParsed) && isSafeSyncValue(rawParsed)) ? rawParsed : {};
+    const out = {};
+    if (typeof data.xpPerLevel === "number" && data.xpPerLevel >= 200 && data.xpPerLevel <= 10000) {
+      const proposed = Math.round(data.xpPerLevel);
+      out.xpPerLevel = Math.max(Math.min(proposed, xpPerLevel * 2), Math.max(Math.ceil(xpPerLevel / 2), 300));
+    }
+    if (typeof data.gachaCost === "number" && data.gachaCost >= 50 && data.gachaCost <= 5000) {
+      const proposed = Math.round(data.gachaCost);
+      out.gachaCost = Math.max(Math.min(proposed, gachaCost * 2), Math.ceil(gachaCost / 2));
+    }
+    if (typeof data.streakShieldCost === "number" && data.streakShieldCost >= 100 && data.streakShieldCost <= 5000) {
+      const proposed = Math.round(data.streakShieldCost);
+      out.streakShieldCost = Math.max(Math.min(proposed, streakShieldCost * 2), Math.ceil(streakShieldCost / 2));
+    }
+    return out;
   } finally {
     if (_dcTimeout != null) clearTimeout(_dcTimeout);
     _dcInFlight = false;

@@ -262,6 +262,22 @@ function applyPayload(payload) {
       if (localIsDate && incomingIsDate && localVal >= val) continue;
       if (localIsDate && !incomingIsDate) continue;
     }
+    if (key === "jv_streak") {
+      // Anti-cheat: streak cannot exceed the number of days elapsed since
+      // the app epoch (2024-01-01). A crafted payload setting streak to the
+      // Zod maximum (1095) without corresponding login history is rejected.
+      if (typeof val === "number" && val > 0) {
+        const APP_EPOCH_MS = Date.parse("2024-01-01");
+        const lastLoginVal = payload["jv_last_login"];
+        const loginMs = typeof lastLoginVal === "string" && /^\d{4}-\d{2}-\d{2}$/.test(lastLoginVal)
+          ? Date.parse(lastLoginVal)
+          : Date.now();
+        const maxPlausibleStreak = Math.ceil((loginMs - APP_EPOCH_MS) / 86_400_000) + 1;
+        if (val > maxPlausibleStreak) {
+          val = Math.min(val, maxPlausibleStreak);
+        }
+      }
+    }
     if (key === "jv_chat") {
       val = sanitizeChatMessages(val);
       val = Array.isArray(val) ? val.slice(-1000) : [];
@@ -394,7 +410,7 @@ function parseAndValidate(text) {
   // Zod validation — strip unknown keys, enforce shapes and bounds.
   const result = SyncPayloadSchema.safeParse(payload);
   if (!result.success) {
-    console.warn("[RITMOL] Zod parse errors:", result.error.issues);
+    if (import.meta.env.DEV) console.warn("[RITMOL] Zod parse errors:", result.error.issues);
     throw new Error("CORRUPT_FILE");
   }
   if (import.meta.env.DEV && typeof result.data.jv_xp === "number" && result.data.jv_xp > 5_000_000) {
@@ -468,6 +484,10 @@ export const SyncManager = {
           throw new Error("DROPBOX_OFFLINE");
         }
         await ensureFreshToken();
+        // Re-check connectivity: network may have dropped while refreshing the token.
+        if (typeof navigator !== "undefined" && navigator.onLine === false) {
+          throw new Error("DROPBOX_OFFLINE");
+        }
         await ensureFolderExists();
         const payload = buildPayload(true);
         const text = JSON.stringify(payload, null, 2);
@@ -497,6 +517,11 @@ export const SyncManager = {
         try {
           const currentFile = await handle.getFile();
           const lastMod = currentFile.lastModified;
+          // Skip push if the file was modified less than 2 s ago by an external writer
+          // (e.g. Syncthing delivering a remote update) and the modification postdates
+          // our own last push (_lastPushTime). This prevents overwriting incoming data.
+          // _lastPushTime === 0 on first boot, so the lastMod > _lastPushTime guard
+          // correctly passes through on the first push (lastMod is always > 0).
           if (lastMod !== 0 && Date.now() - lastMod < 2000 && lastMod > _lastPushTime) {
             throw new Error("SYNC_SKIPPED");
           }
@@ -516,8 +541,13 @@ export const SyncManager = {
 
         _lastPushTime = Date.now();
         const writable = await handle.createWritable();
-        await writable.write(text);
-        await writable.close();
+        try {
+          await writable.write(text);
+          await writable.close();
+        } catch (writeErr) {
+          try { await writable.abort(); } catch { /* ignore abort errors */ }
+          throw writeErr;
+        }
 
         const ts = Date.now();
         LS.set(storageKey("jv_last_synced"), String(ts));
@@ -615,5 +645,8 @@ export const SyncManager = {
   async forget() {
     _cachedHandle = null;
     await clearHandleFromDB();
+    // Close the BroadcastChannel when there is no longer a sync target.
+    // getSyncChannel() will re-open it if sync is re-established.
+    closeSyncChannel();
   },
 };

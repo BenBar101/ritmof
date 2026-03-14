@@ -27,6 +27,7 @@ import {
   isAuthenticated,
   startOAuthFlow,
   handleOAuthCallback,
+  ensureFreshToken,
   clearTokens,
 } from "../api/dropbox";
 
@@ -37,6 +38,9 @@ export function useSync({ latestStateRef, rehydrate, showBanner }) {
   const [lastSynced, setLastSynced]               = useState(() =>
     LS.get(storageKey("jv_last_synced"), null)
   );
+  // true during the 800ms window between pull completion and page reload;
+  // used by App.jsx to render a non-interactive overlay that prevents state writes.
+  const [isReloading, setIsReloading]             = useState(false);
 
   // Mutex: prevents auto-push from clobbering a concurrent manual Pull.
   // Fix [S-2]: keeping this ref inside the same hook as the auto-push
@@ -169,6 +173,8 @@ export function useSync({ latestStateRef, rehydrate, showBanner }) {
     } catch (e) {
       if (e.message === "SYNC_SKIPPED") {
         setSyncStatus("idle");
+        // Inform the user why the push was skipped so they don't think it failed silently.
+        showBanner("Push skipped: sync file was just modified externally. Pull first or retry in a moment.", "info");
         return;
       }
       setSyncStatus("error");
@@ -184,6 +190,7 @@ export function useSync({ latestStateRef, rehydrate, showBanner }) {
         DROPBOX_FILE_NOT_FOUND: "No RITMOL save file found in Dropbox. Push to create one.",
         DROPBOX_QUOTA_EXCEEDED: "Dropbox storage full. Free up space and try again.",
         DROPBOX_OFFLINE:        "No network connection. Sync requires connectivity.",
+        DROPBOX_TIMEOUT:       "Dropbox request timed out. Check your connection and try again.",
       };
       if (e.message === "SYNC_FILE_NOT_FOUND") {
         SyncManager.forget().catch(() => {});
@@ -220,11 +227,16 @@ export function useSync({ latestStateRef, rehydrate, showBanner }) {
       LS.set(storageKey("jv_last_synced"), String(ts));
       setLastSynced(ts);
       setSyncStatus("synced");
-      showBanner("Pulled data from Syncthing file.", "success");
+      const _pullTransport = getTransport();
+      const _pullBannerMsg = _pullTransport === "dropbox"
+        ? "Pulled data from Dropbox."
+        : "Pulled data from sync file.";
+      showBanner(_pullBannerMsg, "success");
       // After a successful pull and rehydrate, a full reload ensures any components
       // with local UI state derived from the old global state are reset to match
       // the freshly loaded data.
       _willReload = true;
+      setIsReloading(true);
       reloadTimerRef.current = setTimeout(() => {
         try {
           window.location.reload();
@@ -255,6 +267,7 @@ export function useSync({ latestStateRef, rehydrate, showBanner }) {
         DROPBOX_FILE_NOT_FOUND: "No RITMOL save file found in Dropbox. Push to create one.",
         DROPBOX_QUOTA_EXCEEDED: "Dropbox storage full. Free up space and try again.",
         DROPBOX_OFFLINE:        "No network connection. Sync requires connectivity.",
+        DROPBOX_TIMEOUT:       "Dropbox request timed out. Check your connection and try again.",
       };
       if (e.message === "DROPBOX_TOKEN_EXPIRED") {
         clearTokens();
@@ -315,6 +328,7 @@ export function useSync({ latestStateRef, rehydrate, showBanner }) {
     DROPBOX_FILE_NOT_FOUND: "No RITMOL save file found in Dropbox. Push to create one.",
     DROPBOX_QUOTA_EXCEEDED: "Dropbox storage full. Free up space and try again.",
     DROPBOX_OFFLINE: "No network connection. Sync requires connectivity.",
+    DROPBOX_TIMEOUT: "Dropbox request timed out. Check your connection and try again.",
   };
 
   const handleDropboxCallback = useCallback(async (code, opts = {}) => {
@@ -325,29 +339,44 @@ export function useSync({ latestStateRef, rehydrate, showBanner }) {
       setDropboxConnected(true);
       setSyncFileConnected(true);
       try {
+        await ensureFreshToken();
+        isPullingRef.current = true;
         const ts = await SyncManager.pull();
         await rehydrate();
         LS.set(storageKey("jv_last_synced"), String(ts));
         setLastSynced(ts);
         setSyncStatus("synced");
         if (!getGeminiApiKey()) {
+          isPullingRef.current = false;
           onNeedsGeminiKey?.();
           return;
         }
         showBanner("Pulled data from Dropbox.", "success");
-        isPullingRef.current = true;
-        setTimeout(() => {
+        setIsReloading(true);
+        reloadTimerRef.current = setTimeout(() => {
+          let navigated = false;
           try {
             window.location.reload();
+            navigated = true;
           } catch {
             try {
               window.location.href = window.location.origin + window.location.pathname;
+              navigated = true;
             } catch {
-              isPullingRef.current = false;
+              /* navigation fully blocked */
             }
           }
+          if (!navigated) {
+            isPullingRef.current = false;
+          }
+          // Safety release: if the page was not unloaded within 3 s (navigation blocked silently),
+          // release the mutex so auto-push and future Pulls are not permanently blocked.
+          setTimeout(() => {
+            isPullingRef.current = false;
+          }, 3000);
         }, 800);
       } catch (pullErr) {
+        isPullingRef.current = false;
         if (pullErr?.message === "DROPBOX_FILE_NOT_FOUND") {
           onNeedsGeminiKey?.();
           showBanner(dropboxErrorMsgs.DROPBOX_FILE_NOT_FOUND, "alert");
@@ -356,6 +385,7 @@ export function useSync({ latestStateRef, rehydrate, showBanner }) {
         throw pullErr;
       }
     } catch (e) {
+      isPullingRef.current = false;
       showBanner(dropboxErrorMsgs[e?.message] ?? "Dropbox connection failed.", "alert");
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps -- dropboxErrorMsgs is stable
@@ -400,6 +430,7 @@ export function useSync({ latestStateRef, rehydrate, showBanner }) {
     connectDropbox,
     handleDropboxCallback,
     disconnectDropbox,
+    isReloading,
     resetPullMutex: useCallback(() => { isPullingRef.current = false; }, []),
   };
 }

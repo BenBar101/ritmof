@@ -1,6 +1,6 @@
 import { useAppContext } from "./context/AppContext";
 import { useState } from "react";
-import { todayUTC } from "./utils/storage";
+import { localDateFromUTC } from "./utils/storage";
 import { primaryBtn } from "./Onboarding";
 import { sanitizeForPrompt } from "./api/systemPrompt";
 
@@ -48,11 +48,15 @@ export default function TasksTab() {
     const alreadyDone = (state.tasks || []).find((t) => t.id === id)?.done ?? true;
     if (alreadyDone) return;
 
-    const doneDate = todayUTC(); // capture outside updater — clock call is impure
-    setState((s) => ({
-      ...s,
-      tasks: s.tasks.map((t) => (t.id === id ? { ...t, done: true, doneDate } : t)),
-    }));
+    setState((s) => {
+      // Read localDateFromUTC() inside the updater so the committed doneDate
+      // always reflects the actual moment the updater runs, not a pre-batch capture.
+      const doneDate = localDateFromUTC();
+      return {
+        ...s,
+        tasks: s.tasks.map((t) => (t.id === id ? { ...t, done: true, doneDate } : t)),
+      };
+    });
     queueMicrotask(() => {
       awardXP(25, event);
       checkMissions("task");
@@ -93,17 +97,19 @@ export default function TasksTab() {
     actionLocksRef.current.add(id);
     setTimeout(() => actionLocksRef.current.delete(id), 500);
 
-    const doneDate = todayUTC(); // Fix: capture outside updater — clock call is impure
     const currentGoal = (state.goals || []).find((g) => g.id === id);
     const isFirstSubmission = currentGoal ? (currentGoal.submissionCount || 0) === 0 : false;
-    setState((s) => ({
-      ...s,
-      goals: s.goals.map((g) => {
-        if (g.id !== id) return g;
-        const count = g.submissionCount || 0;
-        return { ...g, submissionCount: count + 1, done: true, doneDate };
-      }),
-    }));
+    setState((s) => {
+      const doneDate = localDateFromUTC(); // inside updater — reflects commit time
+      return {
+        ...s,
+        goals: s.goals.map((g) => {
+          if (g.id !== id) return g;
+          const count = g.submissionCount || 0;
+          return { ...g, submissionCount: count + 1, done: true, doneDate };
+        }),
+      };
+    });
     queueMicrotask(() => {
       if (isFirstSubmission) {
         awardXP(50, null, true);

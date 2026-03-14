@@ -36,12 +36,21 @@ export function sanitizeForPrompt(str, maxLen = 200) {
     if (code === 8239 || code === 8199) continue;  // U+202F Narrow NBSP, U+2007 Figure Space
     if (code >= 0xFE00 && code <= 0xFE0F) continue;   // Variation Selectors 1-16
     if (code >= 0x1F3FB && code <= 0x1F3FF) continue; // Emoji skin-tone modifiers
-    if (code >= 0xE0000 && code <= 0xE01FF) continue; // Tags block (invisible / variation supplement)
+    // Tags block U+E0000–U+E01FF: covers U+E0020 TAG SPACE through U+E007F CANCEL TAG
+    // (the range used in prompt-injection payloads) and the variation supplement above.
+    // DO NOT narrow this range — the full block must be stripped.
+    if (code >= 0xE0000 && code <= 0xE01FF) continue;
     // Mathematical alphanumeric symbols (bold/italic/script/fraktur A–Z, 0–9)
     // and Letterlike Symbols — visually similar to ASCII and often used in
     // prompt-injection payloads to bypass simple ASCII-only filters.
     if (code >= 0x1D400 && code <= 0x1D7FF) continue;
     if (code >= 0x2100 && code <= 0x214F) continue;
+    // Enclosed Alphanumerics U+2460–U+24FF: contains circled/parenthesised Latin letters
+    // (Ⓐ–Ⓩ, ⓐ–ⓩ) visually identical to ASCII, used in prompt-injection payloads.
+    if (code >= 0x2460 && code <= 0x24FF) continue;
+    // Enclosed Alphanumeric Supplement U+1F100–U+1F1FF: regional indicator symbols
+    // (used to spoof flag emoji combos that pass naive length checks).
+    if (code >= 0x1F100 && code <= 0x1F1FF) continue;
     // Block bidirectional override/embedding/isolate controls
     // U+202A-202E (LTR/RTL embedding, override, pop directional)
     // U+2066-U+2069 (directional isolates)
@@ -56,7 +65,7 @@ export function sanitizeForPrompt(str, maxLen = 200) {
     // though they are common text. Pipe `|` is also stripped so it cannot be
     // used to spoof turn separators inside RECENT_CONTEXT.
     // Pipe is intentionally stripped to prevent turn-separator spoofing in recentChatSummary.
-    .replace(/[<>{}[\]`"'|\u2223\uFF5C\u01C0\u0964\u0965\\]/g, "")          // ASCII injection chars + pipe + homoglyphs
+    .replace(/[<>{}[\]`"'|\u007C\u2223\uFF5C\u01C0\u01C1\u0964\u0965\uFE31\uFE32\u2758\u2506\u254E\u2502\u2503\u2016\u2225\\]/g, "")          // ASCII injection chars + pipe + homoglyphs
     // Strip Unicode quote-like characters (double/single, guillemets, etc.)
     .replace(/[\u201C\u201D\u2018\u2019\u00AB\u00BB\u2039\u203A]/g, "")
     // Strip angle-bracket homoglyphs that could visually mimic tags.
@@ -108,7 +117,14 @@ export function buildSystemPrompt(state, profile) {
   const recentChatSummary = (state.chatHistory || [])
     .slice(-6)
     .map((m) => {
-      const safe = sanitizeForPrompt(m.content, 300).replace(/\s{2,}/g, " ").replace(/\b(HUNTER|RITMOL|RECENT_CTX|HUNTER_CTX|SYSTEM)\b/gi, "").trim();
+      // Strip the builder's own role sigils from stored content so a stored message
+      // cannot spoof a turn boundary by containing the literal strings "[HUNTER]" or
+      // "[RITMOL]" adjacent to the join separator.
+      const safe = sanitizeForPrompt(m.content, 300)
+        .replace(/\s{2,}/g, " ")
+        .replace(/\b(HUNTER|RITMOL|RECENT_CTX|HUNTER_CTX|SYSTEM|HUNTER_DATA|RECENT_CONTEXT|INSTRUCTION|PROMPT|OVERRIDE|IGNORE)\b/gi, "")
+        .replace(/\[HUNTER\]|\[RITMOL\]/g, "")
+        .trim();
       const role = m.role === "user" ? "[HUNTER]" : "[RITMOL]";
       return `${role} ${safe}`;
     })
@@ -121,6 +137,7 @@ export function buildSystemPrompt(state, profile) {
   const safeRecent = recentChatSummary
     .replace(/RECENT_CONTEXT/gi, "RECENT_CTX")
     .replace(/HUNTER_DATA/gi, "HUNTER_CTX")
+    .replace(/\b(INSTRUCTION|PROMPT|OVERRIDE|IGNORE)\b/gi, "")
     .replace(/[\n\r]/g, " ");
 
   return `You are RITMOL — the AI companion of a gamified life-OS for STEM university students. Solo Leveling RPG aesthetic. Be brief, punchy, motivating. Never break character.

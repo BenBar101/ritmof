@@ -12,12 +12,13 @@ import { useDailyLogin } from "./hooks/useDailyLogin";
 import { AppContext } from "./context/AppContext";
 
 // Utils
-import { LS, storageKey, IS_DEV, getGeminiApiKey, setGeminiApiKey, todayUTC, APP_ICON_URL } from "./utils/storage";
+import { LS, storageKey, IS_DEV, getGeminiApiKey, setGeminiApiKey, todayUTC, localDateFromUTC, APP_ICON_URL } from "./utils/storage";
 import { getLevel, getRank, getXpPerLevel, getGachaCost, getStreakShieldCost, calcSessionXP } from "./utils/xp";
 import { THEME_KEY, SESSION_TYPES, DEFAULT_XP_PER_LEVEL, DEFAULT_GACHA_COST, DEFAULT_STREAK_SHIELD_COST } from "./constants";
 import { buildSystemPrompt } from "./api/systemPrompt";
 import { fetchDailyQuote } from "./api/quotes";
 import { SyncManager, FSAPI_SUPPORTED } from "./sync/SyncManager";
+import { verifyOAuthState } from "./api/dropbox";
 
 const MISSION_DEFS = [
   { id: "m1", desc: "Complete 3 habits",  target: 3,  type: "habits",  xp: 100, done: false },
@@ -89,13 +90,12 @@ function KeysConfigGate({ resetPullMutex }) {
           try {
             window.location.href = window.location.origin + window.location.pathname;
           } catch {
-            // As a last resort, do nothing — state has already been updated
-            // from the sync payload, so the app remains usable even without
-            // a full reload. Release pull mutex so auto-push can resume if
-            // we're in a context that uses it.
             resetPullMutex?.();
           }
         }
+        // Safety: if navigation was silently blocked (no exception thrown but page not reloaded),
+        // release the mutex after 3 s so future pulls and auto-push can proceed.
+        setTimeout(() => resetPullMutex?.(), 3000);
       }, 250);
     } catch (e) {
       setSyncStatus("error");
@@ -171,7 +171,7 @@ export default function App() {
   const { awardXP, checkMissions, unlockAchievement, executeCommands, trackTokens, logHabit, actionLocksRef, lastLevelUpXpRef } =
     useGameEngine({ setState, latestStateRef, showBanner, showToast, setLevelUpData });
 
-  const { syncFileConnected, dropboxConnected, syncStatus, lastSynced, confirmForgetSync, syncPush, syncPull, pickSyncFile, forgetSyncFile, connectDropbox, handleDropboxCallback, disconnectDropbox, resetPullMutex } =
+  const { syncFileConnected, dropboxConnected, syncStatus, lastSynced, confirmForgetSync, syncPush, syncPull, pickSyncFile, forgetSyncFile, connectDropbox, handleDropboxCallback, disconnectDropbox, isReloading, resetPullMutex } =
     useSync({ latestStateRef, rehydrate, showBanner });
 
   // OAuth callback: when returning from Dropbox, exchange code and pull
@@ -179,13 +179,17 @@ export default function App() {
     const params = new URLSearchParams(window.location.search);
     const code = params.get("code");
     const stateParam = params.get("state");
-    if (code && stateParam === "dropbox") {
+    if (code && stateParam) {
       window.history.replaceState({}, "", window.location.pathname);
+      if (!verifyOAuthState(stateParam)) {
+        showBanner("OAuth state mismatch. Please try connecting Dropbox again.", "alert");
+        return;
+      }
       handleDropboxCallback(code, {
         onNeedsGeminiKey: () => setShowGeminiKeySetup(true),
       });
     }
-  }, [handleDropboxCallback]);
+  }, [handleDropboxCallback, showBanner]);
 
   useDailyLogin({ profile, setState, setModal, setLevelUpData, showBanner, trackTokens, lastLevelUpXpRef });
   useScheduler({ state, profile, showBanner, setModal });
@@ -219,7 +223,11 @@ export default function App() {
   useEffect(() => {
     if (!profile) return;
     const resetMissions = () => setState((s) => {
-      const t = todayUTC();
+      // Use localDateFromUTC() to match useGameEngine.checkMissions which reads
+      // mission progress against the local calendar date (habit log, session, task doneDate).
+      // Using todayUTC() here caused the reset and progress-check to use different date keys
+      // in non-UTC timezones, resulting in missions that could never complete.
+      const t = localDateFromUTC();
       if (s.lastMissionDate === t) return s;
       return { ...s, dailyMissions: [...MISSION_DEFS], lastMissionDate: t };
     });
@@ -355,6 +363,26 @@ export default function App() {
     <AppContext.Provider value={ctx}>
       <GlobalStyles />
       <div style={{ height: "100%", display: "flex", flexDirection: "column", background: "#0a0a0a", color: "#e8e8e8", overflow: "hidden" }}>
+        {isReloading && (
+          <div
+            aria-label="Syncing — please wait"
+            style={{
+              position: "fixed",
+              inset: 0,
+              zIndex: 9999,
+              background: "rgba(0,0,0,0.85)",
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              justifyContent: "center",
+              fontFamily: "'Share Tech Mono', monospace",
+              pointerEvents: "all",
+            }}
+          >
+            <div style={{ fontSize: "11px", color: "#666", letterSpacing: "3px" }}>SYNC COMPLETE</div>
+            <div style={{ fontSize: "13px", color: "#aaa", marginTop: "8px" }}>Reloading…</div>
+          </div>
+        )}
         {banner && <Banner banner={banner} onClose={() => setBanner(null)} />}
         {IS_DEV && (
           <div style={{ background: "#2a2a0a", color: "#b8b830", fontSize: "10px", letterSpacing: "1px", padding: "4px 12px", textAlign: "center", borderBottom: "1px solid #444" }}>
@@ -382,7 +410,10 @@ export default function App() {
               const safeHours   = Math.min(Math.max(0, Number(data.hours)   || 0), 24);
               const safeQuality = Math.min(Math.max(1, Number(data.quality) || 1), 5);
               const safeRested  = typeof data.rested === "boolean" ? data.rested : false;
-              setState((s) => ({ ...s, sleepLog: { ...s.sleepLog, [todayUTC()]: { hours: safeHours, quality: safeQuality, rested: safeRested } } }));
+              setState((s) => {
+                const t = localDateFromUTC(); // match scheduler's localDateFromUTC() check
+                return ({ ...s, sleepLog: { ...s.sleepLog, [t]: { hours: safeHours, quality: safeQuality, rested: safeRested } } });
+              });
               awardXP(20, null, true); showBanner("Sleep data logged. +20 XP", "success"); setModal(null);
             }} />
           </ErrorBoundary>
@@ -392,12 +423,16 @@ export default function App() {
             <ScreenTimeModal period={modal.period} onClose={() => setModal(null)} onSubmit={(mins) => {
               const safeMins = Math.min(Math.max(0, Number(mins) || 0), 480);
               setState((s) => {
-                const key = todayUTC();
+                const key = localDateFromUTC(); // match scheduler's localDateFromUTC() check
+                // Allowlist modal.period so arbitrary strings cannot become IDB sub-keys.
+                const safePeriod = modal.period === "afternoon" || modal.period === "evening"
+                  ? modal.period
+                  : "afternoon";
                 return {
                   ...s,
                   screenTimeLog: {
                     ...s.screenTimeLog,
-                    [key]: { ...(s.screenTimeLog?.[key] || {}), [modal.period]: safeMins },
+                    [key]: { ...(s.screenTimeLog?.[key] || {}), [safePeriod]: safeMins },
                   },
                 };
               });

@@ -45,24 +45,29 @@ export function TopBar({ xp, xpPerLevel, level, rank, streak, profile, syncStatu
         {syncFileConnected && (
           <>
             <button
+              type="button"
               onClick={onPull}
+              disabled={syncStatus === "syncing" || (typeof navigator !== "undefined" && navigator.onLine === false)}
               title={`Pull from Syncthing file · ${syncTitle}`}
               style={{
                 fontFamily: "'Share Tech Mono', monospace", fontSize: "12px",
                 color: syncColor, background: "none", border: "none", padding: "2px 4px",
-                cursor: "pointer",
+                cursor: syncStatus === "syncing" || (typeof navigator !== "undefined" && navigator.onLine === false) ? "default" : "pointer",
+                opacity: syncStatus === "syncing" ? 0.4 : 1,
               }}
             >
               ↓
             </button>
             <button
+              type="button"
               onClick={onPush}
+              disabled={syncStatus === "syncing" || (typeof navigator !== "undefined" && navigator.onLine === false)}
               title={`Push to Syncthing file · ${syncTitle}`}
               style={{
                 fontFamily: "'Share Tech Mono', monospace", fontSize: "12px",
                 color: syncStatus === "syncing" ? "#aaa" : syncColor, background: "none", border: "none", padding: "2px 4px",
                 animation: syncStatus === "syncing" ? "spin 1s linear infinite" : "none",
-                cursor: "pointer",
+                cursor: syncStatus === "syncing" || (typeof navigator !== "undefined" && navigator.onLine === false) ? "default" : "pointer",
               }}
             >
               {syncStatus === "syncing" ? "↻" : "↑"}
