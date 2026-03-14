@@ -262,6 +262,17 @@ function applyPayload(payload) {
       if (localIsDate && incomingIsDate && localVal >= val) continue;
       if (localIsDate && !incomingIsDate) continue;
     }
+    // Anti-cheat: do not overwrite last shield USE date with an older sync value.
+    // Mirrors the jv_last_shield_buy_date guard above — prevents a crafted payload
+    // from resetting the per-day shield consumption gate.
+    if (key === "jv_last_shield_use_date") {
+      const localVal = idbGet(storageKey(key), null);
+      const dateRe = /^\d{4}-\d{2}-\d{2}$/;
+      const localIsDate = typeof localVal === "string" && dateRe.test(localVal);
+      const incomingIsDate = typeof val === "string" && dateRe.test(val);
+      if (localIsDate && incomingIsDate && localVal >= val) continue;
+      if (localIsDate && !incomingIsDate) continue;
+    }
     if (key === "jv_streak") {
       // Anti-cheat: streak cannot exceed the number of days elapsed since
       // the app epoch (2024-01-01). A crafted payload setting streak to the

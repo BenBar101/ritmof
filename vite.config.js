@@ -3,6 +3,22 @@ import react from '@vitejs/plugin-react';
 import { readFileSync, writeFileSync } from 'fs';
 import { resolve } from 'path';
 
+// ── Security note: environment variable inlining ──────────────────────────────
+// VITE_DROPBOX_APP_KEY is intentionally exposed to the browser via Vite's
+// standard import.meta.env substitution (compile-time string replacement).
+// This is correct for public-client OAuth PKCE apps — the App Key alone cannot
+// complete the code exchange without the code_verifier stored in sessionStorage.
+// See src/api/dropbox.js for the full residual threat model.
+//
+// IMPORTANT: This config does NOT define a `define` block for any secret
+// environment variable. Do not add `define({ 'process.env.VITE_DROPBOX_APP_KEY': ... })`
+// or similar patterns — that would double-expose the key and make it accessible
+// to dynamically-evaluated code that cannot read import.meta.env.
+//
+// If you need to pass env vars to a Node.js plugin, use `process.env.X` inside
+// the plugin function (server-side only) and never pass the value into `define`.
+// ─────────────────────────────────────────────────────────────────────────────
+
 // GitHub Pages: set VITE_BASE_PATH to your repo name with slashes, e.g. /my-repo/
 // Leave unset for local dev or custom domain (defaults to /).
 const base = process.env.VITE_BASE_PATH || '/';

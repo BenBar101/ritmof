@@ -119,6 +119,18 @@ export function useGameEngine({ setState, latestStateRef, showBanner, showToast,
       return 0;
     }
     if (aiXpTodayRef.current === null || aiXpTodayRef.current.date !== t) {
+      // INVARIANT: idbGet reads from the TinyBase store which is written synchronously
+      // by persistState() inside the setState updater. consumeAiXpBudget is always
+      // called from queueMicrotask or setTimeout (never inside the updater itself),
+      // so the store is guaranteed to reflect the latest committed state here.
+      // If this assertion fires in DEV it means consumeAiXpBudget was called from
+      // inside a setState updater — a violation of this invariant.
+      if (import.meta.env.DEV && typeof window !== "undefined" && window.__ritmol_in_updater) {
+        console.error(
+          "[useGameEngine] consumeAiXpBudget called from inside a setState updater. " +
+          "idbGet reads may be stale. Move the call to a queueMicrotask or setTimeout."
+        );
+      }
       const persisted = idbGet(storageKey("jv_token_usage"), null);
       const live = latestStateRef?.current?.tokenUsage;
       const persistedXp = persisted?.date === t ? (typeof persisted.aiXpToday === "number" && isFinite(persisted.aiXpToday) ? Math.max(0, Math.floor(persisted.aiXpToday)) : 0) : 0;

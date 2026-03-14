@@ -71,6 +71,12 @@ export async function fetchDailyQuote(_apiKey, profile, _onTokens) {
   if (cached) return cached;
 
   if (_quoteInFlight) return null;
+  // Do not attempt network calls when offline and do not cache the static fallback —
+  // return null so the caller displays the fallback transiently without writing it
+  // to localStorage. The next mount will retry once connectivity is restored.
+  if (typeof navigator !== "undefined" && navigator.onLine === false) {
+    return null;
+  }
   _quoteInFlight = true;
 
   // Validate quote shape before caching to avoid storing malformed objects

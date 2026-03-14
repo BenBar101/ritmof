@@ -158,8 +158,16 @@ export const LogObjSchema = z.record(
   LogEntryValue
 ).refine(v => Object.keys(v).length <= 800, { message: 'Too many log entries' })
  .refine(v => {
-   const ceiling = todayUTC() > localDateFromUTC() ? todayUTC() : localDateFromUTC();
-   return !Object.keys(v).some(k => k > ceiling);
+   // Use todayUTC() + 1 day as the ceiling to tolerate log entries written in
+   // time zones ahead of UTC (e.g. UTC+14). A log key one day ahead of UTC is
+   // always a valid "today" for someone. Keys two or more days ahead are rejected.
+   const utcToday = todayUTC();
+   const tomorrow = (() => {
+     const d = new Date(utcToday + "T00:00:00Z");
+     d.setUTCDate(d.getUTCDate() + 1);
+     return d.toISOString().slice(0, 10);
+   })();
+   return !Object.keys(v).some(k => k > tomorrow);
  }, { message: 'Future log dates not allowed' })
 
 export const MissionSchema = z.object({

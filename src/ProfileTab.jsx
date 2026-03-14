@@ -327,6 +327,10 @@ function CalendarSection({ state, setState, profile, apiKey, buildSystemPrompt, 
       showBanner("Invalid Google Client ID format. Check your ritmol-data.json.", "alert");
       return;
     }
+    if (typeof navigator !== "undefined" && navigator.onLine === false) {
+      showBanner("No network connection. Google Calendar sync requires connectivity.", "alert");
+      return;
+    }
     setGCalLoading(true);
     try {
       await loadGoogleGIS();
@@ -407,7 +411,11 @@ function CalendarSection({ state, setState, profile, apiKey, buildSystemPrompt, 
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
-      <button type="button" onClick={syncGoogleCalendar} disabled={gCalLoading} style={{
+      <button
+        type="button"
+        onClick={syncGoogleCalendar}
+        disabled={gCalLoading || (typeof navigator !== "undefined" && navigator.onLine === false)}
+        style={{
         padding: "10px", border: "1px solid #555",
         background: state.gCalConnected ? "#1a1a1a" : "transparent",
         color: state.gCalConnected ? "#aaa" : "#888",
@@ -514,12 +522,17 @@ function GachaSection({ state, setState, profile, apiKey, gachaCost, showBanner,
   }, []);
 
   async function doPull() {
-    if (pullingRef.current || !canAfford || pulling || !apiKey) {
-      if (!canAfford) showBanner(`Insufficient XP. Need ${gachaCost} XP to pull.`, "alert");
+    // Re-read xp from latestStateRef for the pre-check so a stale render snapshot
+    // does not cause a false "Insufficient XP" banner when XP was just awarded.
+    const liveXp = latestStateRef?.current?.xp ?? state.xp;
+    const liveCost = latestStateRef?.current?.dynamicCosts?.gachaCost ?? gachaCost;
+    const liveCanAfford = liveXp >= liveCost;
+    if (pullingRef.current || !liveCanAfford || pulling || !apiKey) {
+      if (!liveCanAfford) showBanner(`Insufficient XP. Need ${liveCost} XP to pull.`, "alert");
       if (!apiKey) showBanner("No API key. Configure in settings.", "alert");
       return;
     }
-    const usage = state.tokenUsage;
+    const usage = latestStateRef?.current?.tokenUsage ?? state.tokenUsage;
     if (usage && usage.date === todayUTC() && usage.tokens >= DAILY_TOKEN_LIMIT) {
       showBanner("SYSTEM: Neural energy depleted. AI functions offline until tomorrow.", "alert");
       return;
@@ -979,13 +992,26 @@ function SettingsSection({ profile, setState, showBanner, syncStatus, lastSynced
         window.location.reload();
       } catch (err) {
         const msgs = {
-          CORRUPT_FILE: "Import failed: file is corrupt or not valid JSON.",
-          SYNC_SCHEMA_OUTDATED: "Import failed: file was written by an older version of RITMOL. Re-export it from an up-to-date device.",
-          SYNC_FILE_TOO_LARGE: "Import failed: file exceeds 10 MB.",
-          APPLY_QUOTA_RISK: "Import failed: local storage is almost full. Clear data first.",
-          SYNC_BUSY: "Sync already in progress. Please wait.",
+          CORRUPT_FILE:          "Import failed: file is corrupt or not valid JSON.",
+          SYNC_SCHEMA_OUTDATED:  "Import failed: file was written by an older version of RITMOL. Re-export it from an up-to-date device.",
+          SYNC_FILE_TOO_LARGE:   "Import failed: file exceeds 10 MB.",
+          SYNC_BUSY:             "Sync already in progress. Please wait.",
+          IDB_NOT_READY:         "Import failed: app is still loading — try again in a moment.",
+          // Dropbox error codes — not thrown by importFile today but may be in future
+          // if the Dropbox transport is extended to support file-import flows.
+          DROPBOX_AUTH_REQUIRED: "Import failed: Dropbox session required.",
+          DROPBOX_TOKEN_EXPIRED: "Import failed: Dropbox session expired. Reconnect in Settings.",
+          DROPBOX_OFFLINE:       "Import failed: no network connection.",
+          DROPBOX_TIMEOUT:       "Import failed: request timed out. Check your connection.",
+          DROPBOX_FILE_NOT_FOUND:"Import failed: no RITMOL file found in Dropbox.",
+          DROPBOX_QUOTA_EXCEEDED:"Import failed: Dropbox storage is full.",
         };
-        showBanner(msgs[err?.message] ?? "Import failed. Check the file.", "alert");
+        const safeErrMsg = (err?.message || "")
+          .replace(/AIza[A-Za-z0-9_-]{35,45}/g, "[key]")
+          .replace(/eyJ[\w.-]+/g, "[token]")
+          .replace(/ya29\.[A-Za-z0-9_-]{20,}/g, "[oauth]")
+          .slice(0, 80);
+        showBanner(msgs[err?.message] ?? `Import failed: ${safeErrMsg || "check the file"}`, "alert");
       } finally {
         setImportLoading(false);
         e.target.value = "";

@@ -137,8 +137,14 @@ export function buildSystemPrompt(state, profile) {
   const safeRecent = recentChatSummary
     .replace(/RECENT_CONTEXT/gi, "RECENT_CTX")
     .replace(/HUNTER_DATA/gi, "HUNTER_CTX")
-    .replace(/\b(INSTRUCTION|PROMPT|OVERRIDE|IGNORE)\b/gi, "")
-    .replace(/[\n\r]/g, " ");
+    .replace(
+      /\b(INSTRUCTION|PROMPT|OVERRIDE|IGNORE|SYSTEM|CONTEXT|BOUNDARY|DELIMITER|SEPARATOR|END_OF|START_OF|HUNTER|RITMOL)\b/gi,
+      ""
+    )
+    .replace(/[\n\r]/g, " ")
+    // Collapse any double-spaces introduced by keyword removal.
+    .replace(/  +/g, " ")
+    .trim();
 
   return `You are RITMOL — the AI companion of a gamified life-OS for STEM university students. Solo Leveling RPG aesthetic. Be brief, punchy, motivating. Never break character.
 

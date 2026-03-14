@@ -159,6 +159,12 @@ export function useSync({ latestStateRef, rehydrate, showBanner }) {
       debounceTimerRef.current = null;
     }
     setSyncStatus("syncing");
+    // Fast-fail for Dropbox when offline to avoid a 20s ensureFreshToken() timeout.
+    if (getTransport() === "dropbox" && typeof navigator !== "undefined" && navigator.onLine === false) {
+      setSyncStatus("error");
+      showBanner("No network connection. Dropbox sync requires connectivity.", "alert");
+      return;
+    }
     try {
       if (!latestStateRef.current?.profile) {
         setSyncStatus("idle");
@@ -215,6 +221,14 @@ export function useSync({ latestStateRef, rehydrate, showBanner }) {
   // ── Pull ──────────────────────────────────────────────────
   const syncPull = useCallback(async () => {
     setSyncStatus("syncing");
+    // Fast-fail for Dropbox transport when offline — avoids a 20s timeout inside
+    // ensureFreshToken(). FSAPI/download transports read local files and do not need
+    // this guard (SyncManager.pull() will succeed offline for those paths).
+    if (getTransport() === "dropbox" && typeof navigator !== "undefined" && navigator.onLine === false) {
+      setSyncStatus("error");
+      showBanner("No network connection. Dropbox sync requires connectivity.", "alert");
+      return;
+    }
     // Write-through setState (useAppState) persists synchronously to IDB; no flush needed before pull.
     isPullingRef.current = true; // [S-2] block auto-push during Pull
     let _willReload = false;
@@ -375,13 +389,17 @@ export function useSync({ latestStateRef, rehydrate, showBanner }) {
             }
           }
           if (!navigated) {
+            // Navigation was fully blocked — release mutex so future Pulls can run.
             isPullingRef.current = false;
           }
-          // Safety release: if the page was not unloaded within 3 s (navigation blocked silently),
-          // release the mutex so auto-push and future Pulls are not permanently blocked.
-          setTimeout(() => {
-            isPullingRef.current = false;
-          }, 3000);
+          // Safety release: if the page was not unloaded within 3 s (navigation blocked
+          // silently without throwing), release the mutex. Only schedule this timer when
+          // navigation was attempted — if navigation was blocked above we already released.
+          if (navigated) {
+            setTimeout(() => {
+              isPullingRef.current = false;
+            }, 3000);
+          }
         }, 800);
       } catch (pullErr) {
         isPullingRef.current = false;

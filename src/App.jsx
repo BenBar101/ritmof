@@ -321,8 +321,20 @@ export default function App() {
     if (!profile || quoteFetchedRef.current) return;
     quoteFetchedRef.current = true;
     fetchDailyQuote(null, profile, null)
-      .then(setDailyQuote)
+      .then((result) => {
+        if (result === null) {
+          // fetchDailyQuote returns null when offline (no cache yet) or in-flight.
+          // Do not set the hardcoded fallback — let the quote area stay blank so
+          // the next mount (e.g. after regaining connectivity) can retry.
+          quoteFetchedRef.current = false;
+          return;
+        }
+        setDailyQuote(result);
+      })
       .catch(() => {
+        // Network error after fetch was attempted (connectivity was present but
+        // request failed). Show the static fallback — do not reset the ref so
+        // we do not hammer a flaky network on every render.
         setDailyQuote({
           quote: "The secret of getting ahead is getting started.",
           author: "Mark Twain",
