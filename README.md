@@ -239,6 +239,8 @@ After a Pull, the key lives in `sessionStorage` for the lifetime of the tab. It 
 
 RITMOL can sync via Dropbox instead of (or in addition to) the File System Access API. Dropbox uses OAuth PKCE — no app secret is needed. The **App Key** is built into the JS bundle at build time via `VITE_DROPBOX_APP_KEY`.
 
+**One key for all users.** The App Key identifies *your app* to Dropbox, not individual users. You set it once when you build and deploy; everyone who uses your deployed site uses that same key to connect *their* Dropbox. Each user authorizes your app and gets their own OAuth tokens stored in their browser — you never see their data or traffic. Storing `VITE_DROPBOX_APP_KEY` as a **GitHub Actions secret** (Settings → Secrets and variables → Actions) is the right way to enable Dropbox on the deployed site: the value is only used at build time and is not in the repo or logs.
+
 **Where:** [https://www.dropbox.com/developers/apps](https://www.dropbox.com/developers/apps)
 
 ### Steps
