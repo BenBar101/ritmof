@@ -49,7 +49,8 @@
           var kv = b.split('='); a[kv[0]] = kv.slice(1).join('='); return a;
         }, {});
         var path = decoded.p ? decoded.p.replace(/~and~/g, '&') : '';
-        var query = decoded.q ? '?' + decoded.q.replace(/~and~/g, '&') : '';
+        var qRaw = decoded.q;
+        var query = qRaw ? '?' + (function() { try { return decodeURIComponent(qRaw).replace(/~and~/g, '&'); } catch (e) { return qRaw.replace(/~and~/g, '&'); } })() : '';
         window.history.replaceState(null, null, l.pathname.split('/').slice(0, 2).join('/') + '/' + path + query + l.hash);
       }
     })();

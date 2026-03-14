@@ -253,11 +253,19 @@ export default function App() {
   const { syncFileConnected, dropboxConnected, syncStatus, lastSynced, confirmForgetSync, syncPush, syncPull, pickSyncFile, forgetSyncFile, connectDropbox, handleDropboxCallback, disconnectDropbox, isReloading, resetPullMutex } =
     useSync({ latestStateRef, rehydrate, showBanner });
 
-  // OAuth callback: when returning from Dropbox, exchange code and pull
+  // OAuth callback: when returning from Dropbox, exchange code and pull.
+  // After GitHub Pages 404 redirect, params can be in top-level search or inside q= (public/404.html encodes query in q).
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const code = params.get("code");
-    const stateParam = params.get("state");
+    let code = params.get("code");
+    let stateParam = params.get("state");
+    if ((!code || !stateParam) && params.get("q")) {
+      try {
+        const qParams = new URLSearchParams(decodeURIComponent(params.get("q")));
+        code = code || qParams.get("code");
+        stateParam = stateParam || qParams.get("state");
+      } catch { /* ignore malformed q */ }
+    }
     if (code && stateParam) {
       window.history.replaceState({}, "", window.location.pathname);
       if (!verifyOAuthState(stateParam)) {
