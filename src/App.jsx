@@ -12,7 +12,7 @@ import { useDailyLogin } from "./hooks/useDailyLogin";
 import { AppContext } from "./context/AppContext";
 
 // Utils
-import { LS, storageKey, IS_DEV, getGeminiApiKey, todayUTC, APP_ICON_URL } from "./utils/storage";
+import { LS, storageKey, IS_DEV, getGeminiApiKey, setGeminiApiKey, todayUTC, APP_ICON_URL } from "./utils/storage";
 import { getLevel, getRank, getXpPerLevel, getGachaCost, getStreakShieldCost, calcSessionXP } from "./utils/xp";
 import { THEME_KEY, SESSION_TYPES, DEFAULT_XP_PER_LEVEL, DEFAULT_GACHA_COST, DEFAULT_STREAK_SHIELD_COST } from "./constants";
 import { buildSystemPrompt } from "./api/systemPrompt";
@@ -29,7 +29,7 @@ const MISSION_DEFS = [
 ];
 
 // Components
-import Onboarding from "./Onboarding";
+import Onboarding, { GeminiKeySetupScreen } from "./Onboarding";
 import { TopBar, BottomNav, Banner } from "./Layout";
 import { GlobalStyles, ErrorBoundary } from "./GlobalStyles";
 import {
@@ -151,6 +151,7 @@ export default function App() {
   const [theme, setThemeState]      = useState(() => LS.get(storageKey(THEME_KEY), "dark"));
   const [dailyQuote, setDailyQuote] = useState(null);
   const [showOnboarding, setShowOnboarding] = useState(false);
+  const [showGeminiKeySetup, setShowGeminiKeySetup] = useState(false);
   const setTheme = useCallback((t) => { LS.set(storageKey(THEME_KEY), t); setThemeState(t); }, []);
 
   const { modal, setModal, toast, setToast, banner, setBanner, levelUpData, setLevelUpData, showToast, showBanner } = useUI();
@@ -170,8 +171,21 @@ export default function App() {
   const { awardXP, checkMissions, unlockAchievement, executeCommands, trackTokens, logHabit, actionLocksRef, lastLevelUpXpRef } =
     useGameEngine({ setState, latestStateRef, showBanner, showToast, setLevelUpData });
 
-  const { syncFileConnected, syncStatus, lastSynced, confirmForgetSync, syncPush, syncPull, pickSyncFile, forgetSyncFile, resetPullMutex } =
+  const { syncFileConnected, dropboxConnected, syncStatus, lastSynced, confirmForgetSync, syncPush, syncPull, pickSyncFile, forgetSyncFile, connectDropbox, handleDropboxCallback, disconnectDropbox, resetPullMutex } =
     useSync({ latestStateRef, rehydrate, showBanner });
+
+  // OAuth callback: when returning from Dropbox, exchange code and pull
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get("code");
+    const stateParam = params.get("state");
+    if (code && stateParam === "dropbox") {
+      window.history.replaceState({}, "", window.location.pathname);
+      handleDropboxCallback(code, {
+        onNeedsGeminiKey: () => setShowGeminiKeySetup(true),
+      });
+    }
+  }, [handleDropboxCallback]);
 
   useDailyLogin({ profile, setState, setModal, setLevelUpData, showBanner, trackTokens, lastLevelUpXpRef });
   useScheduler({ state, profile, showBanner, setModal });
@@ -259,13 +273,54 @@ export default function App() {
   }
 
 
+  if (showGeminiKeySetup) {
+    return (
+      <ErrorBoundary>
+        <div style={{
+          minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center",
+          justifyContent: "flex-start", padding: "24px", background: "#0a0a0a",
+        }}>
+          <div style={{
+            width: "100%", maxWidth: "380px", padding: "24px",
+            background: "#050505", border: "1px solid #444",
+            fontFamily: "'Share Tech Mono', monospace",
+          }}>
+            <div style={{ fontSize: "11px", color: "#888", letterSpacing: "3px", marginBottom: "8px" }}>
+              CONFIGURE AI
+            </div>
+            <div style={{ fontSize: "22px", fontWeight: "bold", marginBottom: "18px", letterSpacing: "1px" }}>
+              GEMINI API KEY
+            </div>
+            <GeminiKeySetupScreen
+              onSave={async (key) => {
+                setGeminiApiKey(key);
+                await syncPush();
+                setShowGeminiKeySetup(false);
+              }}
+            />
+          </div>
+        </div>
+      </ErrorBoundary>
+    );
+  }
   if (!apiKey) return <ErrorBoundary><KeysConfigGate resetPullMutex={resetPullMutex} /></ErrorBoundary>;
   if (showOnboarding) {
     return (
-      <Onboarding onComplete={(profile) => {
-        setState((s) => ({ ...s, profile }));
-        setShowOnboarding(false);
-      }} />
+      <Onboarding
+        onComplete={(profile) => {
+          setState((s) => ({ ...s, profile }));
+          setShowOnboarding(false);
+        }}
+        showGeminiKeySetup={showGeminiKeySetup}
+        onGeminiKeySaved={async (key, profile) => {
+          setGeminiApiKey(key);
+          if (profile) setState((s) => ({ ...s, profile }));
+          await syncPush();
+          setShowGeminiKeySetup(false);
+          setShowOnboarding(false);
+        }}
+        connectDropbox={connectDropbox}
+      />
     );
   }
   if (!profile && !showOnboarding) {
@@ -289,8 +344,9 @@ export default function App() {
     level, rank, xpPerLevel, gachaCost, streakShieldCost,
     awardXP, checkMissions, unlockAchievement, executeCommands, trackTokens, logHabit, actionLocksRef,
     showBanner, showToast, setModal,
-    syncStatus, lastSynced, syncFileConnected, confirmForgetSync,
+    syncStatus, lastSynced, syncFileConnected, dropboxConnected, confirmForgetSync,
     syncPush, syncPull, pickSyncFile, forgetSyncFile,
+    connectDropbox, handleDropboxCallback, disconnectDropbox,
     dailyQuote, buildSystemPrompt, setTab,
     rehydrateCount,
   };

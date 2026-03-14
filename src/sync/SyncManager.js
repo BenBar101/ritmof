@@ -13,10 +13,16 @@
 //     incoming (prevents crafted sync from resetting once-per-day shield limit).
 // ═══════════════════════════════════════════════════════════════
 
-import { LS, storageKey, setGeminiApiKey, IS_DEV, DEV_PREFIX } from "../utils/storage";
+import { LS, storageKey, setGeminiApiKey, getGeminiApiKey, IS_DEV, DEV_PREFIX } from "../utils/storage";
 import { idbGet, idbSet, store } from "../utils/db";
 import { SyncPayloadSchema } from "../utils/schemas.js";
 import { SYNC_SCHEMA_VERSION } from "../constants";
+import {
+  ensureFreshToken,
+  ensureFolderExists,
+  uploadFile as dropboxUpload,
+  downloadFile as dropboxDownload,
+} from "../api/dropbox";
 
 // Re-export for consumers that need the current schema version
 export { SYNC_SCHEMA_VERSION };
@@ -30,6 +36,21 @@ const MAX_PAYLOAD_BYTES = 10 * 1024 * 1024; // 10 MB
 
 // ── Storage key for the persisted file handle ────────────────────
 const HANDLE_LS_KEY = IS_DEV ? `${DEV_PREFIX}sync_handle` : "sync_handle";
+
+// ── Transport selector ("dropbox" | "fsapi" | "download") ─────────
+const TRANSPORT_LS_KEY = IS_DEV ? `${DEV_PREFIX}sync_transport` : "ritmol_sync_transport";
+let _transport = (typeof localStorage !== "undefined" ? localStorage.getItem(TRANSPORT_LS_KEY) : null) ?? "download";
+export function setTransport(t) {
+  _transport = t;
+  try {
+    localStorage.setItem(TRANSPORT_LS_KEY, t);
+  } catch {
+    /* ignore */
+  }
+}
+export function getTransport() {
+  return _transport;
+}
 
 // ── Feature detection ────────────────────────────────────────────
 export const FSAPI_SUPPORTED =
@@ -188,10 +209,16 @@ async function clearHandleFromDB() {
 }
 
 // ── Build sync payload from IDB cache ───────────────────────────
-function buildPayload() {
+function buildPayload(includeGeminiKey = false) {
   if (!_idbReady) throw new Error("IDB_NOT_READY");
   if (!store) throw new Error("IDB_NOT_READY");
   const payload = { _schemaVersion: SYNC_SCHEMA_VERSION };
+  if (includeGeminiKey) {
+    const key = getGeminiApiKey();
+    if (key && typeof key === "string" && /^AIza[A-Za-z0-9_-]{35,45}$/.test(key.trim())) {
+      payload.geminiKey = key.trim();
+    }
+  }
   for (const key of SYNC_KEYS) {
     // Read from IDB cache (synchronous after boot)
     let stored = idbGet(storageKey(key), null);
@@ -429,11 +456,6 @@ export const SyncManager = {
   async push() {
     if (_opInProgress) throw new Error("SYNC_BUSY");
     _opInProgress = true;
-    const handle = await SyncManager.getHandle();
-    if (!handle) {
-      _opInProgress = false;
-      throw new Error("NO_HANDLE");
-    }
     if (!store) {
       _opInProgress = false;
       throw new Error("IDB_NOT_READY");
@@ -441,54 +463,66 @@ export const SyncManager = {
     const ch = getSyncChannel();
     ch?.postMessage({ type: "sync_start" });
     try {
-      let perm;
-      try {
+      if (_transport === "dropbox") {
+        if (typeof navigator !== "undefined" && navigator.onLine === false) {
+          throw new Error("DROPBOX_OFFLINE");
+        }
+        await ensureFreshToken();
+        await ensureFolderExists();
+        const payload = buildPayload(true);
+        const text = JSON.stringify(payload, null, 2);
+        assertPayloadSize(text);
+        await dropboxUpload(text);
+        const ts = Date.now();
+        LS.set(storageKey("jv_last_synced"), String(ts));
+        return ts;
+      }
+      if (_transport === "fsapi" || _transport === "download") {
+        const handle = await SyncManager.getHandle();
+        if (!handle) throw new Error("NO_HANDLE");
+        let perm;
+        try {
         perm = await handle.queryPermission({ mode: "readwrite" });
         if (perm !== "granted") {
           perm = await handle.requestPermission({ mode: "readwrite" });
         }
-      } catch (err) {
-        if (err && err.name === "NotFoundError") {
-          throw new Error("SYNC_FILE_NOT_FOUND");
+        } catch (err) {
+          if (err && err.name === "NotFoundError") {
+            throw new Error("SYNC_FILE_NOT_FOUND");
+          }
+          throw new Error("PERMISSION_DENIED");
         }
-        throw new Error("PERMISSION_DENIED");
-      }
-      if (perm !== "granted") throw new Error("PERMISSION_DENIED");
+        if (perm !== "granted") throw new Error("PERMISSION_DENIED");
 
-      // Last-writer conflict guard: if the backing file was modified very
-      // recently by another tab (within ~800ms), skip this push to avoid
-      // clobbering fresh data with a stale snapshot.
-      try {
-        const currentFile = await handle.getFile();
-        const lastMod = currentFile.lastModified;
-        if (lastMod !== 0 && Date.now() - lastMod < 2000 && lastMod > _lastPushTime) {
-          // 2 s window: some filesystems (e.g. FAT32) have 2-second lastModified
-          // resolution; 800 ms was too tight and caused false-positive skips.
-          throw new Error("SYNC_SKIPPED");
+        try {
+          const currentFile = await handle.getFile();
+          const lastMod = currentFile.lastModified;
+          if (lastMod !== 0 && Date.now() - lastMod < 2000 && lastMod > _lastPushTime) {
+            throw new Error("SYNC_SKIPPED");
+          }
+        } catch (innerErr) {
+          if (innerErr?.message === "SYNC_SKIPPED") throw innerErr;
+          if (innerErr?.name === "NotFoundError") throw new Error("SYNC_FILE_NOT_FOUND");
+          if (innerErr?.name === "SecurityError") throw new Error("PERMISSION_DENIED");
         }
-      } catch (innerErr) {
-        if (innerErr?.message === "SYNC_SKIPPED") throw innerErr;
-        if (innerErr?.name === "NotFoundError") throw new Error("SYNC_FILE_NOT_FOUND");
-        if (innerErr?.name === "SecurityError") throw new Error("PERMISSION_DENIED");
-        /* other errors: fall through and attempt push */
+
+        const payload = buildPayload();
+        const text = JSON.stringify(payload, null, 2);
+        assertPayloadSize(text);
+        const byteSize = new TextEncoder().encode(text).length;
+        if (byteSize > 7 * 1024 * 1024) {
+          console.warn("[SyncManager] Sync file approaching size limit:", (byteSize / (1024 * 1024)).toFixed(1), "MB");
+        }
+
+        _lastPushTime = Date.now();
+        const writable = await handle.createWritable();
+        await writable.write(text);
+        await writable.close();
+
+        const ts = Date.now();
+        LS.set(storageKey("jv_last_synced"), String(ts));
+        return ts;
       }
-
-      const payload = buildPayload();
-      const text = JSON.stringify(payload, null, 2);
-      assertPayloadSize(text);
-      const byteSize = new TextEncoder().encode(text).length;
-      if (byteSize > 7 * 1024 * 1024) {
-        console.warn("[SyncManager] Sync file approaching size limit:", (byteSize / (1024 * 1024)).toFixed(1), "MB");
-      }
-
-      _lastPushTime = Date.now();
-      const writable = await handle.createWritable();
-      await writable.write(text);
-      await writable.close();
-
-      const ts = Date.now();
-      LS.set(IS_DEV ? `${DEV_PREFIX}jv_last_synced` : "jv_last_synced", String(ts));
-      return ts;
     } finally {
       _opInProgress = false;
     }
@@ -496,20 +530,28 @@ export const SyncManager = {
 
   /** Read the linked sync file and apply it to the TinyBase store. */
   async pull() {
-    const handle = await SyncManager.getHandle();
-    if (!handle) throw new Error("NO_HANDLE");
     if (_opInProgress) throw new Error("SYNC_BUSY");
-
     _opInProgress = true;
     try {
+      if (_transport === "dropbox") {
+        if (typeof navigator !== "undefined" && navigator.onLine === false) {
+          throw new Error("DROPBOX_OFFLINE");
+        }
+        await ensureFreshToken();
+        const { text } = await dropboxDownload();
+        const payload = parseAndValidate(text);
+        extractSecretsFromPayload(payload);
+        applyPayload(payload);
+        return Date.now();
+      }
+      const handle = await SyncManager.getHandle();
+      if (!handle) throw new Error("NO_HANDLE");
       const file = await handle.getFile();
       const text = await file.text();
       const payload = parseAndValidate(text);
       extractSecretsFromPayload(payload);
       applyPayload(payload);
-
-      const ts = Date.now();
-      return ts;
+      return Date.now();
     } finally {
       _opInProgress = false;
     }

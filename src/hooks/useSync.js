@@ -21,11 +21,18 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import { LS, storageKey } from "../utils/storage";
-import { SyncManager } from "../sync/SyncManager";
+import { LS, storageKey, getGeminiApiKey } from "../utils/storage";
+import { SyncManager, getTransport, setTransport } from "../sync/SyncManager";
+import {
+  isAuthenticated,
+  startOAuthFlow,
+  handleOAuthCallback,
+  clearTokens,
+} from "../api/dropbox";
 
 export function useSync({ latestStateRef, rehydrate, showBanner }) {
   const [syncFileConnected, setSyncFileConnected] = useState(false);
+  const [dropboxConnected, setDropboxConnected]   = useState(() => isAuthenticated());
   const [syncStatus, setSyncStatus]               = useState("idle");
   const [lastSynced, setLastSynced]               = useState(() =>
     LS.get(storageKey("jv_last_synced"), null)
@@ -43,7 +50,13 @@ export function useSync({ latestStateRef, rehydrate, showBanner }) {
 
   // ── Check if a sync file is already linked on mount ──
   useEffect(() => {
-    SyncManager.getHandle().then((h) => setSyncFileConnected(!!h)).catch(() => {});
+    if (isAuthenticated()) {
+      setDropboxConnected(true);
+      setTransport("dropbox");
+      setSyncFileConnected(true);
+    } else {
+      SyncManager.getHandle().then((h) => setSyncFileConnected(!!h)).catch(() => {});
+    }
   }, []);
 
   // ── Auto-push on tab hide / page hide ──
@@ -58,8 +71,11 @@ export function useSync({ latestStateRef, rehydrate, showBanner }) {
         try {
           if (Date.now() < blockUntilRef.current) return;
           if (isPullingRef.current) return; // skip during Pull [S-2]
-          const handle = await SyncManager.getHandle().catch(() => null);
-          if (!handle) return;
+          const transport = getTransport();
+          const canPush = transport === "dropbox"
+            ? isAuthenticated()
+            : await SyncManager.getHandle().then((h) => !!h).catch(() => false);
+          if (!canPush) return;
           if (!latestStateRef.current?.profile) return;
           const ts = await SyncManager.push();
           LS.set(storageKey("jv_last_synced"), String(ts));
@@ -96,11 +112,14 @@ export function useSync({ latestStateRef, rehydrate, showBanner }) {
         clearTimeout(debounceTimerRef.current);
         debounceTimerRef.current = null;
       }
-      SyncManager.getHandle()
-        .then((handle) => {
-          if (!handle || isPullingRef.current || !latestStateRef.current?.profile) return null;
-          return SyncManager.push();
-        })
+      (async () => {
+        const transport = getTransport();
+        const canPush = transport === "dropbox"
+          ? isAuthenticated()
+          : await SyncManager.getHandle().then((h) => !!h).catch(() => false);
+        if (!canPush || isPullingRef.current || !latestStateRef.current?.profile) return;
+        return SyncManager.push();
+      })()
         .catch((e) => {
           if (e?.message !== "IDB_NOT_READY") console.warn("[useSync] pagehide push failed:", e?.message);
         })
@@ -154,16 +173,28 @@ export function useSync({ latestStateRef, rehydrate, showBanner }) {
       }
       setSyncStatus("error");
       const msgs = {
-        NO_HANDLE:        "No sync file selected. Pick one in Profile → Settings.",
-        PERMISSION_DENIED:"Write permission denied. Try again and allow access.",
-        SYNC_BUSY:        "Sync already in progress. Please wait.",
-        IDB_NOT_READY:    "Still loading, try again.",
+        NO_HANDLE:           "No sync file selected. Pick one in Profile → Settings.",
+        PERMISSION_DENIED:   "Write permission denied. Try again and allow access.",
+        SYNC_BUSY:           "Sync already in progress. Please wait.",
+        IDB_NOT_READY:       "Still loading, try again.",
         SYNC_FILE_NOT_FOUND: "Sync file not found — it may have been moved or deleted. Pick a new file in Profile → Settings.",
+        DROPBOX_AUTH_REQUIRED: "Connect Dropbox in Profile → Settings to sync.",
+        DROPBOX_TOKEN_EXPIRED: "Dropbox session expired. Reconnect in Profile → Settings.",
+        DROPBOX_CONFLICT:      "Remote file changed since last pull. Pull first.",
+        DROPBOX_FILE_NOT_FOUND: "No RITMOL save file found in Dropbox. Push to create one.",
+        DROPBOX_QUOTA_EXCEEDED: "Dropbox storage full. Free up space and try again.",
+        DROPBOX_OFFLINE:        "No network connection. Sync requires connectivity.",
       };
       if (e.message === "SYNC_FILE_NOT_FOUND") {
-        // Clear stale handle so future pushes/pulls don't keep failing.
         SyncManager.forget().catch(() => {});
         setSyncFileConnected(false);
+        setSyncStatus("idle");
+      }
+      if (e.message === "DROPBOX_TOKEN_EXPIRED") {
+        clearTokens();
+        setDropboxConnected(false);
+        setSyncFileConnected(false);
+        setTransport("download");
         setSyncStatus("idle");
       }
       const safeMsg = (e.message || "")
@@ -218,7 +249,20 @@ export function useSync({ latestStateRef, rehydrate, showBanner }) {
         SYNC_FILE_TOO_LARGE:   "Sync file exceeds 10 MB — this is unexpected. Check the file.",
         SYNC_BUSY:             "Sync already in progress. Please wait.",
         IDB_NOT_READY:         "Still loading, try again.",
+        DROPBOX_AUTH_REQUIRED: "Connect Dropbox in Profile → Settings to sync.",
+        DROPBOX_TOKEN_EXPIRED: "Dropbox session expired. Reconnect in Profile → Settings.",
+        DROPBOX_CONFLICT:      "Remote file changed since last pull. Pull first.",
+        DROPBOX_FILE_NOT_FOUND: "No RITMOL save file found in Dropbox. Push to create one.",
+        DROPBOX_QUOTA_EXCEEDED: "Dropbox storage full. Free up space and try again.",
+        DROPBOX_OFFLINE:        "No network connection. Sync requires connectivity.",
       };
+      if (e.message === "DROPBOX_TOKEN_EXPIRED") {
+        clearTokens();
+        setDropboxConnected(false);
+        setSyncFileConnected(false);
+        setTransport("download");
+        setSyncStatus("idle");
+      }
       const safeMsg = (e.message || "")
         .replace(/AIza[A-Za-z0-9_-]{30,50}/g, "[key]")
         .replace(/eyJ[\w.-]+/g, "[token]")
@@ -260,6 +304,71 @@ export function useSync({ latestStateRef, rehydrate, showBanner }) {
     if (confirmTimerRef.current) clearTimeout(confirmTimerRef.current);
   }, []);
 
+  const connectDropbox = useCallback(() => {
+    startOAuthFlow();
+  }, []);
+
+  const dropboxErrorMsgs = {
+    DROPBOX_AUTH_REQUIRED: "Connect Dropbox in Profile → Settings to sync.",
+    DROPBOX_TOKEN_EXPIRED: "Dropbox session expired. Reconnect in Profile → Settings.",
+    DROPBOX_CONFLICT: "Remote file changed since last pull. Pull first.",
+    DROPBOX_FILE_NOT_FOUND: "No RITMOL save file found in Dropbox. Push to create one.",
+    DROPBOX_QUOTA_EXCEEDED: "Dropbox storage full. Free up space and try again.",
+    DROPBOX_OFFLINE: "No network connection. Sync requires connectivity.",
+  };
+
+  const handleDropboxCallback = useCallback(async (code, opts = {}) => {
+    const { onNeedsGeminiKey } = opts;
+    try {
+      await handleOAuthCallback(code);
+      setTransport("dropbox");
+      setDropboxConnected(true);
+      setSyncFileConnected(true);
+      try {
+        const ts = await SyncManager.pull();
+        await rehydrate();
+        LS.set(storageKey("jv_last_synced"), String(ts));
+        setLastSynced(ts);
+        setSyncStatus("synced");
+        if (!getGeminiApiKey()) {
+          onNeedsGeminiKey?.();
+          return;
+        }
+        showBanner("Pulled data from Dropbox.", "success");
+        isPullingRef.current = true;
+        setTimeout(() => {
+          try {
+            window.location.reload();
+          } catch {
+            try {
+              window.location.href = window.location.origin + window.location.pathname;
+            } catch {
+              isPullingRef.current = false;
+            }
+          }
+        }, 800);
+      } catch (pullErr) {
+        if (pullErr?.message === "DROPBOX_FILE_NOT_FOUND") {
+          onNeedsGeminiKey?.();
+          showBanner(dropboxErrorMsgs.DROPBOX_FILE_NOT_FOUND, "alert");
+          return;
+        }
+        throw pullErr;
+      }
+    } catch (e) {
+      showBanner(dropboxErrorMsgs[e?.message] ?? "Dropbox connection failed.", "alert");
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- dropboxErrorMsgs is stable
+  }, [rehydrate, showBanner]);
+
+  const disconnectDropbox = useCallback(() => {
+    clearTokens();
+    setTransport("download");
+    setDropboxConnected(false);
+    setSyncFileConnected(false);
+    showBanner("Dropbox disconnected.", "info");
+  }, [showBanner]);
+
   const forgetSyncFile = useCallback(async () => {
     if (!confirmForgetSync) {
       setConfirmForgetSync(true);
@@ -280,6 +389,7 @@ export function useSync({ latestStateRef, rehydrate, showBanner }) {
 
   return {
     syncFileConnected,
+    dropboxConnected,
     syncStatus,
     lastSynced,
     confirmForgetSync,
@@ -287,6 +397,9 @@ export function useSync({ latestStateRef, rehydrate, showBanner }) {
     syncPull,
     pickSyncFile,
     forgetSyncFile,
+    connectDropbox,
+    handleDropboxCallback,
+    disconnectDropbox,
     resetPullMutex: useCallback(() => { isPullingRef.current = false; }, []),
   };
 }

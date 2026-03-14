@@ -21,37 +21,8 @@ const APP_CONSTANT_KEYS = new Set([DATA_DISCLOSURE_SEEN_KEY, THEME_KEY, "jv_last
 // eslint-disable-next-line no-control-regex
 const SAFE_GACHA_RENDER_REGEX = /[\u0000-\u001F\u007F-\u009F\u200B-\u200D\uFEFF\u202A-\u202E\u2066-\u2069]/g;
 
-function SyncthingSetupGuide() {
-  const [open, setOpen] = useState(false);
-  return (
-    <div style={{ marginBottom: "12px", border: "1px solid #333", fontFamily: "'Share Tech Mono', monospace" }}>
-      <button
-        type="button"
-        onClick={() => setOpen(!open)}
-        style={{
-        width: "100%", padding: "10px 12px", background: "transparent", border: "none",
-        color: "#888", fontFamily: "'Share Tech Mono', monospace", fontSize: "10px",
-        letterSpacing: "1px", display: "flex", justifyContent: "space-between", cursor: "pointer",
-        }}
-      >
-        <span>▸ HOW TO SET UP SYNCTHING SYNC</span>
-        <span>{open ? "▲" : "▼"}</span>
-      </button>
-      {open && (
-        <div style={{ padding: "12px", borderTop: "1px solid #222", fontSize: "11px", color: "#666", lineHeight: "2" }}>
-          <div style={{ color: "#aaa", marginBottom: "8px" }}>One-time setup per device. No account needed. Free forever.</div>
-          <div>1. Install Syncthing from <span style={{ color: "#ccc" }}>syncthing.net</span></div>
-          <div>2. Create a shared folder and link devices.</div>
-          <div>3. Click LINK SYNCTHING FILE and pick your sync JSON file.</div>
-          <div>4. Push / Pull from Profile → Settings to sync across devices.</div>
-        </div>
-      )}
-    </div>
-  );
-}
-
 export default function ProfileTab() {
-  const { state, setState, latestStateRef, profile, level, rank, xpPerLevel, showBanner, showToast, executeCommands, apiKey, buildSystemPrompt, syncStatus, lastSynced, syncFileConnected, confirmForgetSync, syncPush: onPush, syncPull: onPull, pickSyncFile: onPickSyncFile, forgetSyncFile: onForgetSyncFile, theme, setTheme, streakShieldCost, gachaCost, trackTokens } = useAppContext();
+  const { state, setState, latestStateRef, profile, level, rank, xpPerLevel, showBanner, showToast, executeCommands, apiKey, buildSystemPrompt, syncStatus, lastSynced, syncFileConnected, dropboxConnected, confirmForgetSync, syncPush: onPush, syncPull: onPull, pickSyncFile: onPickSyncFile, forgetSyncFile: onForgetSyncFile, connectDropbox, disconnectDropbox, theme, setTheme, streakShieldCost, gachaCost, trackTokens } = useAppContext();
   const [section, setSection] = useState("overview");
   // showGacha state is reserved for future gacha modal implementation
   // eslint-disable-next-line no-unused-vars
@@ -103,7 +74,7 @@ export default function ProfileTab() {
       {section === "achievements" && <AchievementsSection state={state} />}
       {section === "calendar" && <CalendarSection state={state} setState={setState} profile={profile} apiKey={apiKey} buildSystemPrompt={buildSystemPrompt} showBanner={showBanner} executeCommands={executeCommands} />}
       {section === "gacha" && <GachaSection state={state} setState={setState} profile={profile} apiKey={apiKey} gachaCost={gachaCost} showBanner={showBanner} showToast={showToast} trackTokens={trackTokens} latestStateRef={latestStateRef} />}
-      {section === "settings" && <SettingsSection profile={profile} setState={setState} showBanner={showBanner} syncStatus={syncStatus} lastSynced={lastSynced} syncFileConnected={syncFileConnected} onPush={onPush} onPull={onPull} onPickSyncFile={onPickSyncFile} onForgetSyncFile={onForgetSyncFile} confirmForgetSync={confirmForgetSync} theme={theme} setTheme={setTheme} latestStateRef={latestStateRef} />}
+      {section === "settings" && <SettingsSection profile={profile} setState={setState} showBanner={showBanner} syncStatus={syncStatus} lastSynced={lastSynced} syncFileConnected={syncFileConnected} dropboxConnected={dropboxConnected} onPush={onPush} onPull={onPull} onPickSyncFile={onPickSyncFile} onForgetSyncFile={onForgetSyncFile} confirmForgetSync={confirmForgetSync} connectDropbox={connectDropbox} disconnectDropbox={disconnectDropbox} theme={theme} setTheme={setTheme} latestStateRef={latestStateRef} />}
     </div>
   );
 }
@@ -913,7 +884,7 @@ function GachaCard({ card, compact }) {
 }
 
 // eslint-disable-next-line no-unused-vars
-function SettingsSection({ profile, setState, showBanner, syncStatus, lastSynced, syncFileConnected, onPush, onPull, onPickSyncFile, onForgetSyncFile, confirmForgetSync, theme, setTheme, latestStateRef }) {
+function SettingsSection({ profile, setState, showBanner, syncStatus, lastSynced, syncFileConnected, dropboxConnected, onPush, onPull, onPickSyncFile, onForgetSyncFile, confirmForgetSync, connectDropbox, disconnectDropbox, theme, setTheme, latestStateRef }) {
   const importRef = useRef(null);
   const [clientIdInput, setClientIdInput] = useState(profile?.googleClientId || "");
 
@@ -1056,90 +1027,141 @@ function SettingsSection({ profile, setState, showBanner, syncStatus, lastSynced
       </div>
 
       <div style={{ height: "1px", background: "#333", margin: "8px 0" }} />
-      {/* ── SYNCTHING SYNC ── */}
-      <div style={{ fontSize: "9px", color: "#444", letterSpacing: "2px" }}>SYNCTHING SYNC</div>
-      <SyncthingSetupGuide />
+      {/* ── SYNC ── */}
+      <div style={{ fontSize: "9px", color: "#444", letterSpacing: "2px" }}>SYNC</div>
 
-      <div style={{ fontSize: "10px", color: "#555", lineHeight: "1.8" }}>
-        Last synced: <span style={{ color: syncStatus === "error" ? "#888" : "#aaa" }}>{syncStatusLabel}</span>
-      </div>
-
-      {!FSAPI_SUPPORTED ? (
-        /* Fallback: browsers without File System Access API */
-        <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-          <div style={{ fontSize: "10px", color: "#555", border: "1px dashed #333", padding: "8px", lineHeight: "1.7" }}>
-            ⚠ Your browser does not support direct file access. Use Download + Import below.<br />
-            Place the downloaded file in your Syncthing folder manually.
+      {dropboxConnected ? (
+        /* Dropbox connected */
+        <>
+          <div style={{ fontSize: "10px", color: "#555", lineHeight: "1.8" }}>
+            SYNC — DROPBOX
           </div>
-        <button type="button" onClick={() => {
-            // Write-through persistence in useAppState keeps localStorage in sync —
-            // no explicit flush needed before download.
-            SyncManager.download((msg) => showBanner(msg, "alert"));
-          }} style={{
-            padding: "10px", border: "1px solid #555", background: "transparent",
-            color: "#aaa", fontFamily: "'Share Tech Mono', monospace", fontSize: "11px", cursor: "pointer",
-          }}>
-            DOWNLOAD DATA FILE ↓
-          </button>
-          <input ref={importRef} type="file" accept=".json" onChange={handleImportFile} style={{ display: "none" }} />
-          <button onClick={() => importRef.current?.click()} style={{
-            padding: "10px", border: "1px solid #444", background: "transparent",
-            color: "#888", fontFamily: "'Share Tech Mono', monospace", fontSize: "11px", cursor: "pointer",
-          }}>
-            IMPORT DATA FILE ↑
-          </button>
-        </div>
-      ) : !syncFileConnected ? (
-        /* No file linked yet */
-        <button onClick={onPickSyncFile} style={{
-          padding: "12px", border: "2px solid #fff", background: "#fff", color: "#000",
-          fontFamily: "'Share Tech Mono', monospace", fontSize: "11px", letterSpacing: "2px", cursor: "pointer",
-        }}>
-          LINK SYNCTHING FILE →
-        </button>
-      ) : (
-        /* File linked — push / pull controls */
-        <div style={{ border: "1px solid #333", padding: "12px", display: "flex", flexDirection: "column", gap: "8px" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <span style={{ fontSize: "11px", color: "#aaa" }}>✓ SYNC FILE LINKED</span>
-            <button onClick={onForgetSyncFile} style={{
-              background: confirmForgetSync ? "#3a1111" : "none",
-              border: `1px solid ${confirmForgetSync ? "#c44" : "#333"}`,
-              color: confirmForgetSync ? "#c44" : "#555",
-              fontFamily: "'Share Tech Mono', monospace", fontSize: "9px", padding: "2px 8px", cursor: "pointer",
-              transition: "none",
-            }}>
-              {/* Fix #12: two-step confirm replaces window.confirm() which is blocked in some PWA contexts */}
-              {confirmForgetSync ? "CONFIRM?" : "UNLINK"}
-            </button>
+          <div style={{ fontSize: "10px", color: "#aaa", marginBottom: "8px" }}>
+            ● Connected
+          </div>
+          <div style={{ fontSize: "10px", color: "#555", lineHeight: "1.8" }}>
+            Last synced: <span style={{ color: syncStatus === "error" ? "#888" : "#aaa" }}>{syncStatusLabel}</span>
           </div>
           <div style={{ display: "flex", gap: "8px" }}>
-            <button onClick={onPush} style={{
-              flex: 1, padding: "10px", border: "1px solid #555",
-              background: "transparent", color: "#ccc",
-              fontFamily: "'Share Tech Mono', monospace", fontSize: "11px", cursor: "pointer",
-            }}>
+            <button
+              type="button"
+              onClick={onPush}
+              disabled={typeof navigator !== "undefined" && navigator.onLine === false}
+              style={{
+                flex: 1, padding: "10px", border: "1px solid #555",
+                background: "transparent", color: "#ccc",
+                fontFamily: "'Share Tech Mono', monospace", fontSize: "11px", cursor: (typeof navigator !== "undefined" && navigator.onLine === false) ? "default" : "pointer",
+              }}
+            >
               PUSH ↑
             </button>
-            <button onClick={onPull} style={{
-              flex: 1, padding: "10px", border: "1px solid #444",
-              background: "transparent", color: "#888",
-              fontFamily: "'Share Tech Mono', monospace", fontSize: "11px", cursor: "pointer",
-            }}>
+            <button
+              type="button"
+              onClick={onPull}
+              disabled={typeof navigator !== "undefined" && navigator.onLine === false}
+              style={{
+                flex: 1, padding: "10px", border: "1px solid #444",
+                background: "transparent", color: "#888",
+                fontFamily: "'Share Tech Mono', monospace", fontSize: "11px", cursor: (typeof navigator !== "undefined" && navigator.onLine === false) ? "default" : "pointer",
+              }}
+            >
               PULL ↓
             </button>
+            <button
+              type="button"
+              onClick={disconnectDropbox}
+              style={{
+                padding: "10px", border: "1px solid #333",
+                background: "transparent", color: "#555",
+                fontFamily: "'Share Tech Mono', monospace", fontSize: "11px", cursor: "pointer",
+              }}
+            >
+              DISCONNECT
+            </button>
           </div>
-          <div style={{ fontSize: "10px", color: "#444", lineHeight: "1.6" }}>
-            PUSH overwrites the Syncthing file with local data.<br />
-            PULL loads the Syncthing file into local data.
-          </div>
-          <button onClick={onPickSyncFile} style={{
-            padding: "6px", border: "1px solid #222", background: "transparent",
-            color: "#444", fontFamily: "'Share Tech Mono', monospace", fontSize: "9px", cursor: "pointer",
-          }}>
-            CHANGE FILE
+        </>
+      ) : (
+        /* Dropbox not connected */
+        <>
+          <button
+            type="button"
+            onClick={connectDropbox}
+            style={{
+              width: "100%", padding: "12px", border: "2px solid #fff", background: "#fff", color: "#000",
+              fontFamily: "'Share Tech Mono', monospace", fontSize: "11px", letterSpacing: "2px", cursor: "pointer",
+            }}
+          >
+            CONNECT DROPBOX
           </button>
-        </div>
+          <div style={{ fontSize: "10px", color: "#555", lineHeight: "1.8" }}>
+            Last synced: <span style={{ color: syncStatus === "error" ? "#888" : "#aaa" }}>{syncStatusLabel}</span>
+          </div>
+          <div style={{ height: "1px", background: "#333", margin: "4px 0" }} />
+          <div style={{ fontSize: "9px", color: "#444", letterSpacing: "1px" }}>
+            {FSAPI_SUPPORTED ? "or use local file" : "or export / import manually"}
+          </div>
+          {FSAPI_SUPPORTED ? (
+            <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+              <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                <button type="button" onClick={onPickSyncFile} style={{
+                  padding: "10px", border: "1px solid #555", background: "transparent",
+                  color: "#aaa", fontFamily: "'Share Tech Mono', monospace", fontSize: "11px", cursor: "pointer",
+                }}>
+                  PICK FILE
+                </button>
+                <button
+                  type="button"
+                  onClick={onPush}
+                  disabled={typeof navigator !== "undefined" && navigator.onLine === false}
+                  style={{
+                    padding: "10px", border: "1px solid #555", background: "transparent",
+                    color: "#ccc", fontFamily: "'Share Tech Mono', monospace", fontSize: "11px", cursor: (typeof navigator !== "undefined" && navigator.onLine === false) ? "default" : "pointer",
+                  }}
+                >
+                  PUSH ↑
+                </button>
+                <button
+                  type="button"
+                  onClick={onPull}
+                  disabled={typeof navigator !== "undefined" && navigator.onLine === false}
+                  style={{
+                    padding: "10px", border: "1px solid #444", background: "transparent",
+                    color: "#888", fontFamily: "'Share Tech Mono', monospace", fontSize: "11px", cursor: (typeof navigator !== "undefined" && navigator.onLine === false) ? "default" : "pointer",
+                  }}
+                >
+                  PULL ↓
+                </button>
+                <button onClick={onForgetSyncFile} style={{
+                  padding: "10px", border: "1px solid #333",
+                  background: confirmForgetSync ? "#3a1111" : "transparent",
+                  color: confirmForgetSync ? "#c44" : "#555",
+                  fontFamily: "'Share Tech Mono', monospace", fontSize: "11px", cursor: "pointer",
+                }}>
+                  {confirmForgetSync ? "CONFIRM?" : "FORGET"}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+              <div style={{ fontSize: "10px", color: "#555", border: "1px dashed #333", padding: "8px", lineHeight: "1.7" }}>
+                ⚠ Your browser does not support direct file access.
+              </div>
+              <button type="button" onClick={() => SyncManager.download((msg) => showBanner(msg, "alert"))} style={{
+                padding: "10px", border: "1px solid #555", background: "transparent",
+                color: "#aaa", fontFamily: "'Share Tech Mono', monospace", fontSize: "11px", cursor: "pointer",
+              }}>
+                EXPORT ↓
+              </button>
+              <input ref={importRef} type="file" accept=".json" onChange={handleImportFile} style={{ display: "none" }} />
+              <button onClick={() => importRef.current?.click()} style={{
+                padding: "10px", border: "1px solid #444", background: "transparent",
+                color: "#888", fontFamily: "'Share Tech Mono', monospace", fontSize: "11px", cursor: "pointer",
+              }}>
+                IMPORT ↑
+              </button>
+            </div>
+          )}
+        </>
       )}
 
       <div style={{ marginTop: "12px", padding: "12px", border: "1px dashed #222" }}>

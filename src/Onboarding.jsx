@@ -1,7 +1,6 @@
 import { useState } from "react";
 import { STYLE_CSS } from "./constants";
 import { sanitizeForPrompt } from "./api/systemPrompt";
-import { SyncManager, FSAPI_SUPPORTED } from "./sync/SyncManager";
 import GeometricCorners from "./GeometricCorners";
 
 export const primaryBtn = {
@@ -20,92 +19,86 @@ export function inputStyle(s) {
   };
 }
 
-function SyncthingSetupGuide() {
-  const [open, setOpen] = useState(false);
+function SyncOnboardingStep({ connectDropbox, onSkip }) {
   return (
-    <div style={{ marginBottom: "12px", border: "1px solid #333", fontFamily: "'Share Tech Mono', monospace" }}>
-      <button onClick={() => setOpen(!open)} style={{
-        width: "100%", padding: "10px 12px", background: "transparent", border: "none",
-        color: "#888", fontFamily: "'Share Tech Mono', monospace", fontSize: "10px",
-        letterSpacing: "1px", display: "flex", justifyContent: "space-between", cursor: "pointer",
-      }}>
-        <span>▸ HOW TO SET UP SYNCTHING SYNC</span>
-        <span>{open ? "▲" : "▼"}</span>
+    <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+      <div style={{ fontSize: "11px", color: "#888", lineHeight: "1.8" }}>
+        Connect Dropbox to sync your data across devices and back it up automatically.
+        Your Gemini API key will be stored securely in your Dropbox — configure once,
+        use everywhere.
+      </div>
+      <button
+        onClick={connectDropbox}
+        style={{
+          width: "100%", padding: "14px", border: "2px solid #fff", background: "#fff", color: "#000",
+          fontFamily: "'Share Tech Mono', monospace", fontSize: "11px", letterSpacing: "2px", cursor: "pointer",
+        }}
+      >
+        CONNECT DROPBOX
       </button>
-      {open && (
-        <div style={{ padding: "12px", borderTop: "1px solid #222", fontSize: "11px", color: "#666", lineHeight: "2" }}>
-          <div style={{ color: "#aaa", marginBottom: "8px" }}>One-time setup per device. No account needed. Free forever.</div>
-          <div style={{ color: "#888", fontWeight: "bold", marginBottom: "4px" }}>STEP 1 — Install Syncthing</div>
-          <div>1. Download from <span style={{ color: "#ccc" }}>syncthing.net</span> and install on all devices.</div>
-          <div>2. Open the Syncthing UI (usually <span style={{ color: "#ccc" }}>localhost:8384</span>).</div>
-          <div style={{ color: "#888", fontWeight: "bold", marginTop: "10px", marginBottom: "4px" }}>STEP 2 — Create a shared folder</div>
-          <div>3. Click <span style={{ color: "#ccc" }}>Add Folder</span>.</div>
-          <div>4. Set a folder path on your machine, e.g. <span style={{ color: "#ccc" }}>~/ritmol-sync/</span></div>
-          <div>5. Share the folder with your other devices in Syncthing.</div>
-          <div style={{ color: "#888", fontWeight: "bold", marginTop: "10px", marginBottom: "4px" }}>STEP 3 — Link the file in RITMOL</div>
-          <div>6. Come back here and click <span style={{ color: "#ccc" }}>LINK SYNCTHING FILE</span>.</div>
-          <div>7. Navigate to your Syncthing folder and pick <span style={{ color: "#ccc" }}>ritmol-data.json</span>.</div>
-          <div style={{ color: "#555", fontSize: "10px" }}>&nbsp;&nbsp;&nbsp;(If the file doesn&apos;t exist yet, Push first — it will be created.)</div>
-          <div style={{ color: "#888", fontWeight: "bold", marginTop: "10px", marginBottom: "4px" }}>STEP 4 — Sync between devices</div>
-          <div>8. On Device A: click <span style={{ color: "#ccc" }}>PUSH ↑</span> to write data to the file.</div>
-          <div>9. Syncthing propagates the file to Device B automatically.</div>
-          <div>10. On Device B: click <span style={{ color: "#ccc" }}>PULL ↓</span> to load the latest data.</div>
-          <div style={{ marginTop: "10px", padding: "8px", border: "1px dashed #333", color: "#555", fontSize: "10px" }}>
-            ✓ No OAuth. No cloud account. No API keys. Your data never leaves your devices.
-          </div>
-        </div>
-      )}
+      <div style={{ height: "1px", background: "#333" }} />
+      <div style={{ fontSize: "10px", color: "#555", lineHeight: "1.6" }}>
+        Already have a save file? Connecting Dropbox will pull it automatically.
+        No account? You can skip this and sync manually later in Profile → Settings.
+      </div>
+      <button
+        onClick={onSkip}
+        style={{
+          width: "100%", padding: "10px", border: "1px solid #444", background: "transparent", color: "#888",
+          fontFamily: "'Share Tech Mono', monospace", fontSize: "11px", letterSpacing: "1px", cursor: "pointer",
+        }}
+      >
+        SKIP FOR NOW
+      </button>
     </div>
   );
 }
 
-function SyncOnboardingStep() {
-  const [linked, setLinked] = useState(false);
+export function GeminiKeySetupScreen({ onSave }) {
+  const [key, setKey] = useState("");
   const [error, setError] = useState("");
 
-  async function handlePick() {
-    setError("");
-    try {
-      await SyncManager.pickFile();
-      setLinked(true);
-    } catch (e) {
-      if (e.name !== "AbortError") setError("Could not link file. Try again.");
+  function handleSave() {
+    const trimmed = key.trim();
+    if (!/^AIza[A-Za-z0-9_-]{35,45}$/.test(trimmed)) {
+      setError("Invalid key format. Get one free at aistudio.google.com/apikey");
+      return;
     }
-  }
-
-  if (!FSAPI_SUPPORTED) {
-    return (
-      <div style={{ fontSize: "11px", color: "#666", lineHeight: "1.8", padding: "8px", border: "1px dashed #333" }}>
-        ⚠ Your browser doesn&apos;t support direct file access.<br />
-        Use <strong>Profile → Settings → Download / Import</strong> to sync manually after setup.
-      </div>
-    );
+    setError("");
+    onSave(trimmed);
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
-      <SyncthingSetupGuide />
-      {linked ? (
-        <div style={{ padding: "10px", border: "1px solid #aaa", fontFamily: "'Share Tech Mono', monospace", fontSize: "11px", color: "#aaa" }}>
-          ✓ SYNC FILE LINKED — you can Push/Pull from Profile → Settings.
-        </div>
-      ) : (
-        <button onClick={handlePick} style={{
-          padding: "12px", border: "2px solid #fff", background: "#fff", color: "#000",
-          fontFamily: "'Share Tech Mono', monospace", fontSize: "11px", letterSpacing: "2px", cursor: "pointer",
-        }}>
-          LINK SYNCTHING FILE →
-        </button>
-      )}
-      {error && <div style={{ color: "#888", fontSize: "10px" }}>⚠ {error}</div>}
-      <div style={{ fontSize: "10px", color: "#444" }}>
-        — OPTIONAL — You can do this later in Profile → Settings.
+    <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+      <div style={{ fontSize: "11px", color: "#888", lineHeight: "1.8" }}>
+        Enter your Gemini API key to enable RITMOL&apos;s AI features.
+        Get one free at aistudio.google.com/apikey
       </div>
+      <input
+        type="password"
+        value={key}
+        onChange={(e) => setKey(e.target.value)}
+        placeholder="AIza..."
+        style={{
+          width: "100%", padding: "12px", background: "rgba(0,0,0,0.6)", border: "1px solid #444",
+          color: "#e8e8e8", fontSize: "14px", fontFamily: "'Share Tech Mono', monospace", outline: "none",
+        }}
+      />
+      {error && <div style={{ color: "#c44", fontSize: "10px" }}>⚠ {error}</div>}
+      <button
+        onClick={handleSave}
+        style={{
+          width: "100%", padding: "14px", border: "2px solid #fff", background: "#fff", color: "#000",
+          fontFamily: "'Share Tech Mono', monospace", fontSize: "11px", letterSpacing: "2px", cursor: "pointer",
+        }}
+      >
+        SAVE &amp; CONTINUE
+      </button>
     </div>
   );
 }
 
-export default function Onboarding({ onComplete }) {
+export default function Onboarding({ onComplete, showGeminiKeySetup, onGeminiKeySaved, connectDropbox }) {
   const [step, setStep] = useState(0);
   const [form, setForm] = useState({ name: "", major: "", books: "", interests: "", semesterGoal: "" });
   const [error, setError] = useState("");
@@ -143,7 +136,7 @@ export default function Onboarding({ onComplete }) {
     },
     {
       title: "SYNC SETUP",
-      subtitle: "Link a Syncthing-watched file so your data syncs across devices. You can skip this and do it later in Settings.",
+      subtitle: "Connect Dropbox to sync your data across devices and back it up automatically.",
       field: "_syncStep", label: "", placeholder: "", type: "_syncStep",
       style: "ascii",
       isSyncStep: true,
@@ -202,6 +195,30 @@ export default function Onboarding({ onComplete }) {
   const styleMap = STYLE_CSS;
   const s = styleMap[current.style] || styleMap.ascii;
 
+  if (showGeminiKeySetup) {
+    return (
+      <div style={{
+        height: "100%", overflowY: "auto", display: "flex", flexDirection: "column", alignItems: "center",
+        justifyContent: "flex-start", padding: "24px", background: "#0a0a0a",
+      }}>
+        <div style={{
+          width: "100%", maxWidth: "380px", padding: "24px",
+          background: "#050505", border: "1px solid #444",
+          fontFamily: "'Share Tech Mono', monospace",
+        }}>
+          <GeometricCorners style="ascii" />
+          <div style={{ fontSize: "11px", color: "#888", letterSpacing: "3px", marginBottom: "8px" }}>
+            CONFIGURE AI
+          </div>
+          <div style={{ fontSize: "22px", fontWeight: "bold", marginBottom: "18px", letterSpacing: "1px" }}>
+            GEMINI API KEY
+          </div>
+          <GeminiKeySetupScreen onSave={(key) => onGeminiKeySaved(key, sanitizeForm(form))} />
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div style={{
       height: "100%", overflowY: "auto", display: "flex", flexDirection: "column", alignItems: "center",
@@ -237,7 +254,10 @@ export default function Onboarding({ onComplete }) {
         </div>
 
         {current.isSyncStep ? (
-          <SyncOnboardingStep />
+          <SyncOnboardingStep
+            connectDropbox={connectDropbox}
+            onSkip={() => handleNext()}
+          />
         ) : current.type === "_infoOnly" ? null : (
           <>
             <label style={{ fontSize: "11px", color: "#aaa", letterSpacing: "2px", display: "block", marginBottom: "6px", marginTop: "0" }}>
