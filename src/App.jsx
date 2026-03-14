@@ -17,7 +17,7 @@ import { getLevel, getRank, getXpPerLevel, getGachaCost, getStreakShieldCost, ca
 import { THEME_KEY, SESSION_TYPES, DEFAULT_XP_PER_LEVEL, DEFAULT_GACHA_COST, DEFAULT_STREAK_SHIELD_COST } from "./constants";
 import { buildSystemPrompt } from "./api/systemPrompt";
 import { fetchDailyQuote } from "./api/quotes";
-import { SyncManager, FSAPI_SUPPORTED } from "./sync/SyncManager";
+import { FSAPI_SUPPORTED } from "./sync/SyncManager";
 import { verifyOAuthState } from "./api/dropbox";
 
 const MISSION_DEFS = [
@@ -63,6 +63,7 @@ function MissingKeyGate({ connectDropbox, dropboxConnected, pickSyncFile, syncPu
   const [syncFileLinked, setSyncFileLinked] = useState(false);
   const [syncStatus, setSyncStatus]         = useState("idle"); // "idle" | "syncing" | "synced" | "error"
   const [syncError, setSyncError]           = useState("");
+  const [dropboxError, setDropboxError]     = useState("");
 
   const mono = { fontFamily: "'Share Tech Mono', monospace" };
   const btnPrimary = {
@@ -73,6 +74,19 @@ function MissingKeyGate({ connectDropbox, dropboxConnected, pickSyncFile, syncPu
     width: "100%", padding: "11px", border: "1px solid #444", background: "transparent", color: "#888",
     ...mono, fontSize: "11px", letterSpacing: "1px", cursor: "pointer",
   };
+
+  function handleConnectDropbox() {
+    setDropboxError("");
+    try {
+      connectDropbox();
+    } catch (e) {
+      if (e?.message === "DROPBOX_NOT_CONFIGURED") {
+        setDropboxError("Dropbox is not configured in this build. Enter your Gemini key manually instead.");
+      } else {
+        setDropboxError("Could not start Dropbox connection. Try again.");
+      }
+    }
+  }
 
   async function handleSyncthingLink() {
     setSyncError("");
@@ -138,9 +152,10 @@ function MissingKeyGate({ connectDropbox, dropboxConnected, pickSyncFile, syncPu
                 <div style={{ fontSize: "10px", color: "#555", letterSpacing: "2px", marginBottom: "10px" }}>
                   RETURNING USER? PULL FROM SYNC
                 </div>
-                <button type="button" onClick={connectDropbox} style={btnPrimary}>
+                <button type="button" onClick={handleConnectDropbox} style={btnPrimary}>
                   CONNECT DROPBOX ↗
                 </button>
+                {dropboxError && <div style={{ color: "#c44", fontSize: "10px", marginBottom: "10px" }}>⚠ {dropboxError}</div>}
                 {FSAPI_SUPPORTED && (
                   <button type="button" onClick={() => setMode("syncthing")} style={{ ...btnSecondary, marginBottom: "24px" }}>
                     LOAD FROM SYNCTHING FILE
