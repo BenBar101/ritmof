@@ -102,9 +102,6 @@ export function loadGoogleGIS() {
     s.src = "https://accounts.google.com/gsi/client";
     s.async = true;
     s.defer = true;
-    // Fix: add crossOrigin so the browser enforces CORS on the script response,
-    // reducing the risk of a same-site content injection through the CDN.
-    s.crossOrigin = "anonymous";
     s.onload = () => {
       // Double-check that the loaded script actually exposed the expected API.
       if (!window.google?.accounts?.oauth2) {

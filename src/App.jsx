@@ -305,7 +305,9 @@ export default function App() {
         return;
       }
       handleDropboxCallback(code, {
-        onNeedsGeminiKey: () => setShowGeminiKeySetup(true),
+        // If onboarding is active, let its own Gemini step handle key entry
+        // rather than showing the standalone key setup screen on top of it.
+        onNeedsGeminiKey: () => { if (!showOnboarding) setShowGeminiKeySetup(true); },
       });
     }
   }, [handleDropboxCallback, showBanner]);
