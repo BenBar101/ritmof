@@ -1,6 +1,6 @@
 import { useAppContext } from "./context/AppContext";
 import { useState } from "react";
-import { localDateFromUTC } from "./utils/storage";
+import { localDateFromUTC } from "./utils/db";
 import { primaryBtn } from "./Onboarding";
 import { sanitizeForPrompt } from "./api/systemPrompt";
 

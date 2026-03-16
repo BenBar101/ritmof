@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import { useAppContext } from "./context/AppContext";
-import { todayUTC, localDateFromUTC, LS, storageKey } from "./utils/storage";
+import { todayUTC, localDateFromUTC, LS, storageKey } from "./utils/db";
 import { DAILY_TOKEN_LIMIT, DATA_DISCLOSURE_SEEN_KEY } from "./constants";
 import { callGemini } from "./api/gemini";
 

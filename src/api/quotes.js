@@ -1,4 +1,4 @@
-import { IS_DEV, DEV_PREFIX, LS, storageKey } from "../utils/storage";
+import { IS_DEV, DEV_PREFIX, LS, storageKey } from "../utils/db";
 import { callGemini } from "./gemini";
 
 // Local-date helper so quote cache rollover aligns with user's local midnight.

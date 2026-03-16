@@ -16,7 +16,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { useEffect, useRef } from "react";
-import { localDateFromUTC, localHour, localMin } from "../utils/storage";
+import { localDateFromUTC, localHour, localMin } from "../utils/db";
 
 export function useScheduler({ state, profile, showBanner, setModal }) {
   // Snapshot of the state slices the interval needs — updated every render

@@ -1,5 +1,5 @@
 import { callGemini } from "./gemini";
-import { storageKey, todayUTC } from "../utils/storage";
+import { storageKey, todayUTC } from "../utils/db";
 import { idbGet } from "../utils/db";
 import { DAILY_TOKEN_LIMIT, DEFAULT_XP_PER_LEVEL, DEFAULT_GACHA_COST, DEFAULT_STREAK_SHIELD_COST } from "../constants";
 import { getLevel } from "../utils/xp";

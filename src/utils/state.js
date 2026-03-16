@@ -1,4 +1,4 @@
-import { storageKey, todayUTC } from "./storage";
+import { storageKey, todayUTC } from "./db";
 import { idbGet } from "./db";
 import { DEFAULT_XP_PER_LEVEL, DEFAULT_GACHA_COST, DEFAULT_STREAK_SHIELD_COST, DEFAULT_HABITS } from "../constants";
 

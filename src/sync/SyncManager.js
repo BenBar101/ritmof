@@ -13,7 +13,7 @@
 //     incoming (prevents crafted sync from resetting once-per-day shield limit).
 // ═══════════════════════════════════════════════════════════════
 
-import { LS, storageKey, setGeminiApiKey, getGeminiApiKey, getMaxDateSeen } from "../utils/storage";
+import { LS, storageKey, setGeminiApiKey, getGeminiApiKey, getMaxDateSeen } from "../utils/db";
 import { idbGet, idbSet, store } from "../utils/db";
 import { SyncPayloadSchema } from "../utils/schemas.js";
 import { SYNC_SCHEMA_VERSION } from "../constants";
@@ -24,8 +24,8 @@ import {
   downloadFile as dropboxDownload,
 } from "../api/dropbox";
 
-// Local dev/prod flags to avoid importing them from utils/storage (which would
-// introduce a circular dependency via db.js → SyncManager → storage.js → db.js.
+// Local dev/prod flags to avoid importing them from utils/db (which would
+// introduce a circular dependency via db.js → SyncManager → db.js.
 const IS_DEV = import.meta.env.DEV === true;
 const DEV_PREFIX = "ritmol_dev_";
 

@@ -4,7 +4,7 @@
 // All user-derived strings are sanitized before injection to
 // prevent prompt-injection via crafted profile or chat data.
 // ═══════════════════════════════════════════════════════════════
-import { today } from "../utils/storage";
+import { today } from "../utils/db";
 import { getLevel, getRank, getXpPerLevel } from "../utils/xp";
 
 /**

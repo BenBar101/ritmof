@@ -25,8 +25,7 @@ export function isSafeSyncValue(v, depth = 0) {
   return true
 }
 
-// ── Date utilities (previously in storage.js) ─────────────────
-// Keep these here so imports from storage.js can be redirected here.
+// ── Date utilities ────────────────────────────────────────────
 // Use UTC everywhere — single canonical date for habits, missions,
 // streaks, token usage, and anti-cheat watermark.
 export const todayUTC = () => new Date().toISOString().slice(0, 10)

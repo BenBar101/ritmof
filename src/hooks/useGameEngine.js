@@ -19,10 +19,8 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { useCallback, useRef, useEffect } from "react";
-import { storageKey, todayUTC, localDateFromUTC, getMaxDateSeen } from "../utils/storage";
-import { idbGet } from "../utils/db";
+import { storageKey, todayUTC, localDateFromUTC, getMaxDateSeen, idbGet, getGeminiApiKey } from "../utils/db";
 import { getLevel, getRank, getXpPerLevel } from "../utils/xp";
-import { getGeminiApiKey } from "../utils/storage";
 import { updateDynamicCosts } from "../api/dynamicCosts";
 import { sanitizeForPrompt } from "../api/systemPrompt";
 import { DAILY_TOKEN_LIMIT, DAILY_AI_XP_LIMIT, MAX_HABITS_TOTAL } from "../constants";

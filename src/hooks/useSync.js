@@ -21,7 +21,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import { LS, storageKey, getGeminiApiKey } from "../utils/storage";
+import { LS, storageKey, getGeminiApiKey } from "../utils/db";
 import { SyncManager, getTransport, setTransport } from "../sync/SyncManager";
 import {
   isAuthenticated,

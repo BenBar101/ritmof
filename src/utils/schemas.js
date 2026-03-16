@@ -39,8 +39,6 @@ const ProfileSchemaBase = z.object({
   googleClientId:   z.undefined(),
 })
 
-export const ProfileSchema = ProfileSchemaBase.strip().nullable()
-
 // .omit() is called on the raw ZodObject, THEN .strip().nullable()
 export const SafeProfileSchema = ProfileSchemaBase
   .omit({ geminiKey: true, googleClientId: true })

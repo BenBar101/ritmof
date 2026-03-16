@@ -1,4 +1,4 @@
-import { APP_ICON_URL } from "./utils/storage";
+import { APP_ICON_URL } from "./utils/db";
 import { getLevelProgress } from "./utils/xp";
 
 // ═══════════════════════════════════════════════════════════════

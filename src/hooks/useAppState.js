@@ -22,7 +22,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { useState, useCallback, useRef, useEffect } from "react";
-import { storageKey } from "../utils/storage";
+import { storageKey } from "../utils/db";
 import { idbSet } from "../utils/db";
 import { initState } from "../utils/state";
 import { DEFAULT_XP_PER_LEVEL, DEFAULT_GACHA_COST, DEFAULT_STREAK_SHIELD_COST } from "../constants";

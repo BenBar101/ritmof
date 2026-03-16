@@ -10,9 +10,9 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { useEffect, useRef } from "react";
-import { localDateFromUTC, getMaxDateSeen, updateMaxDateSeen } from "../utils/storage";
+import { localDateFromUTC, getMaxDateSeen, updateMaxDateSeen } from "../utils/db";
 import { getLevel, getRank, getXpPerLevel } from "../utils/xp";
-import { getGeminiApiKey } from "../utils/storage";
+import { getGeminiApiKey } from "../utils/db";
 import { updateDynamicCosts } from "../api/dynamicCosts";
 
 export function useDailyLogin({ profile, setState, setModal, setLevelUpData, showBanner, trackTokens, lastLevelUpXpRef }) {

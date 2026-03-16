@@ -32,7 +32,6 @@ A gamified life companion PWA for STEM university students. Solo Leveling RPG ae
 src/
   App.jsx               — orchestration; mounts hooks, renders tabs, keys config gate
   main.jsx              — entry point; awaits bootDb(), then mounts App, GlobalStyles, ErrorBoundary
-  theme.js              — single source of truth for colours, fonts, button/input styles
   context/
     AppContext.js        — React context; useAppContext() for tabs
   hooks/
@@ -64,10 +63,9 @@ src/
     SyncManager.js      — SYNC_KEYS; SYNC_SCHEMA_VERSION (constants.js); Zod SyncPayloadSchema
                           (utils/schemas.js); payload build/apply; File System Access API push/pull/import/download
   utils/
-    storage.js          — re-exports from db.js (LS, storageKey, Gemini key, date helpers, getMaxDateSeen)
     db.js               — TinyBase store, bootDb(), IDB persister (ritmol_tb / ritmol_tb_dev),
-                          idbGet/idbSet/… shims; getMaxDateSeen; LS for non-IDB keys (theme, etc.);
-                          one-shot migration from legacy IDB store (runs inside bootDb)
+                          idbGet/idbSet/… shims; LS, storageKey, Gemini key, date helpers, getMaxDateSeen;
+                          LS for non-IDB keys (theme, etc.); one-shot migration from legacy IDB store (runs inside bootDb)
     state.js            — initState(), state shape
     xp.js               — XP/level/rank math, session XP calc
     schemas.js          — Zod schemas (profile, habits, tasks, SyncPayloadSchema for sync, etc.)

@@ -3,7 +3,7 @@ import { ACHIEVEMENT_RARITIES, SESSION_TYPES, FOCUS_LEVELS, STYLE_CSS } from "./
 import { calcSessionXP } from "./utils/xp";
 import GeometricCorners from "./GeometricCorners";
 import { primaryBtn, inputStyle } from "./Onboarding";
-import { sanitizeForDisplay } from "./utils/storage";
+import { sanitizeForDisplay } from "./utils/db";
 
 export function Modal({ children, onClose }) {
   return (

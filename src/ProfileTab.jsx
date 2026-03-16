@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import { useAppContext } from "./context/AppContext";
-import { todayUTC, localDateFromUTC, getGeminiApiKey, setGeminiApiKey, getMaxDateSeen } from "./utils/storage";
+import { todayUTC, localDateFromUTC, getGeminiApiKey, setGeminiApiKey, getMaxDateSeen } from "./utils/db";
 import { ACHIEVEMENT_RARITIES, STYLE_CSS, DAILY_TOKEN_LIMIT, RANKS, sampleGachaRarity } from "./constants";
 import { DATA_DISCLOSURE_SEEN_KEY, THEME_KEY } from "./constants";
 import { getLevelProgress } from "./utils/xp";

@@ -12,7 +12,7 @@ import { useDailyLogin } from "./hooks/useDailyLogin";
 import { AppContext } from "./context/AppContext";
 
 // Utils
-import { LS, storageKey, IS_DEV, getGeminiApiKey, setGeminiApiKey, todayUTC, localDateFromUTC, APP_ICON_URL } from "./utils/storage";
+import { LS, storageKey, IS_DEV, getGeminiApiKey, setGeminiApiKey, todayUTC, localDateFromUTC, APP_ICON_URL } from "./utils/db";
 import { getLevel, getRank, getXpPerLevel, getGachaCost, getStreakShieldCost, calcSessionXP } from "./utils/xp";
 import { THEME_KEY, SESSION_TYPES, DEFAULT_XP_PER_LEVEL, DEFAULT_GACHA_COST, DEFAULT_STREAK_SHIELD_COST } from "./constants";
 import { buildSystemPrompt } from "./api/systemPrompt";

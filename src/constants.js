@@ -21,14 +21,6 @@ export const DEFAULT_XP_PER_LEVEL = 1000;
 export const DEFAULT_GACHA_COST = 100;
 export const DEFAULT_STREAK_SHIELD_COST = 300;
 
-// Client-enforced rarity probabilities for gacha pulls.
-export const GACHA_RARITY_WEIGHTS = Object.freeze({
-  common: 60,
-  rare: 25,
-  epic: 12,
-  legendary: 3,
-});
-
 /** Sealed function: weights captured in closure, not patchable via DevTools.
  * Uses crypto.getRandomValues so the roll value is generated atomically — no observable
  * intermediate state for a debugger breakpoint to replay until legendary. */
