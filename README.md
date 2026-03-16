@@ -2,7 +2,20 @@
 
 A gamified life companion PWA for STEM university students. Solo Leveling RPG aesthetic. Black and white. No server — runs entirely in your browser. **Stack:** React, Vite; data lives in **TinyBase** (in-memory store persisted to IndexedDB via `utils/db.js`). Validation uses **Zod**. Application logic and UI are split across modular `src/` files (root: **`src/App.jsx`**). Sync across devices by **manually reading and writing a single JSON file** with [Syncthing](https://syncthing.net/) via the browser File System Access API, or optionally via **Dropbox**. **Manual sync only** — do not run two instances (e.g. two tabs or two devices) at the same time; there is no conflict resolution.
 
-**Using the app (static site):** You don't need to clone this repo — just open the deployed static site (e.g. GitHub Pages). The app expects a single JSON data file in the same format as **`example-data/ritmol-data.json`** (with `_schemaVersion`, `geminiKey`, and your app data). In the app, go to **Profile → Settings → SYNCTHING SYNC** (or Dropbox) to link or import that file.
+**Quick start (static site):** Open the deployed site → **Profile → Settings → SYNCTHING SYNC** (or Dropbox) → link or import `ritmol-data.json` (format: `example-data/ritmol-data.json`) → **Pull ↓**. Add `geminiKey` to your JSON file for AI features.
+
+## Contents
+
+- [Features](#features)
+- [Project structure](#project-structure)
+- [Architecture](#architecture)
+- [Design Philosophy & Security Model](#design-philosophy--security-model)
+- [Gemini API Key](#gemini-api-key)
+- [Dropbox sync setup](#dropbox-sync-setup-optional)
+- [Sync: Syncthing + File System Access API](#sync-syncthing--file-system-access-api)
+- [Using the static site](#using-the-static-site-no-clone)
+- [Local development](#playing-with-the-repo-local-dev)
+- [Deploying](#deploying-your-own-static-site-optional)
 
 ### Features
 
@@ -240,7 +253,7 @@ After a Pull, the key lives in `sessionStorage` for the lifetime of the tab. It 
 
 RITMOL can sync via Dropbox instead of (or in addition to) the File System Access API. Dropbox uses OAuth PKCE — no app secret is needed. The **App Key** is built into the JS bundle at build time via `VITE_DROPBOX_APP_KEY`.
 
-**One key for all users.** The App Key identifies *your app* to Dropbox, not individual users. You set it once when you build and deploy; everyone who uses your deployed site uses that same key to connect *their* Dropbox. Each user authorizes your app and gets their own OAuth tokens stored in their browser — you never see their data or traffic. Storing `VITE_DROPBOX_APP_KEY` as a **GitHub Actions secret** (Settings → Secrets and variables → Actions) is the right way to enable Dropbox on the deployed site: the value is only used at build time and is not in the repo or logs.
+**One key for all users.** The App Key identifies *your app* to Dropbox, not individual users. You set it once when you build and deploy; everyone who uses your deployed site uses that same key to connect *their* Dropbox. Each user authorizes your app and gets their own OAuth tokens stored in their browser — you never see their data or traffic. Add `VITE_DROPBOX_APP_KEY` as a **GitHub Actions variable** (Settings → Secrets and variables → Actions → Variables) to enable Dropbox on the deployed site: the value is only used at build time and is not in the repo or logs.
 
 **Where:** [https://www.dropbox.com/developers/apps](https://www.dropbox.com/developers/apps)
 
@@ -269,7 +282,7 @@ RITMOL can sync via Dropbox instead of (or in addition to) the File System Acces
 9. Do **not** copy or store the App secret — RITMOL uses PKCE and does not need it.
 10. Click **Save** on the Dropbox app settings page.
 
-**For deployment:** If you deploy via GitHub Actions and want Dropbox to work, add `VITE_DROPBOX_APP_KEY` as a repository secret and pass it in the Build step's `env` block in `.github/workflows/deploy.yml`.
+**For deployment:** If you deploy via GitHub Actions and want Dropbox to work, add `VITE_DROPBOX_APP_KEY` as a repository variable (Settings → Secrets and variables → Actions → Variables). The workflow at `.github/workflows/deploy.yml` already passes it to the build step.
 
 **Verify:** After deploying, go to **Profile → Settings** and click **CONNECT DROPBOX**. You should be redirected to Dropbox's authorization page and then back to the app with a success message.
 
@@ -343,5 +356,5 @@ To test the production build locally: `npm run build` then `npm run preview`.
 If you want to deploy your own copy (e.g. your own GitHub Pages):
 
 1. Push the repo to GitHub and enable **Pages** from **GitHub Actions** (Settings → Pages → Source: GitHub Actions).
-2. The workflow at `.github/workflows/deploy.yml` builds and deploys `dist` on every push to `main`. No secrets are required for basic deployment — the built app is just static files; all config is loaded by users from their own JSON file. If you want **Dropbox sync** to work on the deployed site, add `VITE_DROPBOX_APP_KEY` as a repository secret and pass it in the Build step's `env` block (see [Dropbox sync setup](#dropbox-sync-setup-optional) above).
+2. The workflow at `.github/workflows/deploy.yml` builds and deploys `dist` on every push to `main`. No variables or secrets are required for basic deployment — the built app is just static files; all config is loaded by users from their own JSON file. If you want **Dropbox sync** to work on the deployed site, add `VITE_DROPBOX_APP_KEY` as a repository variable (see [Dropbox sync setup](#dropbox-sync-setup-optional) above).
 3. The app is served at `https://YOUR_USERNAME.github.io/REPO_NAME/` (or your custom domain). Users open that URL and link/import their `ritmol-data.json` as above.
