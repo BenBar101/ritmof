@@ -103,7 +103,7 @@ Respond ONLY with JSON array:
           habitsInitialized: true,
         }));
         if (!mounted) return;
-        showBanner("RITMOL has initialized your protocol stack.", "success");
+        showBanner("RITMOL has initialized your habits.", "success");
       })
       .catch((err) => {
         // Fix [H-2]: a transient network error or API outage previously set
@@ -142,13 +142,13 @@ Respond ONLY with JSON array:
 
   function deleteHabit(id) {
     setState((s) => ({ ...s, habits: s.habits.filter((h) => h.id !== id) }));
-    showBanner("Habit protocol removed.", "info");
+    showBanner("Habit removed.", "info");
   }
 
   return (
     <div style={{ padding: "16px", display: "flex", flexDirection: "column", gap: "20px" }}>
       <div style={{ fontFamily: "'Share Tech Mono', monospace", borderBottom: "3px solid #fff", paddingBottom: "16px" }}>
-        <div style={{ fontSize: "16px", color: "#fff", letterSpacing: "3px", fontWeight: "bold" }}>[ PROTOCOL LOG ]</div>
+        <div style={{ fontSize: "16px", color: "#fff", letterSpacing: "3px", fontWeight: "bold" }}>[ HABIT LOG ]</div>
         <div style={{ fontSize: "28px", fontWeight: "bold", marginTop: "4px" }}>HABITS</div>
         <div style={{ fontSize: "15px", color: "#fff", marginTop: "4px" }}>
           {todayLog.length}/{state.habits.length} completed today

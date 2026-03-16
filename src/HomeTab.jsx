@@ -1,10 +1,53 @@
 import { useState, useEffect, useRef } from "react";
 import { useAppContext } from "./context/AppContext";
-import { localDateFromUTC, todayUTC, nowHour, sanitizeForDisplay } from "./utils/storage";
-import { DAILY_TOKEN_LIMIT } from "./constants";
+import { localDateFromUTC, nowHour, sanitizeForDisplay } from "./utils/storage";
+
+// ── HUD panel wrapper ──────────────────────────────────────────
+// Gives every card a Solo Leveling–style chamfered corner with a
+// subtle notch cut from the top-right, matching the manhwa aesthetic.
+function HudPanel({ children, style = {}, accent = false }) {
+  const clipPath = "polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 0 100%)";
+  return (
+    <div style={{
+      position: "relative",
+      border: accent ? "2px solid #fff" : "1.5px solid rgba(255,255,255,0.55)",
+      background: "var(--hud-bg, rgba(0,0,0,0.85))",
+      clipPath,
+      padding: "14px 16px",
+      ...style,
+    }}>
+      {/* chamfer accent line */}
+      <div style={{
+        position: "absolute", top: 0, right: 0, width: "10px", height: "10px",
+        borderBottom: accent ? "2px solid #fff" : "1.5px solid rgba(255,255,255,0.55)",
+        borderLeft: accent ? "2px solid #fff" : "1.5px solid rgba(255,255,255,0.55)",
+        background: "transparent",
+        pointerEvents: "none",
+      }} />
+      {children}
+    </div>
+  );
+}
+
+// ── Section label ──────────────────────────────────────────────
+function SectionLabel({ children }) {
+  return (
+    <div style={{
+      fontFamily: "'Share Tech Mono', monospace",
+      fontSize: "10px",
+      letterSpacing: "3px",
+      color: "rgba(255,255,255,0.5)",
+      textTransform: "uppercase",
+      marginBottom: "6px",
+      paddingLeft: "2px",
+    }}>
+      {children}
+    </div>
+  );
+}
 
 export default function HomeTab() {
-  const { state, setState, rank, dailyQuote, logHabit, showBanner, setTab, profile, theme } = useAppContext();
+  const { state, setState, rank, dailyQuote, logHabit, showBanner, setTab, profile, theme, setModal } = useAppContext();
   const todayLog = state.habitLog[localDateFromUTC()] || [];
   const totalHabits = state.habits.length;
   const doneHabits = todayLog.length;
@@ -21,218 +64,251 @@ export default function HomeTab() {
   const hour = nowHour();
   const greeting = hour < 12 ? "GOOD MORNING" : hour < 17 ? "GOOD AFTERNOON" : "GOOD EVENING";
 
-  const pendingTasks = (state.tasks || []).filter((t) => !t.done).length;
+  const pendingTasks = (state.tasks || []).filter((t) => !t.done);
   const totalAchievements = (state.achievements || []).length;
 
-  return (
-    <div style={{ padding: "16px", display: "flex", flexDirection: "column", gap: "16px" }}>
+  const isLight = theme === "light";
+  const hudBg = isLight ? "rgba(240,240,240,0.9)" : "rgba(0,0,0,0.85)";
+  const textPrimary = isLight ? "#000" : "#fff";
+  const textDim = isLight ? "rgba(0,0,0,0.55)" : "rgba(255,255,255,0.55)";
+  const borderAccent = isLight ? "#000" : "#fff";
+  const borderMid = isLight ? "rgba(0,0,0,0.55)" : "rgba(255,255,255,0.55)";
 
-      {/* Greeting */}
-      <div style={{ borderBottom: "3px solid #fff", paddingBottom: "16px" }}>
-        <div style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: "16px", color: "#fff", letterSpacing: "3px", fontWeight: "bold" }}>[ {greeting} ]</div>
-        <div style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: "clamp(24px, 8vw, 36px)", fontWeight: "bold", marginTop: "4px", letterSpacing: "2px" }}>
+  // inject CSS variable for HudPanel
+  const hudStyle = { "--hud-bg": hudBg } ;
+
+  return (
+    <div style={{ padding: "14px", display: "flex", flexDirection: "column", gap: "12px", ...hudStyle }}>
+
+      {/* ── IDENTITY PANEL ──────────────────────────────────── */}
+      <div style={{
+        borderBottom: `2px solid ${borderAccent}`,
+        paddingBottom: "14px",
+        fontFamily: "'Share Tech Mono', monospace",
+      }}>
+        <div style={{ fontSize: "10px", letterSpacing: "3px", color: textDim, marginBottom: "4px" }}>
+          {greeting}
+        </div>
+        <div style={{ fontSize: "clamp(22px, 7vw, 32px)", fontWeight: "bold", letterSpacing: "2px", color: textPrimary }}>
           {profile?.name || "Hunter"}
         </div>
-        <div style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: "18px", color: "#fff", marginTop: "4px", letterSpacing: "2px", fontWeight: "bold" }}>
+        <div style={{ fontSize: "14px", fontWeight: "bold", letterSpacing: "2px", color: textPrimary, marginTop: "2px" }}>
           {rank.badge} {rank.decor} {rank.title}
         </div>
+
+        {/* Quote inline under rank — no separate panel */}
+        {dailyQuote && (
+          <div style={{ marginTop: "10px", paddingTop: "10px", borderTop: `1px solid ${borderMid}` }}>
+            <div style={{
+              fontFamily: "'IM Fell English', serif",
+              fontSize: "14px", fontStyle: "italic",
+              color: textDim, lineHeight: "1.6",
+            }}>
+              &ldquo;{sanitizeForDisplay(dailyQuote.quote ?? "", 300)}&rdquo;
+              <span style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: "11px", marginLeft: "8px", fontStyle: "normal" }}>
+                — {sanitizeForDisplay(dailyQuote.author ?? "", 60)}
+              </span>
+            </div>
+          </div>
+        )}
       </div>
 
-      {/* Daily quote */}
-      {dailyQuote && (
-        <div style={{
-          background: "#000",
-          border: "2px solid #fff", padding: "20px",
-        }}>
-          <div style={{ fontFamily: "'IM Fell English', serif", fontSize: "18px", fontStyle: "italic", color: "#fff", lineHeight: "1.7" }}>
-            &ldquo;{sanitizeForDisplay(dailyQuote.quote ?? "", 500)}&rdquo;
-          </div>
-          <div style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: "16px", color: "#fff", marginTop: "12px" }}>
-            — {sanitizeForDisplay(dailyQuote.author ?? "", 100)}
-          </div>
-        </div>
-      )}
-
-      {/* Exam warning */}
+      {/* ── EXAM WARNING ────────────────────────────────────── */}
       {upcomingExams.map((exam) => {
         const rawDiff = (new Date(exam.start) - Date.now()) / 86400000;
         const days = rawDiff <= 0 ? 0 : Math.ceil(rawDiff);
         if (rawDiff < -0.05) return null;
         const safeTitle = sanitizeForDisplay(exam.title ?? "", 200);
         return (
-          <div key={exam.id} style={{
-            border: "2px solid #fff", padding: "14px",
-            fontFamily: "'Share Tech Mono', monospace",
-            background: "#000",
-          }}>
-            <div style={{ fontSize: "16px", color: "#fff", letterSpacing: "2px", marginBottom: "4px", fontWeight: "bold" }}>[ EXAM WARNING ]</div>
-            <div style={{ fontSize: "18px", marginTop: "4px", fontWeight: "bold" }}>⚠ {safeTitle}</div>
-            <div style={{ fontSize: "14px", color: "#fff", marginTop: "4px" }}>T-{days} days. Prepare accordingly.</div>
-          </div>
+          <HudPanel key={exam.id} accent style={{ "--hud-bg": hudBg }}>
+            <SectionLabel>⚠ EXAM WARNING</SectionLabel>
+            <div style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: "15px", fontWeight: "bold", color: textPrimary }}>
+              {safeTitle}
+            </div>
+            <div style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: "12px", color: textDim, marginTop: "3px" }}>
+              T-{days} days · Prepare accordingly
+            </div>
+          </HudPanel>
         );
       })}
 
-      {/* Stats row */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: "8px" }}>
+      {/* ── STATS ROW ───────────────────────────────────────── */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "6px" }}>
         {[
           { label: "HABITS", value: `${doneHabits}/${totalHabits}` },
-          { label: "TASKS", value: pendingTasks },
+          { label: "TASKS", value: pendingTasks.length },
           { label: "STREAK", value: `${state.streak}d` },
           { label: "ACHIEV", value: totalAchievements },
         ].map((s) => (
           <div key={s.label} style={{
-            border: "2px solid #fff", padding: "12px", textAlign: "center",
+            border: `1.5px solid ${borderMid}`,
+            padding: "10px 6px", textAlign: "center",
             fontFamily: "'Share Tech Mono', monospace",
+            clipPath: "polygon(0 0, calc(100% - 6px) 0, 100% 6px, 100% 100%, 0 100%)",
+            background: hudBg,
+            position: "relative",
           }}>
-            <div style={{ fontSize: "24px", fontWeight: "bold" }}>{s.value}</div>
-            <div style={{ fontSize: "12px", color: "#fff", letterSpacing: "2px", marginTop: "4px" }}>{s.label}</div>
+            <div style={{ fontSize: "20px", fontWeight: "bold", color: textPrimary }}>{s.value}</div>
+            <div style={{ fontSize: "9px", color: textDim, letterSpacing: "1.5px", marginTop: "2px" }}>{s.label}</div>
           </div>
         ))}
       </div>
 
-      {/* Token usage */}
-      <TokenUsageBar usage={state.tokenUsage} />
-
-      {/* Habit ring */}
-      <div style={{ display: "flex", alignItems: "center", gap: "16px", border: "2px solid #fff", padding: "16px" }}>
-        <HabitRing done={doneHabits} total={totalHabits} theme={theme} />
-        <div style={{ fontFamily: "'Share Tech Mono', monospace" }}>
-          <div style={{ fontSize: "16px", color: "#fff", fontWeight: "bold" }}>[ TODAY&apos;S PROTOCOLS ]</div>
-          <div style={{ fontSize: "26px", fontWeight: "bold" }}>{doneHabits} / {totalHabits}</div>
-          <div style={{ fontSize: "14px", color: "#fff" }}>{totalHabits - doneHabits} remaining</div>
+      {/* ── LOG STUDY SESSION CTA ───────────────────────────── */}
+      <button
+        type="button"
+        onClick={() => setModal({ type: "session_log" })}
+        style={{
+          display: "flex", alignItems: "center", gap: "12px",
+          border: `1.5px solid ${borderMid}`,
+          background: hudBg,
+          padding: "12px 16px",
+          cursor: "pointer",
+          clipPath: "polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 0 100%)",
+          textAlign: "left", width: "100%",
+        }}
+      >
+        <div style={{
+          width: "36px", height: "36px", flexShrink: 0,
+          border: `1.5px solid ${borderAccent}`,
+          display: "flex", alignItems: "center", justifyContent: "center",
+          fontFamily: "'Share Tech Mono', monospace", fontSize: "18px",
+          color: textPrimary, background: isLight ? "#000" : "#fff",
+          clipPath: "polygon(0 0, calc(100% - 6px) 0, 100% 6px, 100% 100%, 0 100%)",
+        }}>
+          <span style={{ color: isLight ? "#fff" : "#000" }}>▶</span>
         </div>
-      </div>
-
-      {/* Daily goal */}
-      {state.dailyGoal && (
-        <div style={{ border: "2px solid #fff", padding: "16px", fontFamily: "'Share Tech Mono', monospace" }}>
-          <div style={{ fontSize: "16px", color: "#fff", letterSpacing: "2px", marginBottom: "6px", fontWeight: "bold" }}>[ DAILY OBJECTIVE ]</div>
-          <div style={{ fontSize: "17px", marginTop: "4px", lineHeight: "1.6" }}>
-            {sanitizeForDisplay(state.dailyGoal ?? "", 200)}
+        <div>
+          <div style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: "13px", fontWeight: "bold", letterSpacing: "1.5px", color: textPrimary }}>
+            LOG STUDY SESSION
+          </div>
+          <div style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: "11px", color: textDim, marginTop: "2px" }}>
+            Lecture · Tirgul · Homework · Prep → earn XP
           </div>
         </div>
-      )}
+      </button>
 
-      {/* Daily missions */}
-      {state.dailyMissions && (
-        <div style={{ border: "2px solid #fff", padding: "12px" }}>
-          <div style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: "14px", color: "#fff", letterSpacing: "2px", marginBottom: "12px", fontWeight: "bold" }}>
-            DAILY MISSIONS
-          </div>
-          {state.dailyMissions.map((m) => (
-            <div key={m.id} style={{
-              display: "flex", justifyContent: "space-between", alignItems: "center",
-              padding: "12px 0", borderBottom: "2px solid #fff",
-              fontFamily: "'Share Tech Mono', monospace", fontSize: "16px",
-              color: "#fff",
-              textDecoration: m.done ? "line-through" : "none",
-            }}>
-              <span>{m.done ? "[ ✓ ]" : "[ _ ]"} {m.desc}</span>
-              <span style={{ color: "#fff", fontWeight: "bold" }}>+{m.xp} XP</span>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* Quick habits */}
-      <div>
-        <div style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: "14px", color: "#fff", letterSpacing: "2px", marginBottom: "12px", fontWeight: "bold" }}>
-          QUICK PROTOCOLS
-        </div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(90px, 1fr))", gap: "6px" }}>
-          {state.habits.slice(0, 6).map((h) => {
-            const done = todayLog.includes(h.id);
-            return (
+      {/* ── OPEN TASKS (up to 3) ────────────────────────────── */}
+      {pendingTasks.length > 0 && (
+        <div>
+          <SectionLabel>OPEN TASKS</SectionLabel>
+          <div style={{ display: "flex", flexDirection: "column", gap: "5px" }}>
+            {pendingTasks.slice(0, 3).map((t) => (
               <button
-                key={h.id}
-                onClick={(e) => !done && logHabit(h.id, e)}
-                data-done={done ? "true" : undefined}
+                type="button"
+                key={t.id}
+                onClick={() => setTab("tasks")}
                 style={{
-                  padding: "14px 4px", border: done ? "3px solid #fff" : "2px solid #fff",
-                  background: done ? "#fff" : "#000",
-                  color: done ? "#000" : "#fff",
-                  fontFamily: "'Share Tech Mono', monospace", fontSize: "16px",
-                  minHeight: "64px", cursor: done ? "default" : "pointer",
-                  display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
-                  gap: "4px",
+                  display: "flex", alignItems: "center", gap: "10px",
+                  border: `1.5px solid ${borderMid}`,
+                  background: hudBg, padding: "10px 12px",
+                  cursor: "pointer", textAlign: "left", width: "100%",
+                  clipPath: "polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 0 100%)",
                 }}
               >
-                <div style={{ fontSize: "22px" }}>{h.icon}</div>
-                <div style={{ fontSize: "16px", marginTop: "4px", fontWeight: "bold" }}>{h.label.split(" ").slice(0, 2).join(" ")}</div>
+                <div style={{
+                  width: "8px", height: "8px", border: `1.5px solid ${borderAccent}`,
+                  flexShrink: 0, background: "transparent",
+                }} />
+                <div style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: "13px", color: textPrimary, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {sanitizeForDisplay(t.title ?? t.text ?? "", 80)}
+                </div>
+                <div style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: "10px", color: textDim, flexShrink: 0 }}>›</div>
               </button>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* Active timers */}
-      {(state.activeTimers || []).filter((t) => typeof t.endsAt === "number" && t.endsAt > Date.now() + 1000).length > 0 && (
-        <div style={{ border: "2px solid #fff", padding: "12px" }}>
-          <div style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: "14px", color: "#fff", letterSpacing: "2px", marginBottom: "12px", fontWeight: "bold" }}>
-            ACTIVE TIMERS
+            ))}
+            {pendingTasks.length > 3 && (
+              <button type="button" onClick={() => setTab("tasks")} style={{
+                fontFamily: "'Share Tech Mono', monospace", fontSize: "11px",
+                color: textDim, letterSpacing: "2px", background: "none",
+                border: "none", cursor: "pointer", textAlign: "left", padding: "4px 2px",
+              }}>
+                +{pendingTasks.length - 3} MORE  →
+              </button>
+            )}
           </div>
-          {(state.activeTimers || []).filter((t) => typeof t.endsAt === "number" && t.endsAt > Date.now() + 1000).map((timer) => (
-            <CountdownTimer
-              key={timer.id}
-              timer={timer}
-              onExpire={() => {
-                setState((s) => ({ ...s, activeTimers: s.activeTimers.filter((t) => t.id !== timer.id) }));
-                const safeLabel = sanitizeForDisplay(timer.label ?? "", 200);
-                showBanner(`Timer complete: ${safeLabel}`, "success");
-              }}
-            />
-          ))}
         </div>
       )}
 
-      {/* Quick action chips */}
-      <div style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
-        {[
-          { label: "→ RITMOL", action: () => setTab("chat") },
-          { label: "⊞ TASKS", action: () => setTab("tasks") },
-          { label: "◉ HABITS", action: () => setTab("habits") },
-        ].map((c) => (
-          <button type="button" key={c.label} onClick={c.action} style={{
-            padding: "12px 18px", border: "2px solid #fff",
-            background: "transparent", color: "#fff",
-            fontFamily: "'Share Tech Mono', monospace", fontSize: "14px",
-            letterSpacing: "1px", cursor: "pointer", minHeight: "48px",
-          }}>
-            {c.label}
-          </button>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function TokenUsageBar({ usage }) {
-  if (!usage) return null;
-  if (typeof usage.date !== "string") return null;
-  const DISPLAY_LIMIT = DAILY_TOKEN_LIMIT;
-  const isToday = usage?.date === todayUTC();
-  const tokens = isToday ? (usage?.tokens || 0) : 0;
-  const pct = Math.min(100, (tokens / DISPLAY_LIMIT) * 100);
-  const pctDisplay = pct < 0.1 ? "<0.1" : pct.toFixed(1);
-  const barColor = "#fff";
-
-  return (
-    <div style={{ border: "2px solid #fff", padding: "12px 16px", fontFamily: "'Share Tech Mono', monospace" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", fontSize: "16px", color: "#fff", marginBottom: "8px", fontWeight: "bold", letterSpacing: "1px" }}>
-        <span>[ NEURAL ENERGY ]</span>
-        <span>{pctDisplay}% / {(DISPLAY_LIMIT / 1000).toFixed(0)}k</span>
-      </div>
-      <div style={{ height: "8px", background: "#555" }}>
-        <div style={{ width: `${pct}%`, height: "100%", background: barColor }} />
-      </div>
-      <div style={{ fontSize: "16px", color: "#fff", marginTop: "6px", fontFamily: "'Share Tech Mono', monospace" }}>
-        {tokens.toLocaleString()} TOKENS · RESETS MIDNIGHT
-      </div>
-      {!isToday && (
-        <div style={{ fontSize: "12px", color: "#fff", marginTop: "4px", fontWeight: "bold" }}>
-          ↺ Budget reset for today
+      {/* ── DAILY MISSIONS ──────────────────────────────────── */}
+      {state.dailyMissions && (
+        <div>
+          <SectionLabel>DAILY MISSIONS</SectionLabel>
+          <HudPanel style={{ padding: "10px 14px", "--hud-bg": hudBg }}>
+            {state.dailyMissions.map((m, i) => (
+              <div key={m.id} style={{
+                display: "flex", justifyContent: "space-between", alignItems: "center",
+                padding: "9px 0",
+                borderBottom: i < state.dailyMissions.length - 1 ? `1px solid ${borderMid}` : "none",
+                fontFamily: "'Share Tech Mono', monospace", fontSize: "12px",
+                color: m.done ? textDim : textPrimary,
+                textDecoration: m.done ? "line-through" : "none",
+              }}>
+                <span>
+                  <span style={{ marginRight: "8px", fontSize: "10px" }}>{m.done ? "✓" : "○"}</span>
+                  {m.desc}
+                </span>
+                <span style={{ color: m.done ? textDim : textPrimary, fontWeight: "bold", marginLeft: "12px", flexShrink: 0 }}>+{m.xp}</span>
+              </div>
+            ))}
+          </HudPanel>
         </div>
       )}
+
+      {/* ── HABITS RING ─────────────────────────────────────── */}
+      <div>
+        <SectionLabel>TODAY&apos;S HABITS</SectionLabel>
+        <HudPanel accent style={{ "--hud-bg": hudBg }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
+            <HabitRing done={doneHabits} total={totalHabits} theme={theme} />
+            <div style={{ fontFamily: "'Share Tech Mono', monospace" }}>
+              <div style={{ fontSize: "24px", fontWeight: "bold", color: textPrimary }}>{doneHabits} / {totalHabits}</div>
+              <div style={{ fontSize: "11px", color: textDim, marginTop: "2px" }}>
+                {totalHabits - doneHabits > 0 ? `${totalHabits - doneHabits} remaining` : "All complete ✓"}
+              </div>
+            </div>
+            <button type="button" onClick={() => setTab("habits")} style={{
+              marginLeft: "auto", fontFamily: "'Share Tech Mono', monospace",
+              fontSize: "11px", color: textDim, background: "none", border: "none",
+              cursor: "pointer", letterSpacing: "1px",
+            }}>
+              VIEW ALL ›
+            </button>
+          </div>
+        </HudPanel>
+      </div>
+
+      {/* ── DAILY OBJECTIVE ─────────────────────────────────── */}
+      {state.dailyGoal && (
+        <HudPanel style={{ "--hud-bg": hudBg }}>
+          <SectionLabel>DAILY OBJECTIVE</SectionLabel>
+          <div style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: "13px", color: textPrimary, lineHeight: "1.6" }}>
+            {sanitizeForDisplay(state.dailyGoal ?? "", 200)}
+          </div>
+        </HudPanel>
+      )}
+
+      {/* ── ACTIVE TIMERS ───────────────────────────────────── */}
+      {(state.activeTimers || []).filter((t) => typeof t.endsAt === "number" && t.endsAt > Date.now() + 1000).length > 0 && (
+        <div>
+          <SectionLabel>ACTIVE TIMERS</SectionLabel>
+          <HudPanel style={{ "--hud-bg": hudBg }}>
+            {(state.activeTimers || []).filter((t) => typeof t.endsAt === "number" && t.endsAt > Date.now() + 1000).map((timer) => (
+              <CountdownTimer
+                key={timer.id}
+                timer={timer}
+                textPrimary={textPrimary}
+                borderMid={borderMid}
+                onExpire={() => {
+                  setState((s) => ({ ...s, activeTimers: s.activeTimers.filter((t) => t.id !== timer.id) }));
+                  const safeLabel = sanitizeForDisplay(timer.label ?? "", 200);
+                  showBanner(`Timer complete: ${safeLabel}`, "success");
+                }}
+              />
+            ))}
+          </HudPanel>
+        </div>
+      )}
+
     </div>
   );
 }
@@ -261,7 +337,7 @@ function HabitRing({ done, total, theme }) {
   );
 }
 
-function CountdownTimer({ timer, onExpire }) {
+function CountdownTimer({ timer, onExpire, textPrimary = "#fff", borderMid = "rgba(255,255,255,0.55)" }) {
   const [remaining, setRemaining] = useState(Math.max(0, timer.endsAt - Date.now()));
   // Keep onExpire in a ref so the interval callback always calls the latest version
   // without needing to be restarted when the parent re-renders with a new inline function.
@@ -292,9 +368,9 @@ function CountdownTimer({ timer, onExpire }) {
   const mins = Math.floor(remaining / 60000);
   const secs = Math.floor((remaining % 60000) / 1000);
   return (
-    <div style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: "16px", padding: "10px 0", display: "flex", justifyContent: "space-between", borderBottom: "2px solid #fff" }}>
-      <span>{sanitizeForDisplay(timer.emoji ?? "", 2)} {sanitizeForDisplay(timer.label ?? "", 200)}</span>
-      <span style={{ color: "#fff", fontWeight: "bold" }}>{mins}:{secs.toString().padStart(2, "0")}</span>
+    <div style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: "13px", padding: "9px 0", display: "flex", justifyContent: "space-between", borderBottom: `1px solid ${borderMid}` }}>
+      <span style={{ color: textPrimary }}>{sanitizeForDisplay(timer.emoji ?? "", 2)} {sanitizeForDisplay(timer.label ?? "", 200)}</span>
+      <span style={{ color: textPrimary, fontWeight: "bold" }}>{mins}:{secs.toString().padStart(2, "0")}</span>
     </div>
   );
 }

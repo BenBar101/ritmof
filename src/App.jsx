@@ -226,29 +226,35 @@ function MissingKeyGate({ connectDropbox, dropboxConnected, pickSyncFile, syncPu
 // ─────────────────────────────────────────────────────────────
 // SYNCING SCREEN — E-ink safe static loading
 // ─────────────────────────────────────────────────────────────
-function SyncingScreen() {
+function SyncingScreen({ theme = "dark" }) {
+  const isLight = theme === "light";
+  const bg     = isLight ? "#f0f0f0" : "#000";
+  const text   = isLight ? "#000"    : "#fff";
+  const border = isLight ? "rgba(0,0,0,0.35)"   : "rgba(255,255,255,0.35)";
+  const track  = isLight ? "rgba(0,0,0,0.12)"   : "rgba(255,255,255,0.12)";
   return (
     <div style={{
       minHeight: "100vh", display: "flex", flexDirection: "column",
       alignItems: "center", justifyContent: "center",
-      background: "#000", fontFamily: "'Share Tech Mono', monospace",
-      border: "3px solid #fff",
+      background: bg, fontFamily: "'Share Tech Mono', monospace",
     }}>
-      <div style={{ fontSize: "14px", color: "#fff", letterSpacing: "4px", marginBottom: "24px" }}>
+      <div style={{ fontSize: "11px", color: text, letterSpacing: "4px", marginBottom: "32px", opacity: 0.5 }}>
         RITMOL
       </div>
       <div style={{
-        fontSize: "32px", fontWeight: "bold", color: "#fff",
-        letterSpacing: "4px", marginBottom: "16px",
-        border: "3px solid #fff", padding: "24px 40px",
+        fontSize: "13px", fontWeight: "bold", color: text,
+        letterSpacing: "3px", marginBottom: "24px",
+        border: `1.5px solid ${border}`,
+        padding: "20px 36px",
+        clipPath: "polygon(0 0, calc(100% - 12px) 0, 100% 12px, 100% 100%, 0 100%)",
       }}>
         LOADING...
       </div>
-      <div style={{ fontSize: "16px", color: "#fff", letterSpacing: "3px", marginTop: "16px", fontWeight: "bold" }}>
+      <div style={{
+        width: "120px", height: "2px", background: track,
+      }} />
+      <div style={{ fontSize: "10px", color: text, letterSpacing: "3px", marginTop: "20px", opacity: 0.45 }}>
         INITIALISING SYSTEM
-      </div>
-      <div style={{ fontSize: "16px", color: "#fff", letterSpacing: "2px", marginTop: "8px" }}>
-        PLEASE WAIT
       </div>
     </div>
   );
@@ -437,7 +443,7 @@ export default function App() {
   if (!idbReady || state === null) {
     return (
       <ErrorBoundary>
-        <SyncingScreen />
+        <SyncingScreen theme={theme} />
       </ErrorBoundary>
     );
   }
@@ -508,7 +514,7 @@ export default function App() {
     if (syncStatus === "syncing" || isReloading) {
       return (
         <ErrorBoundary>
-          <SyncingScreen />
+          <SyncingScreen theme={theme} />
         </ErrorBoundary>
       );
     }
@@ -531,7 +537,7 @@ export default function App() {
   if (!profile && !showOnboarding) {
     return (
       <ErrorBoundary>
-        <SyncingScreen />
+        <SyncingScreen theme={theme} />
       </ErrorBoundary>
     );
   }
@@ -560,18 +566,28 @@ export default function App() {
               position: "fixed",
               inset: 0,
               zIndex: 9999,
-              background: "#000",
+              background: theme === "light" ? "rgba(255,255,255,0.96)" : "rgba(0,0,0,0.96)",
               display: "flex",
               flexDirection: "column",
               alignItems: "center",
               justifyContent: "center",
               fontFamily: "'Share Tech Mono', monospace",
               pointerEvents: "all",
-              border: "3px solid #fff",
             }}
           >
-            <div style={{ fontSize: "16px", color: "#fff", letterSpacing: "3px", fontWeight: "bold" }}>SYNC COMPLETE</div>
-            <div style={{ fontSize: "24px", color: "#fff", marginTop: "12px", fontWeight: "bold", fontFamily: "'Share Tech Mono', monospace", letterSpacing: "3px" }}>[ RELOADING... ]</div>
+            <div style={{ fontSize: "11px", color: theme === "light" ? "#000" : "#fff", letterSpacing: "3px", fontWeight: "bold", opacity: 0.7 }}>SYNC COMPLETE</div>
+            <div style={{ fontSize: "16px", color: theme === "light" ? "#000" : "#fff", marginTop: "10px", fontWeight: "bold", letterSpacing: "3px" }}>[ RELOADING... ]</div>
+            <div style={{
+              width: "80px", height: "2px", marginTop: "16px",
+              background: theme === "light" ? "rgba(0,0,0,0.15)" : "rgba(255,255,255,0.15)",
+              position: "relative", overflow: "hidden",
+            }}>
+              <div style={{
+                position: "absolute", left: "-40%", width: "40%", height: "100%",
+                background: theme === "light" ? "#000" : "#fff",
+                animation: "scan 1.2s linear infinite",
+              }} />
+            </div>
           </div>
         )}
         {banner && <Banner banner={banner} onClose={() => setBanner(null)} />}
@@ -668,9 +684,6 @@ export default function App() {
             <AchievementToast key={toast._id} toast={toast} onClose={() => setToast(null)} />
           </ErrorBoundary>
         )}
-        <button type="button" onClick={() => setModal({ type: "session_log" })}
-          style={{ position: "fixed", bottom: "80px", right: "16px", zIndex: 100, width: "48px", height: "48px", borderRadius: "0", background: "#fff", color: "#000", fontFamily: "'Share Tech Mono', monospace", fontSize: "18px", border: "2px solid #fff", display: "flex", alignItems: "center", justifyContent: "center" }}
-          title="Log Study Session">▶</button>
       </div>
     </AppContext.Provider>
   );

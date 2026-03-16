@@ -4,6 +4,33 @@ import { todayUTC, localDateFromUTC, LS, storageKey } from "./utils/storage";
 import { DAILY_TOKEN_LIMIT, DATA_DISCLOSURE_SEEN_KEY } from "./constants";
 import { callGemini } from "./api/gemini";
 
+function NeuralEnergyBar({ usage, theme }) {
+  if (!usage || typeof usage.date !== "string") return null;
+  const isToday = usage.date === todayUTC();
+  const tokens = isToday ? (usage.tokens || 0) : 0;
+  const pct = Math.min(100, (tokens / DAILY_TOKEN_LIMIT) * 100);
+  const pctDisplay = pct < 0.1 ? "<0.1" : pct.toFixed(1);
+  const isLight = theme === "light";
+  const textColor = isLight ? "#000" : "#fff";
+  const trackColor = isLight ? "#ccc" : "#333";
+  const fillColor = isLight ? "#000" : "#fff";
+  const borderColor = isLight ? "rgba(0,0,0,0.3)" : "rgba(255,255,255,0.3)";
+  return (
+    <div style={{
+      padding: "8px 16px",
+      borderBottom: `1.5px solid ${borderColor}`,
+      fontFamily: "'Share Tech Mono', monospace",
+      display: "flex", alignItems: "center", gap: "10px",
+    }}>
+      <span style={{ fontSize: "10px", letterSpacing: "2px", color: textColor, opacity: 0.6, flexShrink: 0 }}>NEURAL ENERGY</span>
+      <div style={{ flex: 1, height: "4px", background: trackColor, position: "relative" }}>
+        <div style={{ width: `${pct}%`, height: "100%", background: fillColor, transition: "width 0.3s" }} />
+      </div>
+      <span style={{ fontSize: "10px", color: textColor, opacity: 0.6, flexShrink: 0 }}>{pctDisplay}%</span>
+    </div>
+  );
+}
+
 // Module-level — compiled once
 // eslint-disable-next-line no-control-regex
 const STRIP_FOR_API_RE = /[\u0000-\u001F\u007F-\u009F\u2028\u2029\u200B-\u200D\u202A-\u202E\u2066-\u2069\uFEFF]/g;
@@ -11,7 +38,7 @@ const INJECTION_CHARS_RE = /[<>{}`"'\\]/g;
 let _msgSeq = 0;
 
 export default function ChatTab() {
-  const { state, setState, latestStateRef, profile, apiKey, executeCommands, showBanner, buildSystemPrompt, checkMissions, trackTokens } = useAppContext();
+  const { state, setState, latestStateRef, profile, apiKey, executeCommands, showBanner, buildSystemPrompt, checkMissions, trackTokens, theme } = useAppContext();
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [isListening, setIsListening] = useState(false);
@@ -291,6 +318,8 @@ export default function ChatTab() {
           </button>
         </div>
       )}
+      {/* Neural Energy */}
+      <NeuralEnergyBar usage={state.tokenUsage} theme={theme} />
       {/* Messages */}
       <div style={{ flex: 1, overflowY: "auto", padding: "16px", display: "flex", flexDirection: "column", gap: "12px" }}>
         {messages.length === 0 && (
