@@ -453,7 +453,6 @@ function ChatMessage({ msg }) {
       )}
       <div style={{
         maxWidth: "88%", padding: "14px 16px",
-        background: "#000",
         border: isError ? "2px solid #ff9900" : isRitmol ? "2px solid #fff" : "2px solid #000",
         fontFamily: "'Share Tech Mono', monospace",
         fontSize: "16px", lineHeight: "1.6",

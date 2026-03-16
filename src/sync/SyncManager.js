@@ -13,7 +13,7 @@
 //     incoming (prevents crafted sync from resetting once-per-day shield limit).
 // ═══════════════════════════════════════════════════════════════
 
-import { LS, storageKey, setGeminiApiKey, getGeminiApiKey, getMaxDateSeen, IS_DEV, DEV_PREFIX } from "../utils/storage";
+import { LS, storageKey, setGeminiApiKey, getGeminiApiKey, getMaxDateSeen } from "../utils/storage";
 import { idbGet, idbSet, store } from "../utils/db";
 import { SyncPayloadSchema } from "../utils/schemas.js";
 import { SYNC_SCHEMA_VERSION } from "../constants";
@@ -23,6 +23,11 @@ import {
   uploadFile as dropboxUpload,
   downloadFile as dropboxDownload,
 } from "../api/dropbox";
+
+// Local dev/prod flags to avoid importing them from utils/storage (which would
+// introduce a circular dependency via db.js → SyncManager → storage.js → db.js.
+const IS_DEV = import.meta.env.DEV === true;
+const DEV_PREFIX = "ritmol_dev_";
 
 // Re-export for consumers that need the current schema version
 export { SYNC_SCHEMA_VERSION };
@@ -504,6 +509,71 @@ export const SyncManager = {
     const ch = getSyncChannel();
     ch?.postMessage({ type: "sync_start" });
     try {
+      // In dev builds, never push changes back to Dropbox. Treat "dropbox"
+      // transport as read-only and redirect pushes to the local FSAPI handle
+      // instead so dev experiments cannot overwrite the cloud copy.
+      if (IS_DEV && _transport === "dropbox") {
+        const handle = await SyncManager.getHandle();
+        if (!handle) {
+          throw new Error("NO_HANDLE");
+        }
+        let perm;
+        try {
+          perm = await handle.queryPermission({ mode: "readwrite" });
+          if (perm !== "granted") {
+            perm = await handle.requestPermission({ mode: "readwrite" });
+          }
+        } catch (err) {
+          if (err && err.name === "NotFoundError") {
+            throw new Error("SYNC_FILE_NOT_FOUND");
+          }
+          throw new Error("PERMISSION_DENIED");
+        }
+        if (perm !== "granted") throw new Error("PERMISSION_DENIED");
+
+        try {
+          const currentFile = await handle.getFile();
+          const lastMod = currentFile.lastModified;
+          if (lastMod !== 0 && Date.now() - lastMod < 2000 && lastMod > _lastPushTime) {
+            throw new Error("SYNC_SKIPPED");
+          }
+        } catch (innerErr) {
+          if (innerErr?.message === "SYNC_SKIPPED") throw innerErr;
+          if (innerErr?.name === "NotFoundError") throw new Error("SYNC_FILE_NOT_FOUND");
+          if (innerErr?.name === "SecurityError") throw new Error("PERMISSION_DENIED");
+        }
+
+        const payload = buildPayload();
+        const text = JSON.stringify(payload, null, 2);
+        assertPayloadSize(text);
+        const byteSize = new TextEncoder().encode(text).length;
+        if (byteSize > 7 * 1024 * 1024) {
+          console.warn(
+            "[SyncManager] Dev push redirected to local file; sync file approaching size limit:",
+            (byteSize / (1024 * 1024)).toFixed(1),
+            "MB"
+          );
+        }
+
+        _lastPushTime = Date.now();
+        const writable = await handle.createWritable();
+        try {
+          await writable.write(text);
+          await writable.close();
+        } catch (writeErr) {
+          try {
+            await writable.abort();
+          } catch {
+            /* ignore abort errors */
+          }
+          throw writeErr;
+        }
+
+        const ts = Date.now();
+        LS.set(storageKey("jv_last_synced"), String(ts));
+        return ts;
+      }
+
       if (_transport === "dropbox") {
         if (typeof navigator !== "undefined" && navigator.onLine === false) {
           throw new Error("DROPBOX_OFFLINE");
@@ -522,6 +592,7 @@ export const SyncManager = {
         LS.set(storageKey("jv_last_synced"), String(ts));
         return ts;
       }
+
       if (_transport === "fsapi" || _transport === "download") {
         const handle = await SyncManager.getHandle();
         if (!handle) throw new Error("NO_HANDLE");

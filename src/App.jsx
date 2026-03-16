@@ -349,7 +349,7 @@ export default function App() {
         onNeedsGeminiKey: () => { if (!showOnboarding) setShowGeminiKeySetup(true); },
       });
     }
-  }, [handleDropboxCallback, showBanner]);
+  }, [handleDropboxCallback, showBanner, showOnboarding]);
 
   useDailyLogin({ profile, setState, setModal, setLevelUpData, showBanner, trackTokens, lastLevelUpXpRef });
   useScheduler({ state, profile, showBanner, setModal });
@@ -370,6 +370,12 @@ export default function App() {
     if (!meta) { meta = document.createElement("meta"); meta.setAttribute("name", "theme-color"); document.head.appendChild(meta); }
     meta.setAttribute("content", theme === "light" ? "#f0f0f0" : "#000");
   }, [theme]);
+
+  useEffect(() => {
+    if (import.meta.env.DEV) {
+      document.title = "RITMOL-DEV";
+    }
+  }, []);
 
   useEffect(() => {
     if (!profile?.geminiKey) return;

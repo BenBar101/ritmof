@@ -47,7 +47,7 @@ function SectionLabel({ children }) {
 }
 
 export default function HomeTab() {
-  const { state, setState, rank, dailyQuote, logHabit, showBanner, setTab, profile, theme, setModal } = useAppContext();
+  const { state, setState, rank, dailyQuote, showBanner, setTab, profile, theme, setModal } = useAppContext();
   const todayLog = state.habitLog[localDateFromUTC()] || [];
   const totalHabits = state.habits.length;
   const doneHabits = todayLog.length;
@@ -321,7 +321,6 @@ function HabitRing({ done, total, theme }) {
   const trackColor  = isLight ? "#bbb" : "#555";
   const fillColor   = isLight ? "#000" : "#fff";
   const textColor   = isLight ? "#000" : "#fff";
-  const bgFill      = isLight ? "#f0f0f0" : "#000";
   return (
     <svg width="80" height="80" style={{ flexShrink: 0 }}>
       <circle cx="40" cy="40" r={r} fill="none" stroke={trackColor} strokeWidth="6" />

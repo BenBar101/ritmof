@@ -1261,7 +1261,7 @@ function SettingsSection({ profile, setState, showBanner, syncStatus, lastSynced
               </div>
               <div style={{ border: "2px solid #fff", padding: "14px", fontSize: "15px", color: "#fff", lineHeight: "2", fontFamily: "'Share Tech Mono', monospace" }}>
                 1. Tap the <strong>Share</strong> button <span style={{ fontSize: "18px" }}>⎋</span> in Safari<br />
-                2. Scroll down and tap <strong>"Add to Home Screen"</strong><br />
+                2. Scroll down and tap <strong>&quot;Add to Home Screen&quot;</strong><br />
                 3. Tap <strong>Add</strong>
               </div>
             </>

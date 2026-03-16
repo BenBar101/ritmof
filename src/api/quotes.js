@@ -126,9 +126,10 @@ function isValidQuote(q) {
   return q && typeof q.quote === "string" && q.quote.trim() && typeof q.author === "string" && q.author.trim();
 }
 
-// eslint-disable-next-line no-control-regex
 const stripCtrl = (s) =>
   String(s)
+    // Strip control chars and zero-width/BiDi overrides; keep printable punctuation.
+    // eslint-disable-next-line no-control-regex
     .replace(/[\u0000-\u001F\u007F-\u009F\u200B-\u200D\uFEFF\u202A-\u202E\u2066-\u2069]/g, "")
     .replace(/[<>]/g, "");
 

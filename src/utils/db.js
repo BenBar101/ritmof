@@ -2,7 +2,28 @@ import { createStore } from 'tinybase'
 import { createIndexedDbPersister } from 'tinybase/persisters/persister-indexed-db'
 import { useValues as _useValues, useValue as _useValue } from 'tinybase/ui-react'
 import { DATA_DISCLOSURE_SEEN_KEY, THEME_KEY } from '../constants'
-import { isSafeSyncValue } from '../sync/SyncManager'
+
+// Local copy of isSafeSyncValue to avoid a circular import with SyncManager.
+// Mirrors the implementation in ../sync/SyncManager for migration safety checks.
+const _isArray = (v) => Array.isArray(v)
+const _isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v)
+const _DANGEROUS_KEYS = new Set(['__proto__', 'constructor', 'prototype'])
+const _MAX_DEPTH = 12
+
+export function isSafeSyncValue(v, depth = 0) {
+  if (depth >= _MAX_DEPTH) return false
+  if (_isObj(v)) {
+    for (const k of Object.getOwnPropertyNames(v)) {
+      if (_DANGEROUS_KEYS.has(k)) return false
+      if (!isSafeSyncValue(v[k], depth + 1)) return false
+    }
+  } else if (_isArray(v)) {
+    for (const item of v) {
+      if (!isSafeSyncValue(item, depth + 1)) return false
+    }
+  }
+  return true
+}
 
 // ── Date utilities (previously in storage.js) ─────────────────
 // Keep these here so imports from storage.js can be redirected here.
