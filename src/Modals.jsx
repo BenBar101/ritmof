@@ -218,10 +218,10 @@ export function LevelUpModal({ data, onClose }) {
     }}>
       <div style={{ fontSize: "16px", color: "#fff", letterSpacing: "4px", marginBottom: "20px", fontWeight: "bold" }}>[ SYSTEM ALERT ]</div>
       <div style={{ fontSize: "32px", color: "#fff", letterSpacing: "3px", marginBottom: "12px", fontWeight: "bold" }}>[ LEVEL UP ]</div>
-      <div style={{ fontSize: "64px", fontWeight: "bold", margin: "16px 0" }}>{data.level}</div>
+      <div style={{ fontSize: "clamp(40px, 15vw, 64px)", fontWeight: "bold", margin: "16px 0" }}>{data.level}</div>
       <div style={{ fontSize: "24px", color: "#fff", marginBottom: "8px" }}>{data.rank.decor}</div>
       <div style={{ fontSize: "18px", letterSpacing: "4px", marginBottom: "32px" }}>{data.rank.title.toUpperCase()}</div>
-      <div style={{ fontSize: "40px", letterSpacing: "8px", marginBottom: "36px", color: "#fff" }}>
+      <div style={{ fontSize: "clamp(28px, 10vw, 40px)", letterSpacing: "8px", marginBottom: "36px", color: "#fff" }}>
         {data.rank.badge}
       </div>
       <button type="button" onClick={onClose} style={{ ...primaryBtn, width: "200px" }}>CONTINUE</button>

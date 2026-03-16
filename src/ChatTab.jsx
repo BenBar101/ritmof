@@ -110,24 +110,45 @@ export default function ChatTab() {
       const { text: raw, tokensUsed } = await callGemini(apiKey, apiMessages, systemPrompt, true, controller.signal);
       trackTokens?.(tokensUsed);
 
-      // Robust JSON extraction: use a safer regex-based fallback instead of lastIndexOf("}")
+      // Robust JSON extraction — tries multiple strategies before falling back to plain text.
+      // The goal is: always show only `parsed.message` in chat, never raw JSON or command payloads.
       let parsed;
-      try {
-        // Try direct parse first
-        const cleaned = raw.replace(/```json|```/g, "").trim();
-        parsed = JSON.parse(cleaned);
-      } catch {
-        // Fallback: attempt to extract a JSON object block from the text.
-        const match = raw.match(/\{[\s\S]*\}/);
-        if (match) {
-          try {
-            parsed = JSON.parse(match[0]);
-          } catch {
-            parsed = { message: raw, commands: [] };
+
+      const tryParseJson = (str) => {
+        try { return JSON.parse(str); } catch { return null; }
+      };
+
+      // Strategy 1: strip markdown fences and parse directly
+      const cleaned = raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```\s*$/, "").trim();
+      parsed = tryParseJson(cleaned);
+
+      // Strategy 2: find the outermost {...} block (handles preamble text before the JSON)
+      if (!parsed) {
+        // Find the first { and match to its closing } by tracking brace depth
+        const start = cleaned.indexOf("{");
+        if (start !== -1) {
+          let depth = 0, end = -1;
+          for (let i = start; i < cleaned.length; i++) {
+            if (cleaned[i] === "{") depth++;
+            else if (cleaned[i] === "}") { depth--; if (depth === 0) { end = i; break; } }
           }
-        } else {
-          parsed = { message: raw, commands: [] };
+          if (end !== -1) parsed = tryParseJson(cleaned.slice(start, end + 1));
         }
+      }
+
+      // Strategy 3: try the raw string unchanged (handles double-encoded responses)
+      if (!parsed) parsed = tryParseJson(raw);
+
+      // Strategy 4: genuine plain-text fallback — show the text but scrub any leaked JSON
+      if (!parsed) {
+        // Remove any JSON-like object blocks so command payloads never appear as chat text
+        const scrubbed = raw
+          .replace(/```(?:json)?\s*\{[\s\S]*?\}\s*```/gi, "")
+          .replace(/\{[\s\S]*?"cmd"\s*:[\s\S]*?\}/g, "")  // remove command objects
+          .replace(/\{[\s\S]*?"commands"\s*:[\s\S]*?\}/g, "") // remove wrapper objects
+          .replace(/```/g, "")
+          .trim();
+        parsed = { message: scrubbed || "...", commands: [] };
       }
 
       // Prototype-pollution guard: reject parsed objects with __proto__ / constructor / prototype keys.
@@ -137,7 +158,13 @@ export default function ChatTab() {
           parsed = { message: String(parsed), commands: [] };
         }
       }
-      const rawContent = parsed.message || parsed.text || String(parsed);
+
+      // Extract the human-readable message — never fall through to raw JSON string
+      let rawContent = parsed.message || parsed.text || "";
+      if (!rawContent || typeof rawContent !== "string") {
+        // If we still have no message, use a safe empty fallback rather than stringifying the object
+        rawContent = "";
+      }
       // Fix: sanitize AI-returned message content before persisting to localStorage and
       // the sync file using the same canonical strip set used when replaying history
       // into the API, so line/paragraph separators and BiDi controls cannot linger in

@@ -30,7 +30,7 @@ export default function HomeTab() {
       {/* Greeting */}
       <div style={{ borderBottom: "3px solid #fff", paddingBottom: "16px" }}>
         <div style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: "16px", color: "#fff", letterSpacing: "3px", fontWeight: "bold" }}>[ {greeting} ]</div>
-        <div style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: "36px", fontWeight: "bold", marginTop: "4px", letterSpacing: "2px" }}>
+        <div style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: "clamp(24px, 8vw, 36px)", fontWeight: "bold", marginTop: "4px", letterSpacing: "2px" }}>
           {profile?.name || "Hunter"}
         </div>
         <div style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: "18px", color: "#fff", marginTop: "4px", letterSpacing: "2px", fontWeight: "bold" }}>
@@ -73,7 +73,7 @@ export default function HomeTab() {
       })}
 
       {/* Stats row */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "8px" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: "8px" }}>
         {[
           { label: "HABITS", value: `${doneHabits}/${totalHabits}` },
           { label: "TASKS", value: pendingTasks },
@@ -81,11 +81,11 @@ export default function HomeTab() {
           { label: "ACHIEV", value: totalAchievements },
         ].map((s) => (
           <div key={s.label} style={{
-            border: "2px solid #fff", padding: "16px", textAlign: "center",
+            border: "2px solid #fff", padding: "12px", textAlign: "center",
             fontFamily: "'Share Tech Mono', monospace",
           }}>
-            <div style={{ fontSize: "28px", fontWeight: "bold" }}>{s.value}</div>
-            <div style={{ fontSize: "14px", color: "#fff", letterSpacing: "2px", marginTop: "4px" }}>{s.label}</div>
+            <div style={{ fontSize: "24px", fontWeight: "bold" }}>{s.value}</div>
+            <div style={{ fontSize: "12px", color: "#fff", letterSpacing: "2px", marginTop: "4px" }}>{s.label}</div>
           </div>
         ))}
       </div>
@@ -139,7 +139,7 @@ export default function HomeTab() {
         <div style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: "14px", color: "#fff", letterSpacing: "2px", marginBottom: "12px", fontWeight: "bold" }}>
           QUICK PROTOCOLS
         </div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "6px" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(90px, 1fr))", gap: "6px" }}>
           {state.habits.slice(0, 6).map((h) => {
             const done = todayLog.includes(h.id);
             return (

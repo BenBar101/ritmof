@@ -147,25 +147,27 @@ export default function TasksTab() {
       {activeSection === "tasks" && (
         <>
           {/* Add task */}
-          <div style={{ display: "flex", gap: "6px" }}>
+          <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
             <input
               value={newTask}
               onChange={(e) => setNewTask(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && addTask()}
               placeholder="New task..."
               maxLength={500}
-              style={{ flex: 1, background: "#000", border: "2px solid #fff", color: "#fff", padding: "12px", fontFamily: "'Share Tech Mono', monospace", fontSize: "16px", outline: "none" }}
+              style={{ flex: "1 1 160px", minWidth: 0, background: "#000", border: "2px solid #fff", color: "#fff", padding: "12px", fontFamily: "'Share Tech Mono', monospace", fontSize: "16px", outline: "none" }}
             />
-            <select
-              value={newPriority}
-              onChange={(e) => setNewPriority(e.target.value)}
-              style={{ background: "#000", border: "2px solid #fff", color: "#fff", padding: "12px", fontFamily: "'Share Tech Mono', monospace", fontSize: "14px", outline: "none" }}
-            >
-              <option value="low">LOW</option>
-              <option value="medium">MED</option>
-              <option value="high">HIGH</option>
-            </select>
-            <button type="button" onClick={addTask} style={{ padding: "12px 18px", background: "#fff", color: "#000", fontFamily: "'Share Tech Mono', monospace", fontSize: "18px", border: "none", minHeight: "48px", minWidth: "48px", fontWeight: "bold" }}>+</button>
+            <div style={{ display: "flex", gap: "6px", flexShrink: 0 }}>
+              <select
+                value={newPriority}
+                onChange={(e) => setNewPriority(e.target.value)}
+                style={{ background: "#000", border: "2px solid #fff", color: "#fff", padding: "12px", fontFamily: "'Share Tech Mono', monospace", fontSize: "14px", outline: "none" }}
+              >
+                <option value="low">LOW</option>
+                <option value="medium">MED</option>
+                <option value="high">HIGH</option>
+              </select>
+              <button type="button" onClick={addTask} style={{ padding: "12px 18px", background: "#fff", color: "#000", fontFamily: "'Share Tech Mono', monospace", fontSize: "18px", border: "none", minHeight: "48px", minWidth: "48px", fontWeight: "bold" }}>+</button>
+            </div>
           </div>
 
           {/* Active tasks */}

@@ -216,6 +216,7 @@ TASK DUE DATE RULE: Due dates on add_task MUST be within the next 14 days (YYYY-
 Never set a due date further than 14 days out — it will be ignored by the system. For longer-term
 deadlines, add the task without a due date and mention it in your message instead.
 
-Always respond with ONLY a JSON object: { "message": "your response here", "commands": [] }
-Keep message under 300 chars unless detail is essential. Use the hunter's name. Stay in character.`;
+Always respond with ONLY a JSON object — no preamble, no markdown fences, no extra text before or after: { "message": "your response here", "commands": [] }
+Keep message under 300 chars unless detail is essential. Use the hunter's name. Stay in character.
+CRITICAL: Your entire response must be valid JSON starting with { and ending with }. Any text outside the JSON object will break the parser.`;
 }

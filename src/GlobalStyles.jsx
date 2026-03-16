@@ -40,9 +40,12 @@ const GLOBAL_CSS = `
     overflow: hidden;           /* root handles its own scroll */
     background: #000;
     color: #fff;
-    font-size: 18px;
+    font-size: 16px;
     font-family: 'Share Tech Mono', monospace;
   }
+
+  /* ── Clamp font sizes to avoid overflow on small screens ─── */
+  body { font-size: clamp(14px, 4vw, 18px); }
 
   /* ── Mobile: prevent text-size bump on rotation ─────────── */
   html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
@@ -208,6 +211,19 @@ const GLOBAL_CSS = `
   /* ── Prevent content overflow on narrow screens ─────────── */
   img, video, canvas, svg { max-width: 100%; }
   pre { overflow-x: auto; }
+
+  /* ── Mobile-specific: tighter padding on very small screens ─ */
+  @media (max-width: 380px) {
+    /* Reduce letter-spacing so labels don't overflow */
+    * { letter-spacing: 0 !important; }
+    /* Tighter padding for cards */
+    [data-card] { padding: 10px !important; }
+  }
+
+  /* ── Landscape mobile: reduce vertical whitespace ──────── */
+  @media (max-height: 500px) and (orientation: landscape) {
+    [data-modal-inner] { padding: 12px !important; }
+  }
 `;
 
 // Injects/updates <meta> tags that must be present for correct mobile/PWA behaviour.

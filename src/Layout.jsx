@@ -12,48 +12,53 @@ export function TopBar({ xp, xpPerLevel, level, rank, streak, profile, syncStatu
     : 0;
 
   const syncTitle = lastSynced ? `Last synced: ${new Date(lastSynced).toLocaleTimeString()}` : "Not synced yet";
+  const syncDisabled = syncStatus === "syncing" || (typeof navigator !== "undefined" && navigator.onLine === false) || isReloading;
+  const syncBorder = syncDisabled ? "2px solid #444" : "2px solid #fff";
+  const syncColor = syncDisabled ? "#444" : "#fff";
 
   return (
     <div style={{
       position: "fixed", top: 0, left: 0, right: 0, zIndex: 200,
       background: "#000", borderBottom: "3px solid #fff",
-      padding: "8px 16px", height: "56px",
-      display: "flex", alignItems: "center", justifyContent: "space-between",
+      padding: "0 10px", height: "56px",
+      display: "flex", alignItems: "center", gap: "6px",
     }}>
-      <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-        <img src={APP_ICON_URL} alt="" style={{ width: 28, height: 28, display: "block" }} onError={(e) => { e.currentTarget.style.display = "none"; }} />
-        <span style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: "16px", letterSpacing: "3px", color: "#fff" }}>
+      {/* Logo — shrinks on very small screens */}
+      <div style={{ display: "flex", alignItems: "center", gap: "6px", flexShrink: 0 }}>
+        <img src={APP_ICON_URL} alt="" style={{ width: 24, height: 24, display: "block" }} onError={(e) => { e.currentTarget.style.display = "none"; }} />
+        <span style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: "14px", letterSpacing: "2px", color: "#fff", whiteSpace: "nowrap" }}>
           RITMOL
-        </span>
-        <span style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: "16px", color: "#fff", letterSpacing: "2px" }}>
-          {rank.decor}
         </span>
       </div>
 
-      <div style={{ flex: 1, margin: "0 12px" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", fontSize: "14px", color: "#fff", marginBottom: "2px", fontFamily: "'Share Tech Mono', monospace", fontWeight: "bold", letterSpacing: "1px" }}>
-          <span>[ LV.{level} ] {rank.title}</span>
-          <span>{getLevelProgress(xp, xpPerLevel)} / {xpPerLevel} XP</span>
+      {/* XP bar — fills remaining space */}
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", fontSize: "11px", color: "#fff", marginBottom: "2px", fontFamily: "'Share Tech Mono', monospace", fontWeight: "bold", letterSpacing: "0.5px" }}>
+          <span>LV.{level}</span>
+          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "50%" }}>{rank.title}</span>
+          <span>{Math.round(pct)}%</span>
         </div>
-        <div style={{ height: "5px", background: "#333", position: "relative" }}>
+        <div style={{ height: "4px", background: "#333", position: "relative" }}>
           <div style={{ width: `${pct}%`, height: "100%", background: "#fff" }} />
         </div>
       </div>
 
-      <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+      {/* Right controls */}
+      <div style={{ display: "flex", alignItems: "center", gap: "3px", flexShrink: 0 }}>
         {syncFileConnected && (
           <>
             <button
               type="button"
               onClick={onPull}
-              disabled={syncStatus === "syncing" || (typeof navigator !== "undefined" && navigator.onLine === false) || isReloading}
-              title={`Pull from Syncthing file · ${syncTitle}`}
+              disabled={syncDisabled}
+              title={`Pull ↓ · ${syncTitle}`}
               style={{
-                fontFamily: "'Share Tech Mono', monospace", fontSize: "16px",
-                color: "#fff",
-                background: "none", border: (syncStatus === "syncing" || (typeof navigator !== "undefined" && navigator.onLine === false) || isReloading) ? "2px solid #444" : "2px solid #fff",
-                cursor: (syncStatus === "syncing" || (typeof navigator !== "undefined" && navigator.onLine === false) || isReloading) ? "default" : "pointer",
-                minHeight: "48px", minWidth: "48px",
+                fontFamily: "'Share Tech Mono', monospace", fontSize: "15px",
+                color: syncColor,
+                background: "none", border: syncBorder,
+                cursor: syncDisabled ? "default" : "pointer",
+                minHeight: "40px", minWidth: "40px",
+                padding: "0",
               }}
             >
               ↓
@@ -61,23 +66,25 @@ export function TopBar({ xp, xpPerLevel, level, rank, streak, profile, syncStatu
             <button
               type="button"
               onClick={onPush}
-              disabled={syncStatus === "syncing" || (typeof navigator !== "undefined" && navigator.onLine === false) || isReloading}
-              title={`Push to Syncthing file · ${syncTitle}`}
+              disabled={syncDisabled}
+              title={`Push ↑ · ${syncTitle}`}
               style={{
-                fontFamily: "'Share Tech Mono', monospace", fontSize: "16px",
-                color: "#fff",
-                background: "none", border: (syncStatus === "syncing" || (typeof navigator !== "undefined" && navigator.onLine === false) || isReloading) ? "2px solid #444" : "2px solid #fff",
-                cursor: (syncStatus === "syncing" || (typeof navigator !== "undefined" && navigator.onLine === false) || isReloading) ? "default" : "pointer",
-                minHeight: "48px", minWidth: "48px",
+                fontFamily: "'Share Tech Mono', monospace", fontSize: "15px",
+                color: syncColor,
+                background: "none", border: syncBorder,
+                cursor: syncDisabled ? "default" : "pointer",
+                minHeight: "40px", minWidth: "40px",
+                padding: "0",
               }}
             >
-              {syncStatus === "syncing" ? "..." : "↑"}
+              {syncStatus === "syncing" ? "…" : "↑"}
             </button>
           </>
         )}
         <div style={{
-          fontFamily: "'Share Tech Mono', monospace", fontSize: "14px",
-          border: "2px solid #fff", padding: "8px 12px", color: "#fff", fontWeight: "bold",
+          fontFamily: "'Share Tech Mono', monospace", fontSize: "13px",
+          border: "2px solid #fff", padding: "6px 8px", color: "#fff", fontWeight: "bold",
+          whiteSpace: "nowrap",
         }}>
           🔥{streak}
         </div>
@@ -94,7 +101,7 @@ export function BottomNav({ tab, setTab }) {
     { id: "home", icon: "⌂", label: "HOME" },
     { id: "habits", icon: "◉", label: "HABITS" },
     { id: "tasks", icon: "▣", label: "TASKS" },
-    { id: "chat", icon: "◈", label: "RITMOL" },
+    { id: "chat", icon: "◈", label: "AI" },
     { id: "profile", icon: "§", label: "PROFILE" },
   ];
 
@@ -102,7 +109,9 @@ export function BottomNav({ tab, setTab }) {
     <div style={{
       position: "fixed", bottom: 0, left: 0, right: 0, zIndex: 200,
       background: "#000", borderTop: "3px solid #fff",
-      display: "flex", height: "72px",
+      display: "flex",
+      height: "calc(60px + env(safe-area-inset-bottom, 0px))",
+      paddingBottom: "env(safe-area-inset-bottom, 0px)",
     }}>
       {tabs.map((t) => (
         <button
@@ -111,15 +120,16 @@ export function BottomNav({ tab, setTab }) {
           data-active={tab === t.id ? "true" : undefined}
           style={{
             flex: 1, display: "flex", flexDirection: "column", alignItems: "center",
-            justifyContent: "center", gap: "4px",
+            justifyContent: "center", gap: "2px",
             background: tab === t.id ? "#fff" : "#000", border: "none",
             borderTop: "3px solid #fff",
             color: tab === t.id ? "#000" : "#fff",
             fontFamily: "'Share Tech Mono', monospace",
+            padding: "4px 0",
           }}
         >
-          <span style={{ fontSize: "26px" }}>{t.icon}</span>
-          <span style={{ fontSize: "14px", letterSpacing: "2px", fontWeight: "bold" }}>{t.label}</span>
+          <span style={{ fontSize: "22px", lineHeight: 1 }}>{t.icon}</span>
+          <span style={{ fontSize: "10px", letterSpacing: "1px", fontWeight: "bold" }}>{t.label}</span>
         </button>
       ))}
     </div>

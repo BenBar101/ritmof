@@ -41,7 +41,7 @@ export default function ProfileTab() {
         <GeometricCorners style="geometric" />
         <div style={{ fontFamily: "'Share Tech Mono', monospace", textAlign: "center" }}>
           <div style={{ fontSize: "16px", color: "#fff", letterSpacing: "3px", fontWeight: "bold" }}>[ HUNTER CARD ]</div>
-          <div style={{ fontSize: "32px", fontWeight: "bold", margin: "8px 0" }}>{profile?.name || "Hunter"}</div>
+          <div style={{ fontSize: "clamp(20px, 6vw, 32px)", fontWeight: "bold", margin: "8px 0", wordBreak: "break-word" }}>{profile?.name || "Hunter"}</div>
           <div style={{ fontSize: "16px", color: "#fff" }}>{rank.decor} {rank.title}</div>
           <div style={{ fontSize: "16px", color: "#fff", marginTop: "4px" }}>{profile?.major ?? ""}</div>
           <div style={{ margin: "20px 0 8px", fontSize: "14px", color: "#fff", display: "flex", justifyContent: "space-between", fontWeight: "bold" }}>

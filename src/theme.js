@@ -81,5 +81,5 @@ export const inputStyle = (variant = {}) => ({
 // Fixed chrome dimensions — keep in sync with Layout.jsx padding
 export const CHROME = {
   topBarH:    56,
-  bottomNavH: 60,
+  bottomNavH: 60, // visual height; actual bottom padding also adds safe-area-inset-bottom
 };
