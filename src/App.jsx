@@ -404,30 +404,29 @@ export default function App() {
   }, [!!profile, setState]);
 
   const quoteFetchedRef = useRef(false);
+  const quoteInputRef = useRef("");
+  const quoteInput = `${profile?.books ?? ""}|${profile?.interests ?? ""}|${profile?.major ?? ""}`;
   useEffect(() => {
-    if (!profile || quoteFetchedRef.current) return;
+    if (!profile) return;
+    if (quoteInputRef.current !== quoteInput) {
+      quoteFetchedRef.current = false;
+      quoteInputRef.current = quoteInput;
+    }
+    if (quoteFetchedRef.current) return;
     quoteFetchedRef.current = true;
     fetchDailyQuote(apiKey || null, profile, trackTokens || null)
       .then((result) => {
         if (result === null) {
-          // fetchDailyQuote returns null when offline (no cache yet) or in-flight.
-          // Do not set the hardcoded fallback — let the quote area stay blank so
-          // the next mount (e.g. after regaining connectivity) can retry.
           quoteFetchedRef.current = false;
           return;
         }
         setDailyQuote(result);
       })
       .catch(() => {
-        // Network error after fetch was attempted (connectivity was present but
-        // request failed). Reset the ref so the next mount can retry — the
-        // static EMERGENCY_FALLBACK is already returned by fetchDailyQuote itself
-        // on persistent failure; we don't duplicate it here to avoid always
-        // showing Mark Twain when the API is briefly unavailable.
         quoteFetchedRef.current = false;
       });
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [!!profile, !!apiKey]);
+  }, [!!profile, !!apiKey, quoteInput]);
 
   useEffect(() => {
     const handler = () => showBanner("SYSTEM ALERT: Storage full! (~5MB). Clear old chat history or sessions.", "alert");
@@ -602,7 +601,7 @@ export default function App() {
             DEV MODE — separate localStorage (ritmol_dev_*)
           </div>
         )}
-        <TopBar xp={state.xp} xpPerLevel={xpPerLevel} level={level} rank={rank} streak={state.streak} profile={profile} syncStatus={syncStatus} lastSynced={lastSynced} onPush={syncPush} onPull={syncPull} syncFileConnected={syncFileConnected} isReloading={isReloading} />
+        <TopBar xp={state.xp} xpPerLevel={xpPerLevel} level={level} rank={rank} profile={profile} syncStatus={syncStatus} lastSynced={lastSynced} onPush={syncPush} onPull={syncPull} syncFileConnected={syncFileConnected} isReloading={isReloading} />
         <div style={{ flex: 1, overflowY: "auto", overflowX: "hidden", paddingBottom: "calc(64px + env(safe-area-inset-bottom, 0px))", paddingTop: "56px" }}>
           {tab === "home"    && <ErrorBoundary key="home"><HomeTab /></ErrorBoundary>}
           {tab === "habits"  && <ErrorBoundary key="habits"><HabitsTab /></ErrorBoundary>}

@@ -1037,7 +1037,6 @@ function GachaCard({ card, compact }) {
 function SettingsSection({ profile, setState, showBanner, syncStatus, lastSynced, syncFileConnected, dropboxConnected, onPush, onPull, onPickSyncFile, onForgetSyncFile, confirmForgetSync, connectDropbox, disconnectDropbox, theme, setTheme, latestStateRef }) {
   const importRef = useRef(null);
   const [importLoading, setImportLoading] = useState(false);
-  const [clientIdInput, setClientIdInput] = useState(profile?.googleClientId || "");
 
   // ── PWA install prompt ────────────────────────────────────────
   const [installPrompt, setInstallPrompt] = useState(null);
@@ -1064,23 +1063,6 @@ function SettingsSection({ profile, setState, showBanner, syncStatus, lastSynced
     typeof navigator !== "undefined" &&
     /iphone|ipad|ipod/i.test(navigator.userAgent) &&
     !window.MSStream;
-
-  useEffect(() => {
-    setClientIdInput(profile?.googleClientId || "");
-  }, [profile?.googleClientId]);
-
-  function saveClientId() {
-    const trimmed = clientIdInput.trim();
-    if (trimmed && !/^[\w.-]+\.apps\.googleusercontent\.com$/.test(trimmed)) {
-      showBanner("Invalid Client ID format. Must end in .apps.googleusercontent.com", "alert");
-      return;
-    }
-    setState((s) => ({
-      ...s,
-      profile: { ...(s.profile || {}), googleClientId: trimmed || undefined },
-    }));
-    showBanner(trimmed ? "Google Client ID saved." : "Google Client ID cleared.", "success");
-  }
 
   // Fix: replace window.confirm with a two-step in-app confirmation — window.confirm() is
   // blocked in PWA standalone mode and some embedded contexts (same reason forgetSyncFile was fixed).
@@ -1459,46 +1441,6 @@ function SettingsSection({ profile, setState, showBanner, syncStatus, lastSynced
           )}
         </>
       )}
-
-      <div style={{ marginTop: "12px", padding: "12px", border: "2px solid #fff" }}>
-        <div style={{ fontSize: "16px", color: "#fff", letterSpacing: "2px", marginBottom: "8px", fontWeight: "bold" }}>[ DEPLOY GUIDE ]</div>
-        <div style={{ fontSize: "16px", color: "#fff", lineHeight: "1.8", fontFamily: "'Share Tech Mono', monospace" }}>
-          1. Push this repo to GitHub<br />
-          2. Enable GitHub Pages (Settings → Pages → Source: GitHub Actions)<br />
-          3. Deploy — done. No server needed.<br />
-          4. On each device: link your Syncthing folder file above.
-        </div>
-      </div>
-
-      <div style={{ height: "1px", background: "#333", margin: "8px 0" }} />
-      <div style={{ fontSize: "16px", color: "#fff", letterSpacing: "2px", fontWeight: "bold" }}>[ GOOGLE CALENDAR ]</div>
-      <div style={{ fontSize: "16px", color: "#fff", lineHeight: "1.8", fontFamily: "'Share Tech Mono', monospace" }}>
-        Paste your Google OAuth Client ID to enable Calendar sync.<br />
-        Get one free at <span style={{ color: "#fff", fontWeight: "bold" }}>console.cloud.google.com</span> → APIs & Services → Credentials.
-      </div>
-      <input
-        type="text"
-        value={clientIdInput}
-        onChange={(e) => setClientIdInput(e.target.value)}
-        placeholder="xxxxx.apps.googleusercontent.com"
-        style={{
-          width: "100%", padding: "8px", background: "#0a0a0a",
-          border: "2px solid #fff", color: "#fff", boxSizing: "border-box",
-          fontFamily: "'Share Tech Mono', monospace", fontSize: "16px",
-        }}
-      />
-      <button
-        type="button"
-        onClick={saveClientId}
-        style={{
-          padding: "12px", border: "2px solid #fff", background: "transparent",
-          color: "#fff", fontFamily: "'Share Tech Mono', monospace",
-          fontSize: "16px", letterSpacing: "1px", cursor: "pointer",
-          minHeight: "48px",
-        }}
-      >
-        SAVE CLIENT ID
-      </button>
 
       <button type="button" onClick={resetAll} style={{
         marginTop: "8px", padding: "10px",

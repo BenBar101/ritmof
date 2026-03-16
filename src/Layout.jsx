@@ -5,7 +5,7 @@ import { getLevelProgress } from "./utils/xp";
 // TOP BAR
 // ═══════════════════════════════════════════════════════════════
 // eslint-disable-next-line no-unused-vars
-export function TopBar({ xp, xpPerLevel, level, rank, streak, profile, syncStatus, lastSynced, onPush, onPull, syncFileConnected, isReloading = false }) {
+export function TopBar({ xp, xpPerLevel, level, rank, profile, syncStatus, lastSynced, onPush, onPull, syncFileConnected, isReloading = false }) {
   const progress = getLevelProgress(xp, xpPerLevel);
   const pct = xpPerLevel > 0
     ? Math.min(100, Math.max(0, (progress / xpPerLevel) * 100))
@@ -81,13 +81,6 @@ export function TopBar({ xp, xpPerLevel, level, rank, streak, profile, syncStatu
             </button>
           </>
         )}
-        <div style={{
-          fontFamily: "'Share Tech Mono', monospace", fontSize: "13px",
-          border: "2px solid #fff", padding: "6px 8px", color: "#fff", fontWeight: "bold",
-          whiteSpace: "nowrap",
-        }}>
-          🔥{streak}
-        </div>
       </div>
     </div>
   );

@@ -39,13 +39,30 @@ async function _wait429(res) {
   await new Promise((r) => setTimeout(r, ms));
 }
 
-// ── Step 0: use Gemini to resolve books/interests → author names ──────────────
+// Static mapping: common majors/fields → quote-worthy authors (used when Gemini unavailable).
+const MAJOR_TO_AUTHORS = {
+  physics: ["Richard Feynman", "Carl Sagan", "Stephen Hawking"],
+  "computer science": ["Alan Turing", "Edsger Dijkstra", "Grace Hopper"],
+  cs: ["Alan Turing", "Edsger Dijkstra", "Grace Hopper"],
+  mathematics: ["Albert Einstein", "Kurt Gödel", "Paul Erdős"],
+  math: ["Albert Einstein", "Kurt Gödel", "Paul Erdős"],
+  philosophy: ["Marcus Aurelius", "Seneca", "Epictetus"],
+  chemistry: ["Marie Curie", "Linus Pauling", "Richard Feynman"],
+  biology: ["Charles Darwin", "Richard Dawkins", "Carl Sagan"],
+  engineering: ["Elon Musk", "Nikola Tesla", "Buckminster Fuller"],
+  psychology: ["Carl Jung", "Viktor Frankl", "William James"],
+  economics: ["Adam Smith", "John Maynard Keynes", "Milton Friedman"],
+  literature: ["George Orwell", "Ursula Le Guin", "Toni Morrison"],
+};
+
+// ── Step 0: use Gemini to resolve books/interests/major → author names ───────
 // Returns an array of author name strings. Cached in localStorage for the day.
-// Falls back to raw token extraction if Gemini is unavailable or fails.
+// Falls back to major mapping + raw extraction if Gemini is unavailable or fails.
 async function _resolveAuthors(apiKey, profile, onTokens) {
   const books     = (profile?.books     || "").trim();
   const interests = (profile?.interests || "").trim();
-  const combined  = [books, interests].filter(Boolean).join(", ");
+  const major     = (profile?.major     || "").trim();
+  const combined  = [books, interests, major].filter(Boolean).join(", ");
   if (!combined) return [];
 
   // Cache key: resolved author list for today
@@ -57,9 +74,9 @@ async function _resolveAuthors(apiKey, profile, onTokens) {
   if (apiKey) {
     try {
       const prompt =
-        `The user likes: "${combined}"\n` +
-        `List up to 6 real authors whose quotes would resonate with someone who likes these books, topics, or interests. ` +
-        `For book titles, return the book's author. For topics like "physics" or "stoicism", return 2-3 well-known authors in that field. ` +
+        `The user's major, books, and interests: "${combined}"\n` +
+        `List up to 6 real authors whose quotes would resonate with someone with this background. ` +
+        `For book titles, return the book's author. For majors like "Physics" or "Computer Science", return 2-3 well-known authors in that field. ` +
         `Return ONLY a JSON array of author name strings, nothing else. Example: ["Frank Herbert","Richard Feynman","Marcus Aurelius"]`;
 
       const { text, tokensUsed } = await callGemini(
@@ -86,14 +103,39 @@ async function _resolveAuthors(apiKey, profile, onTokens) {
     }
   }
 
-  // No Gemini key (or failed): extract the last meaningful word of each segment
-  // as a best-effort author surname guess.
-  const raw = combined
-    .split(/[,;\n|/]+/)
-    .map(s => s.trim())
-    .filter(t => t.length >= 3)
-    .slice(0, 6);
-  // Don't cache raw results — they're unreliable; let the next mount retry with Gemini.
+  // No Gemini key (or failed): use major mapping + "by X" extraction + segment tokens.
+  const candidates = [];
+
+  // 1. Map major/field to known authors
+  const majorNorm = major.toLowerCase().replace(/\s+/g, " ").trim();
+  const majorKey = Object.keys(MAJOR_TO_AUTHORS).find((k) => majorNorm.includes(k));
+  if (majorKey && MAJOR_TO_AUTHORS[majorKey]) {
+    candidates.push(...MAJOR_TO_AUTHORS[majorKey]);
+  }
+
+  // 2. Extract "by Author Name" or "Author Name" from books (e.g. "Dune by Frank Herbert")
+  const byMatch = books.match(/\bby\s+([A-Za-z][A-Za-z\s.-]{2,50})(?=[,.\n]|$)/g);
+  if (byMatch) {
+    for (const m of byMatch.slice(0, 3)) {
+      const name = m.replace(/^\s*by\s+/i, "").trim();
+      if (name && name.length >= 3 && !candidates.includes(name)) candidates.push(name);
+    }
+  }
+
+  // 3. Split interests/books into segments; use multi-word segments as author guesses
+  const segments = combined.split(/[,;\n|/]+/).map((s) => s.trim()).filter((t) => t.length >= 3);
+  for (const seg of segments) {
+    if (candidates.length >= 6) break;
+    const words = seg.split(/\s+/).filter((w) => w.length >= 2);
+    if (words.length >= 2) {
+      const asAuthor = words.slice(-2).join(" ");
+      if (!candidates.includes(asAuthor)) candidates.push(asAuthor);
+    } else if (seg.length >= 4 && !candidates.includes(seg)) {
+      candidates.push(seg);
+    }
+  }
+
+  const raw = [...new Set(candidates)].slice(0, 6);
   return raw;
 }
 
@@ -169,25 +211,28 @@ export async function fetchDailyQuote(apiKey, profile, onTokens) {
       } catch { /* network error on one author — try the next */ }
     }
 
-    // ── Step 3: themed random fallback ────────────────────────────────────────
+    // ── Step 3: themed random fallback — try multiple tags before giving up ────
     if (!hit) {
-      const tag = QUOTABLE_FALLBACK_TAGS[Math.floor(Math.random() * QUOTABLE_FALLBACK_TAGS.length)];
-      const fallbackUrl = `https://api.quotable.kameswari.in/quotes/random?tags=${tag}&maxLength=200&limit=1`;
-      try {
-        let fallbackRes = await fetch(fallbackUrl, { signal: _makeSignal() });
-        if (fallbackRes.status === 429) {
-          await _wait429(fallbackRes);
-          fallbackRes = await fetch(fallbackUrl, { signal: _makeSignal() });
-        }
-        if (fallbackRes.ok) {
-          const arr = await fallbackRes.json();
-          const q = Array.isArray(arr) ? arr[0] : arr?.results?.[0];
-          if (q?.content && q?.author) {
-            const candidate = { quote: q.content, author: q.author, source: q.authorSlug || "" };
-            if (isValidQuote(candidate)) hit = candidate;
+      const tagOrder = [...QUOTABLE_FALLBACK_TAGS].sort(() => Math.random() - 0.5);
+      for (const tag of tagOrder) {
+        if (hit) break;
+        try {
+          const fallbackUrl = `https://api.quotable.kameswari.in/quotes/random?tags=${tag}&maxLength=200&limit=1`;
+          let fallbackRes = await fetch(fallbackUrl, { signal: _makeSignal() });
+          if (fallbackRes.status === 429) {
+            await _wait429(fallbackRes);
+            fallbackRes = await fetch(fallbackUrl, { signal: _makeSignal() });
           }
-        }
-      } catch { /* network error on fallback */ }
+          if (fallbackRes.ok) {
+            const arr = await fallbackRes.json();
+            const q = Array.isArray(arr) ? arr[0] : arr?.results?.[0];
+            if (q?.content && q?.author) {
+              const candidate = { quote: q.content, author: q.author, source: q.authorSlug || "" };
+              if (isValidQuote(candidate)) hit = candidate;
+            }
+          }
+        } catch { /* network error on this tag — try next */ }
+      }
     }
 
     if (hit) {
@@ -206,6 +251,9 @@ export async function fetchDailyQuote(apiKey, profile, onTokens) {
     _quoteInFlight = false;
   }
 
+  if (typeof console !== "undefined" && console.warn) {
+    console.warn("[RITMOL] Daily quote: all author/tag fetches failed; using emergency fallback.");
+  }
   LS.set(key, EMERGENCY_FALLBACK);
   return EMERGENCY_FALLBACK;
 }
