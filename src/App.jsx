@@ -59,9 +59,9 @@ async function generateAiMissions(apiKey, profile, period, trackTokens) {
     `Write ${count} ${isWeekly ? "weekly" : "monthly"} RPG missions, XP ${xpRange}. ` +
     `JSON array only: [{"id":"1","desc":"text","type":"habits","target":5,"xp":200}]`;
 
-  // Hard 15-second race so the promise always resolves even if callGemini hangs.
+  // Hard 20-second race so the promise always resolves
   const hardTimeout = new Promise((_, rej) =>
-    setTimeout(() => rej(new Error("mission_timeout")), 15000)
+    setTimeout(() => rej(new Error("mission_timeout")), 20000)
   );
 
   try {
@@ -70,7 +70,7 @@ async function generateAiMissions(apiKey, profile, period, trackTokens) {
         apiKey,
         [{ role: "user", content: prompt }],
         "Output a JSON array only. No markdown fences, no explanation.",
-        false,
+        false, // jsonMode=false so response_mime_type is NOT set — arrays work fine
       ),
       hardTimeout,
     ]);
@@ -93,7 +93,6 @@ async function generateAiMissions(apiKey, profile, period, trackTokens) {
       ai: true,
     }));
   } catch {
-    // Always return an array so UI never stays stuck on "generating..."
     return [];
   }
 }
@@ -476,21 +475,18 @@ export default function App() {
     const wk = localWeekKey();
     const mo = localMonthKey();
 
-    function tryGenerate(period) {
+    function tryGenerate(period, currentMissions, currentDateKey) {
       const key     = period === "weekly" ? "weeklyMissions"         : "monthlyMissions";
       const dateKey = period === "weekly" ? "lastWeeklyMissionDate"  : "lastMonthlyMissionDate";
       const currentPeriodKey = period === "weekly" ? wk : mo;
 
-      if (missionGenRef.current[period]) return; // already in-flight
+      if (missionGenRef.current[period]) return;
 
-      const live = latestStateRef?.current;
-      if (!live) return;
+      // Skip if already have missions for this period
+      if (currentDateKey === currentPeriodKey && Array.isArray(currentMissions) && currentMissions.length > 0) return;
 
-      // Skip if already generated for this period (null = first run, [] = failed, [...] = done)
-      if (live[dateKey] === currentPeriodKey && live[key] !== null && live[key] !== undefined) return;
-
-      // Skip if token budget is exhausted today
-      const usage = live.tokenUsage;
+      // Skip if token budget exhausted
+      const usage = state?.tokenUsage;
       if (usage && usage.date === todayUTC() && usage.tokens >= DAILY_TOKEN_LIMIT) return;
 
       missionGenRef.current[period] = true;
@@ -504,16 +500,15 @@ export default function App() {
           }));
         })
         .catch(() => {
-          // On failure write [] + date key so we don't retry endlessly this period
           setState((s) => ({ ...s, [key]: [], [dateKey]: currentPeriodKey }));
         })
         .finally(() => { missionGenRef.current[period] = false; });
     }
 
-    tryGenerate("weekly");
-    tryGenerate("monthly");
+    tryGenerate("weekly",  state?.weeklyMissions,  state?.lastWeeklyMissionDate);
+    tryGenerate("monthly", state?.monthlyMissions, state?.lastMonthlyMissionDate);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [!!profile, !!apiKey, profile?.name ?? ""]);
+  }, [!!profile, !!apiKey, profile?.name ?? "", state?.lastWeeklyMissionDate, state?.lastMonthlyMissionDate]);
 
   const quoteFetchedRef = useRef(false);
   const quoteInputRef = useRef("");

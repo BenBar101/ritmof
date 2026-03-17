@@ -32,14 +32,14 @@ export async function callGemini(apiKey, messages, systemPrompt, jsonMode = fals
   }
   // Always work with the trimmed key so whitespace from paste/storage never causes 403.
   apiKey = apiKey.trim();
-  const url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent";
+  const url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent";
   const contents = messages.map((m) => ({
     role: m.role === "assistant" ? "model" : "user",
     parts: [{ text: m.content }],
   }));
 
   const finalSystem = jsonMode
-    ? systemPrompt + "\n\nCRITICAL: Your entire response must be a single valid JSON object. No markdown, no backticks, no explanation outside the JSON. Start with { and end with }."
+    ? systemPrompt + "\n\nCRITICAL: Your entire response must be valid JSON only. No markdown, no backticks, no explanation. Return only the raw JSON value requested."
     : systemPrompt;
 
   const body = {
@@ -48,10 +48,6 @@ export async function callGemini(apiKey, messages, systemPrompt, jsonMode = fals
     generationConfig: {
       temperature: 0.7,
       maxOutputTokens: 1024,
-      // Fix: set response_mime_type when jsonMode is requested so the API enforces
-      // valid JSON output — this prevents partial/malformed JSON responses that
-      // crash the JSON.parse call in callers.
-      ...(jsonMode ? { response_mime_type: "application/json" } : {}),
     },
   };
 

@@ -34,8 +34,11 @@ async function _generateQuoteWithGemini(apiKey, profile, onTokens) {
   const name      = (profile?.name      || "Hunter").trim();
   const combined  = [books, interests, major].filter(Boolean).join(", ");
 
+  // Simple numeric hash of the profile context for a stable cache key (no btoa/unicode issues)
   const cacheInput = combined || "default";
-  const resolvedKey = storageKey(`jv_quote_gem_${localToday()}_${btoa(encodeURIComponent(cacheInput.slice(0, 60))).slice(0, 20)}`);
+  let h = 0;
+  for (let i = 0; i < cacheInput.length; i++) { h = (Math.imul(31, h) + cacheInput.charCodeAt(i)) | 0; }
+  const resolvedKey = storageKey(`jv_quote_gem_${localToday()}_${Math.abs(h).toString(36)}`);
   const cached = LS.get(resolvedKey);
   if (cached && isValidQuote(cached)) return cached;
 
@@ -59,8 +62,8 @@ async function _generateQuoteWithGemini(apiKey, profile, onTokens) {
     const { text, tokensUsed } = await callGemini(
       apiKey,
       [{ role: "user", content: prompt }],
-      "You are a literary curator. Return only a JSON object with quote, author, and source fields. No markdown, no explanation.",
-      true,
+      "You are a literary curator. Return only a raw JSON object with quote, author, and source fields. No markdown, no backticks.",
+      false, // jsonMode=false — we parse manually; avoids response_mime_type breaking the call
       AbortSignal.timeout ? AbortSignal.timeout(12000) : undefined,
     );
 
@@ -88,7 +91,7 @@ async function _generateQuoteWithGemini(apiKey, profile, onTokens) {
 }
 
 export async function fetchDailyQuote(apiKey, profile, onTokens) {
-  const key = storageKey(`jv_quote_${localToday()}`);
+  const key = storageKey(`jv_quote_v2_${localToday()}`);
 
   try {
     const quotePrefix = IS_DEV ? `${DEV_PREFIX}jv_quote_` : "jv_quote_";
