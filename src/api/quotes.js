@@ -17,10 +17,20 @@ const EMERGENCY_FALLBACKS = [
 // In-flight guard
 let _quoteInFlight = false;
 
-const stripCtrl = (s) =>
-  String(s)
-    .replace(/[\u0000-\u001F\u007F-\u009F\u200B-\u200D\uFEFF\u202A-\u202E\u2066-\u2069]/g, "")
-    .replace(/[<>]/g, "");
+const stripCtrl = (s) => {
+  const cleaned = Array.from(String(s))
+    .filter((ch) => {
+      const code = ch.charCodeAt(0);
+      if ((code >= 0x00 && code <= 0x1f) || (code >= 0x7f && code <= 0x9f)) return false;
+      if (code >= 0x200b && code <= 0x200d) return false;
+      if (code === 0xfeff) return false;
+      if (code >= 0x202a && code <= 0x202e) return false;
+      if (code >= 0x2066 && code <= 0x2069) return false;
+      return true;
+    })
+    .join("");
+  return cleaned.replace(/[<>]/g, "");
+};
 
 function isValidQuote(q) {
   return q && typeof q.quote === "string" && q.quote.trim().length > 10

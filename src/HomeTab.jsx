@@ -88,7 +88,6 @@ function MissionsPanel({ state, setState, textPrimary, textDim, borderMid, hudBg
           const list = missionMap[t.id] || [];
           const done = countDone(list);
           const total = list.length;
-          const isPending = missionMap[t.id] === null;
           const isActive = activeTab === t.id;
           return (
             <button
@@ -252,7 +251,7 @@ export default function HomeTab() {
           { label: "HABITS", value: `${doneHabits}/${totalHabits}` },
           { label: "TASKS", value: pendingTasks.length },
           { label: "STREAK", value: `${state.streak}d` },
-          { label: "ACHIEV", value: totalAchievements },
+          { label: "ACHIEVEMENTS", value: totalAchievements },
         ].map((s) => (
           <div key={s.label} style={{
             border: `1.5px solid ${borderMid}`,
