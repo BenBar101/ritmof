@@ -50,10 +50,13 @@ const GLOBAL_CSS = `
   /* ── Mobile: prevent text-size bump on rotation ─────────── */
   html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 
-  /* ── iOS PWA: respect notch/home-bar safe areas ─────────── */
+  /* ── iOS PWA: safe-area side insets only ─────────────────── */
+  /* Do NOT add padding-top/bottom here — the fixed TopBar and BottomNav   */
+  /* each handle their own safe-area insets so adding them on body too      */
+  /* would shift the entire fixed layout on iPhone notch / Dynamic Island.  */
   body {
-    padding-top:    env(safe-area-inset-top,    0px);
-    padding-bottom: env(safe-area-inset-bottom, 0px);
+    padding-top:    0px;
+    padding-bottom: 0px;
     padding-left:   env(safe-area-inset-left,   0px);
     padding-right:  env(safe-area-inset-right,  0px);
   }
