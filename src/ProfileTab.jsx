@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
+import { flushSync } from "react-dom";
 import { useAppContext } from "./context/AppContext";
 import { todayUTC, localDateFromUTC, getGeminiApiKey, setGeminiApiKey, getMaxDateSeen } from "./utils/db";
 import { ACHIEVEMENT_RARITIES, STYLE_CSS, DAILY_TOKEN_LIMIT, RANKS, sampleGachaRarity } from "./constants";
@@ -778,29 +779,31 @@ Respond ONLY with JSON:
         asciiArt: stripGachaStr(card.asciiArt, 500),
       };
 
-      // ATOMIC: deduct XP and add card in a single setState updater so no intermediate
-      // state is observable. A DevTools breakpoint between deduction and card-addition
-      // is no longer possible because both mutations are committed in one synchronous pass.
+      // ATOMIC: deduct XP and add card in a single flushSync setState so the updater
+      // runs synchronously and the committed flag is reliably set before we read it.
+      // Without flushSync, React 18 concurrent mode may batch/defer the updater,
+      // leaving committed=false even when the state change succeeded.
       let committed = false;
       let snapshotForCosts = null;
-      setState((s) => {
-        const cost = s.dynamicCosts?.gachaCost ?? gachaCost;
-        const MAX_SAFE_XP = 10_000_000;
-        const safeXp = typeof s.xp === "number" && isFinite(s.xp) && s.xp >= 0
-          ? Math.min(Math.floor(s.xp), MAX_SAFE_XP) : 0;
-        // Re-check affordability inside the updater against live s — guards against
-        // state manipulation between the pre-call check and this commit.
-        if (safeXp < cost) return s;
-        if ((s.gachaCollection || []).length >= 2000) return s;
-        if ((s.gachaCollection || []).find(c => c.id === safeCard.id)) return s;
-        committed = true;
-        const next = {
-          ...s,
-          xp: Math.max(0, safeXp - cost),
-          gachaCollection: [...(s.gachaCollection || []), { ...safeCard, pulledAt: Date.now() }],
-        };
-        snapshotForCosts = next;
-        return next;
+      flushSync(() => {
+        setState((s) => {
+          const cost = s.dynamicCosts?.gachaCost ?? gachaCost;
+          const MAX_SAFE_XP = 10_000_000;
+          const safeXp = typeof s.xp === "number" && isFinite(s.xp) && s.xp >= 0
+            ? Math.min(Math.floor(s.xp), MAX_SAFE_XP) : 0;
+          // Re-check affordability inside the updater against live s.
+          if (safeXp < cost) return s;
+          if ((s.gachaCollection || []).length >= 2000) return s;
+          if ((s.gachaCollection || []).find(c => c.id === safeCard.id)) return s;
+          committed = true;
+          const next = {
+            ...s,
+            xp: Math.max(0, safeXp - cost),
+            gachaCollection: [...(s.gachaCollection || []), { ...safeCard, pulledAt: Date.now() }],
+          };
+          snapshotForCosts = next;
+          return next;
+        });
       });
 
       if (!committed) {

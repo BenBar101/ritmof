@@ -46,6 +46,118 @@ function SectionLabel({ children }) {
   );
 }
 
+// ── Missions Panel (Daily / Weekly / Monthly tabs) ────────────
+function MissionsPanel({ state, setState, textPrimary, textDim, borderMid, hudBg, borderAccent }) {
+  const [activeTab, setActiveTab] = useState("daily");
+
+  const tabs = [
+    { id: "daily",   label: "DAILY" },
+    { id: "weekly",  label: "WEEKLY" },
+    { id: "monthly", label: "MONTHLY" },
+  ];
+
+  // Determine mission list for active tab
+  const missionMap = {
+    daily:   state.dailyMissions   || [],
+    weekly:  state.weeklyMissions  || [],
+    monthly: state.monthlyMissions || [],
+  };
+  const missions = missionMap[activeTab];
+  const isGenerating = activeTab !== "daily" && missions.length === 0;
+
+  // Count done missions per tab for badge
+  const countDone = (list) => (list || []).filter((m) => m.done).length;
+
+  // Toggle mission done state (for weekly/monthly — daily is auto-tracked by game engine)
+  function toggleMission(id) {
+    const key = activeTab === "weekly" ? "weeklyMissions" : "monthlyMissions";
+    setState((s) => ({
+      ...s,
+      [key]: (s[key] || []).map((m) =>
+        m.id === id ? { ...m, done: !m.done } : m
+      ),
+    }));
+  }
+
+  return (
+    <div>
+      {/* Tab selector */}
+      <div style={{ display: "flex", gap: "0", marginBottom: "0", borderBottom: `2px solid ${borderAccent}` }}>
+        {tabs.map((t) => {
+          const list = missionMap[t.id];
+          const done = countDone(list);
+          const total = list.length;
+          const isActive = activeTab === t.id;
+          return (
+            <button
+              key={t.id}
+              type="button"
+              onClick={() => setActiveTab(t.id)}
+              style={{
+                flex: 1, fontFamily: "'Share Tech Mono', monospace", fontSize: "11px",
+                letterSpacing: "1px", padding: "8px 4px",
+                background: isActive ? textPrimary : "transparent",
+                color: isActive ? (textPrimary === "#fff" ? "#000" : "#fff") : textDim,
+                border: "none", borderBottom: isActive ? `2px solid ${textPrimary}` : "2px solid transparent",
+                cursor: "pointer", fontWeight: isActive ? "bold" : "normal",
+                marginBottom: "-2px",
+              }}
+            >
+              {t.label}
+              {total > 0 && (
+                <span style={{ marginLeft: "4px", fontSize: "10px", opacity: 0.7 }}>
+                  {done}/{total}
+                </span>
+              )}
+            </button>
+          );
+        })}
+      </div>
+
+      <HudPanel style={{ padding: "10px 14px", "--hud-bg": hudBg }}>
+        {isGenerating && (
+          <div style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: "12px", color: textDim, padding: "8px 0", textAlign: "center" }}>
+            ◈ RITMOL IS GENERATING {activeTab.toUpperCase()} MISSIONS...
+          </div>
+        )}
+
+        {!isGenerating && missions.length === 0 && (
+          <div style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: "12px", color: textDim, padding: "8px 0", textAlign: "center" }}>
+            No {activeTab} missions yet. Check back soon.
+          </div>
+        )}
+
+        {missions.map((m, i) => (
+          <div
+            key={m.id}
+            onClick={() => activeTab !== "daily" && toggleMission(m.id)}
+            style={{
+              display: "flex", justifyContent: "space-between", alignItems: "center",
+              padding: "10px 0",
+              borderBottom: i < missions.length - 1 ? `1px solid ${borderMid}` : "none",
+              fontFamily: "'Share Tech Mono', monospace", fontSize: "12px",
+              color: m.done ? textDim : textPrimary,
+              textDecoration: m.done ? "line-through" : "none",
+              cursor: activeTab !== "daily" ? "pointer" : "default",
+            }}
+          >
+            <span style={{ flex: 1, paddingRight: "8px" }}>
+              <span style={{ marginRight: "8px", fontSize: "10px" }}>{m.done ? "✓" : "○"}</span>
+              {m.desc}
+              {m.ai && (
+                <span style={{ marginLeft: "6px", fontSize: "9px", color: textDim, letterSpacing: "1px" }}>AI</span>
+              )}
+            </span>
+            <span style={{ color: m.done ? textDim : textPrimary, fontWeight: "bold", flexShrink: 0 }}>
+              +{m.xp}
+            </span>
+          </div>
+        ))}
+      </HudPanel>
+    </div>
+  );
+}
+
 export default function HomeTab() {
   const { state, setState, rank, dailyQuote, showBanner, setTab, profile, theme, setModal } = useAppContext();
   const todayLog = state.habitLog[localDateFromUTC()] || [];
@@ -229,30 +341,16 @@ export default function HomeTab() {
         </div>
       )}
 
-      {/* ── DAILY MISSIONS ──────────────────────────────────── */}
-      {state.dailyMissions && (
-        <div>
-          <SectionLabel>DAILY MISSIONS</SectionLabel>
-          <HudPanel style={{ padding: "10px 14px", "--hud-bg": hudBg }}>
-            {state.dailyMissions.map((m, i) => (
-              <div key={m.id} style={{
-                display: "flex", justifyContent: "space-between", alignItems: "center",
-                padding: "9px 0",
-                borderBottom: i < state.dailyMissions.length - 1 ? `1px solid ${borderMid}` : "none",
-                fontFamily: "'Share Tech Mono', monospace", fontSize: "12px",
-                color: m.done ? textDim : textPrimary,
-                textDecoration: m.done ? "line-through" : "none",
-              }}>
-                <span>
-                  <span style={{ marginRight: "8px", fontSize: "10px" }}>{m.done ? "✓" : "○"}</span>
-                  {m.desc}
-                </span>
-                <span style={{ color: m.done ? textDim : textPrimary, fontWeight: "bold", marginLeft: "12px", flexShrink: 0 }}>+{m.xp}</span>
-              </div>
-            ))}
-          </HudPanel>
-        </div>
-      )}
+      {/* ── MISSIONS (Daily / Weekly / Monthly) ─────────────── */}
+      <MissionsPanel
+        state={state}
+        setState={setState}
+        textPrimary={textPrimary}
+        textDim={textDim}
+        borderMid={borderMid}
+        hudBg={hudBg}
+        borderAccent={borderAccent}
+      />
 
       {/* ── HABITS RING ─────────────────────────────────────── */}
       <div>

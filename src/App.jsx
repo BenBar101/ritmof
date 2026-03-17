@@ -17,6 +17,7 @@ import { getLevel, getRank, getXpPerLevel, getGachaCost, getStreakShieldCost, ca
 import { THEME_KEY, SESSION_TYPES, DEFAULT_XP_PER_LEVEL, DEFAULT_GACHA_COST, DEFAULT_STREAK_SHIELD_COST } from "./constants";
 import { buildSystemPrompt } from "./api/systemPrompt";
 import { fetchDailyQuote } from "./api/quotes";
+import { callGemini } from "./api/gemini";
 import { FSAPI_SUPPORTED } from "./sync/SyncManager";
 import { verifyOAuthState } from "./api/dropbox";
 
@@ -28,6 +29,69 @@ const MISSION_DEFS = [
   { id: "m5", desc: "Complete a task",    target: 1,  type: "task",    xp: 50,  done: false },
   { id: "m6", desc: "Open RITMOL chat",   target: 1,  type: "chat",    xp: 25,  done: false },
 ];
+
+// ── ISO week key: "YYYY-Www" using local date ──────────────────
+function localWeekKey() {
+  const d = new Date();
+  const jan4 = new Date(d.getFullYear(), 0, 4);
+  const dayOfYear = Math.floor((d - new Date(d.getFullYear(), 0, 0)) / 86400000);
+  const week = Math.ceil((dayOfYear + jan4.getDay()) / 7);
+  return `${d.getFullYear()}-W${String(week).padStart(2, "0")}`;
+}
+
+// ── Month key: "YYYY-MM" using local date ──────────────────────
+function localMonthKey() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
+// ── Ask Gemini to generate weekly or monthly missions ──────────
+async function generateAiMissions(apiKey, profile, period, trackTokens) {
+  const periodLabel = period === "weekly" ? "week" : "month";
+  const count = period === "weekly" ? 5 : 3;
+  const xpRange = period === "weekly" ? "150–400" : "500–1500";
+  const name = (profile?.name || "Hunter").slice(0, 60);
+  const major = (profile?.major || "").slice(0, 80);
+  const interests = (profile?.interests || "").slice(0, 100);
+  const goal = (profile?.semesterGoal || "").slice(0, 200);
+
+  const prompt =
+    `Generate ${count} personalized ${periodLabel} missions for a university student hunter.\n` +
+    `Hunter: name="${name}", major="${major}", interests="${interests}", goal="${goal}".\n` +
+    `Each mission should be challenging but completable in one ${periodLabel}. Mix habit, study, and task types.\n` +
+    `XP per mission: ${xpRange}.\n` +
+    `Respond ONLY with a JSON array:\n` +
+    `[{"id":"w1","desc":"Mission description","type":"habits|session|task|streak|custom","target":5,"xp":200,"done":false}]`;
+
+  try {
+    const { text, tokensUsed } = await callGemini(
+      apiKey,
+      [{ role: "user", content: prompt }],
+      "You generate personalized game missions for a student RPG. Respond only in JSON.",
+      true,
+      AbortSignal.timeout ? AbortSignal.timeout(15000) : undefined,
+    );
+    if (trackTokens && tokensUsed) trackTokens(tokensUsed);
+
+    const match = text.match(/\[[\s\S]*\]/);
+    if (!match) return null;
+    const parsed = JSON.parse(match[0]);
+    if (!Array.isArray(parsed) || !parsed.length) return null;
+
+    return parsed.slice(0, count).map((m, i) => ({
+      id: typeof m.id === "string" ? `${period}_ai_${m.id.slice(0,20)}` : `${period}_ai_${i}`,
+      // eslint-disable-next-line no-control-regex
+      desc: typeof m.desc === "string" ? m.desc.replace(/[\u0000-\u001F\u007F-\u009F]/g, "").replace(/[<>"'`&]/g, "").slice(0, 200) : "Complete missions",
+      type: ["habits","session","task","streak","custom"].includes(m.type) ? m.type : "custom",
+      target: typeof m.target === "number" ? Math.min(Math.max(1, Math.round(m.target)), 100) : 1,
+      xp: typeof m.xp === "number" ? Math.min(Math.max(50, Math.round(m.xp)), 2000) : 200,
+      done: false,
+      ai: true,
+    }));
+  } catch {
+    return null;
+  }
+}
 
 // Components
 import Onboarding, { GeminiKeySetupScreen } from "./Onboarding";
@@ -389,10 +453,6 @@ export default function App() {
   useEffect(() => {
     if (!profile) return;
     const resetMissions = () => setState((s) => {
-      // Use localDateFromUTC() to match useGameEngine.checkMissions which reads
-      // mission progress against the local calendar date (habit log, session, task doneDate).
-      // Using todayUTC() here caused the reset and progress-check to use different date keys
-      // in non-UTC timezones, resulting in missions that could never complete.
       const t = localDateFromUTC();
       if (s.lastMissionDate === t) return s;
       return { ...s, dailyMissions: [...MISSION_DEFS], lastMissionDate: t };
@@ -400,8 +460,59 @@ export default function App() {
     resetMissions();
     const id = setInterval(resetMissions, 30_000);
     return () => clearInterval(id);
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- setState is stable (useCallback with [] dep); !!profile is the only meaningful trigger
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [!!profile, setState]);
+
+  // ── Weekly & Monthly AI missions ───────────────────────────
+  const missionGenRef = useRef({ weekly: false, monthly: false });
+  useEffect(() => {
+    if (!profile || !apiKey) return;
+
+    const wk = localWeekKey();
+    const mo = localMonthKey();
+
+    // Weekly missions
+    setState((s) => {
+      if (s.lastWeeklyMissionDate === wk && s.weeklyMissions?.length) return s;
+      // Reset to null so we know to generate
+      if (s.lastWeeklyMissionDate === wk) return s;
+      return { ...s, weeklyMissions: null, lastWeeklyMissionDate: wk };
+    });
+
+    // Monthly missions
+    setState((s) => {
+      if (s.lastMonthlyMissionDate === mo && s.monthlyMissions?.length) return s;
+      if (s.lastMonthlyMissionDate === mo) return s;
+      return { ...s, monthlyMissions: null, lastMonthlyMissionDate: mo };
+    });
+
+    // Generate weekly if missing
+    const currentState = latestStateRef?.current;
+    if (!currentState) return;
+
+    if ((currentState.lastWeeklyMissionDate !== wk || !currentState.weeklyMissions?.length) && !missionGenRef.current.weekly) {
+      missionGenRef.current.weekly = true;
+      generateAiMissions(apiKey, profile, "weekly", trackTokens).then((missions) => {
+        if (!missions) return;
+        setState((s) => {
+          if (s.weeklyMissions?.length && s.lastWeeklyMissionDate === wk) return s;
+          return { ...s, weeklyMissions: missions, lastWeeklyMissionDate: wk };
+        });
+      }).catch(() => {}).finally(() => { missionGenRef.current.weekly = false; });
+    }
+
+    if ((currentState.lastMonthlyMissionDate !== mo || !currentState.monthlyMissions?.length) && !missionGenRef.current.monthly) {
+      missionGenRef.current.monthly = true;
+      generateAiMissions(apiKey, profile, "monthly", trackTokens).then((missions) => {
+        if (!missions) return;
+        setState((s) => {
+          if (s.monthlyMissions?.length && s.lastMonthlyMissionDate === mo) return s;
+          return { ...s, monthlyMissions: missions, lastMonthlyMissionDate: mo };
+        });
+      }).catch(() => {}).finally(() => { missionGenRef.current.monthly = false; });
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [!!profile, !!apiKey, profile?.name ?? ""]);
 
   const quoteFetchedRef = useRef(false);
   const quoteInputRef = useRef("");
