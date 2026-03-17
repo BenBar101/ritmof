@@ -57,13 +57,14 @@ function MissionsPanel({ state, setState, textPrimary, textDim, borderMid, hudBg
   ];
 
   // Determine mission list for active tab
+  // null = still generating, [] = failed/empty, [...] = loaded
   const missionMap = {
-    daily:   state.dailyMissions   || [],
-    weekly:  state.weeklyMissions  || [],
-    monthly: state.monthlyMissions || [],
+    daily:   state.dailyMissions   ?? [],
+    weekly:  state.weeklyMissions,   // may be null
+    monthly: state.monthlyMissions,  // may be null
   };
-  const missions = missionMap[activeTab];
-  const isGenerating = activeTab !== "daily" && missions.length === 0;
+  const missions = missionMap[activeTab] ?? [];
+  const isGenerating = activeTab !== "daily" && missionMap[activeTab] === null;
 
   // Count done missions per tab for badge
   const countDone = (list) => (list || []).filter((m) => m.done).length;
@@ -84,9 +85,10 @@ function MissionsPanel({ state, setState, textPrimary, textDim, borderMid, hudBg
       {/* Tab selector */}
       <div style={{ display: "flex", gap: "0", marginBottom: "0", borderBottom: `2px solid ${borderAccent}` }}>
         {tabs.map((t) => {
-          const list = missionMap[t.id];
+          const list = missionMap[t.id] || [];
           const done = countDone(list);
           const total = list.length;
+          const isPending = missionMap[t.id] === null;
           const isActive = activeTab === t.id;
           return (
             <button
