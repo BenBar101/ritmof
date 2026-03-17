@@ -468,27 +468,39 @@ export default function App() {
   }, [!!profile, setState]);
 
   // ── Weekly & Monthly AI missions ───────────────────────────
+  // Session-level guard: tracks which periods have been attempted this app load.
+  // Using a ref (not state) means it never causes re-renders, and persists across
+  // effect re-runs so a 429 failure never triggers a retry loop.
+  const missionAttemptedRef = useRef({ weekly: false, monthly: false });
   const missionGenRef = useRef({ weekly: false, monthly: false });
+
   useEffect(() => {
     if (!profile || !apiKey) return;
 
     const wk = localWeekKey();
     const mo = localMonthKey();
 
-    function tryGenerate(period, currentMissions, currentDateKey) {
+    function tryGenerate(period) {
       const key     = period === "weekly" ? "weeklyMissions"         : "monthlyMissions";
       const dateKey = period === "weekly" ? "lastWeeklyMissionDate"  : "lastMonthlyMissionDate";
       const currentPeriodKey = period === "weekly" ? wk : mo;
 
-      if (missionGenRef.current[period]) return;
+      // Already in-flight or already attempted this session — never retry on 429
+      if (missionGenRef.current[period] || missionAttemptedRef.current[period]) return;
 
-      // Skip if already have missions for this period
+      // Read current values directly from state (closure is fresh on each effect run)
+      const currentMissions = period === "weekly" ? state?.weeklyMissions : state?.monthlyMissions;
+      const currentDateKey  = period === "weekly" ? state?.lastWeeklyMissionDate : state?.lastMonthlyMissionDate;
+
+      // Already have valid missions for this period — skip
       if (currentDateKey === currentPeriodKey && Array.isArray(currentMissions) && currentMissions.length > 0) return;
 
       // Skip if token budget exhausted
       const usage = state?.tokenUsage;
       if (usage && usage.date === todayUTC() && usage.tokens >= DAILY_TOKEN_LIMIT) return;
 
+      // Mark attempted immediately — before the async call — so no re-render can sneak in a second call
+      missionAttemptedRef.current[period] = true;
       missionGenRef.current[period] = true;
 
       generateAiMissions(apiKey, profile, period, trackTokens)
@@ -500,15 +512,20 @@ export default function App() {
           }));
         })
         .catch(() => {
-          setState((s) => ({ ...s, [key]: [], [dateKey]: currentPeriodKey }));
+          // Write [] so the UI shows "no missions" instead of spinning forever.
+          // Do NOT change the date key on failure — next app load can retry.
+          setState((s) => ({ ...s, [key]: [] }));
         })
         .finally(() => { missionGenRef.current[period] = false; });
     }
 
-    tryGenerate("weekly",  state?.weeklyMissions,  state?.lastWeeklyMissionDate);
-    tryGenerate("monthly", state?.monthlyMissions, state?.lastMonthlyMissionDate);
+    tryGenerate("weekly");
+    // Stagger monthly by 3 s so both calls don't hit the API simultaneously
+    const monthlyTimer = setTimeout(() => tryGenerate("monthly"), 3000);
+    return () => clearTimeout(monthlyTimer);
+  // Only re-run when profile or apiKey first becomes available — never on state changes
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [!!profile, !!apiKey, profile?.name ?? "", state?.lastWeeklyMissionDate, state?.lastMonthlyMissionDate]);
+  }, [!!profile, !!apiKey, profile?.name ?? ""]);
 
   const quoteFetchedRef = useRef(false);
   const quoteInputRef = useRef("");

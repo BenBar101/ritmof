@@ -4,12 +4,15 @@
 // Accepts an optional AbortSignal so callers (ChatTab, HabitsTab, etc.) can cancel
 // in-flight requests when the component unmounts or the user navigates away.
 
-// Retryable HTTP status codes (rate limit and transient server errors).
-const RETRYABLE_STATUSES = new Set([429, 500, 502, 503, 504]);
-// Maximum number of attempts (1 original + 3 retries).
-const MAX_ATTEMPTS = 4;
-// Base delay in ms for exponential backoff. Doubles each attempt plus random jitter.
-const BASE_DELAY_MS = 1000;
+// Retryable HTTP status codes — transient server errors only, NOT 429.
+// 429 (rate limit) is thrown immediately so callers decide whether to retry;
+// auto-retrying 429 inside callGemini causes request storms when the app
+// fires multiple parallel calls (missions, quotes, gacha) on first load.
+const RETRYABLE_STATUSES = new Set([500, 502, 503, 504]);
+// Only 2 attempts (1 retry) — enough for a transient 5xx without hammering the API.
+const MAX_ATTEMPTS = 2;
+// Base delay in ms for exponential backoff.
+const BASE_DELAY_MS = 1500;
 
 function retryDelay(attempt) {
   // Exponential backoff: 1s, 2s, 4s — plus up to 500ms random jitter each time.
