@@ -151,8 +151,10 @@ export async function callGemini(apiKey, messages, systemPrompt, jsonMode = fals
 
       const enc = new TextEncoder();
       const tokensUsed = data.usageMetadata
-        ? (data.usageMetadata.promptTokenCount || 0) + (data.usageMetadata.candidatesTokenCount || 0)
-        : Math.ceil((enc.encode(JSON.stringify(body)).length + enc.encode(text).length) / 4);
+  ? (data.usageMetadata.totalTokenCount ||
+     (data.usageMetadata.promptTokenCount || 0) + (data.usageMetadata.candidatesTokenCount || 0))
+  : Math.ceil((enc.encode(JSON.stringify(body)).length + enc.encode(text).length) / 4);
+
 
       return { text, tokensUsed };
     }
