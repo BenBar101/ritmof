@@ -19,7 +19,7 @@ const BASE_DELAY_MS = 1500;
 // triggers (level-up + mission complete + gacha on first load) never fire
 // simultaneously and cause 429s. Each request waits for the previous one
 // to finish, then observes a minimum gap before sending.
-const MIN_GAP_MS = 1000; // minimum ms between consecutive requests
+const MIN_GAP_MS = 4000; // minimum ms between consecutive requests
 let _queueTail = Promise.resolve(); // chain every call onto this
 let _lastRequestTime = 0;
 
