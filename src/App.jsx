@@ -157,6 +157,14 @@ function MissingKeyGate({ connectDropbox, dropboxConnected, pickSyncFile, syncPu
   const [syncError, setSyncError]           = useState("");
   const [dropboxError, setDropboxError]     = useState("");
 
+  // Detect standalone PWA mode (iOS "Add to Home Screen").
+  // On iOS, localStorage is NOT shared between Safari browser and the installed
+  // PWA — they are separate storage partitions. So a user who authenticated in
+  // Safari will need to reconnect once inside the PWA. We detect this context
+  // and surface a single-tap reconnect prompt instead of the full onboarding.
+  const isPWA = typeof window !== "undefined" &&
+    window.matchMedia("(display-mode: standalone)").matches;
+
   const mono = { fontFamily: "'Share Tech Mono', monospace" };
   const btnPrimary = {
     width: "100%", padding: "16px", border: "2px solid #fff", background: "#fff", color: "#000",
@@ -221,9 +229,61 @@ function MissingKeyGate({ connectDropbox, dropboxConnected, pickSyncFile, syncPu
     }
   }
 
+  // PWA reconnect: if running as installed PWA, show a focused one-tap
+  // reconnect screen. iOS partitions localStorage between Safari browser
+  // and the PWA, so the user must re-auth once per PWA install — but we
+  // make it a single tap rather than full onboarding.
+  if (isPWA && mode === "choose" && !dropboxConnected) {
+    return (
+      <div style={{
+        height: "calc(var(--vh, 1vh) * 100)", display: "flex", flexDirection: "column",
+        alignItems: "center", justifyContent: "center",
+        padding: "32px 24px", background: "#000", color: "#fff", ...mono,
+      }}>
+        <img src={APP_ICON_URL} alt="" style={{ width: 44, height: 44, marginBottom: "24px" }} onError={(e) => { e.currentTarget.style.display = "none"; }} />
+
+        {/* Geometric corner accent */}
+        <div style={{ position: "relative", width: "100%", maxWidth: "340px", border: "2px solid #fff", padding: "28px 24px", marginBottom: "32px" }}>
+          <div style={{ position: "absolute", top: -1, left: -1, width: 16, height: 16, borderRight: "2px solid #000", borderBottom: "2px solid #000", background: "#000" }} />
+          <div style={{ position: "absolute", bottom: -1, right: -1, width: 16, height: 16, borderLeft: "2px solid #000", borderTop: "2px solid #000", background: "#000" }} />
+
+          <div style={{ fontSize: "11px", letterSpacing: "4px", color: "#fff", marginBottom: "10px", opacity: 0.6 }}>RITMOL // PWA</div>
+          <div style={{ fontSize: "22px", fontWeight: "bold", letterSpacing: "1px", marginBottom: "8px" }}>WELCOME BACK</div>
+          <div style={{ fontSize: "14px", color: "#fff", lineHeight: "1.7", marginBottom: "0", opacity: 0.8 }}>
+            Tap below to reconnect Dropbox and restore your data. This is a one-time step each time you install the app.
+          </div>
+        </div>
+
+        <div style={{ width: "100%", maxWidth: "340px", display: "flex", flexDirection: "column", gap: "12px" }}>
+          <button type="button" onClick={handleConnectDropbox} style={{ ...btnPrimary, marginBottom: 0, fontSize: "15px", letterSpacing: "2px" }}>
+            ◈ RECONNECT DROPBOX
+          </button>
+          {dropboxError && (
+            <div style={{ color: "#fff", fontSize: "13px", fontWeight: "bold", border: "2px solid #fff", padding: "10px" }}>
+              [ ERR ] {dropboxError}
+            </div>
+          )}
+          <div style={{ height: "1px", background: "#333" }} />
+          <button type="button" onClick={() => setMode("gemini")} style={{ ...btnSecondary, marginBottom: 0, fontSize: "13px" }}>
+            ENTER GEMINI KEY MANUALLY
+          </button>
+          {FSAPI_SUPPORTED && (
+            <button type="button" onClick={() => setMode("syncthing")} style={{ ...btnSecondary, marginBottom: 0, fontSize: "13px" }}>
+              LOAD FROM FILE
+            </button>
+          )}
+        </div>
+
+        <div style={{ marginTop: "32px", fontSize: "11px", color: "#fff", letterSpacing: "2px", opacity: 0.4 }}>
+          ZERO TELEMETRY // LOCAL FIRST
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div style={{
-      minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center",
+      minHeight: "calc(var(--vh, 1vh) * 100)", display: "flex", flexDirection: "column", alignItems: "center",
       justifyContent: "flex-start", padding: "32px 24px", background: "#000",
       color: "#fff", ...mono,
     }}>
@@ -329,7 +389,7 @@ function SyncingScreen({ theme = "dark" }) {
   const track  = isLight ? "rgba(0,0,0,0.12)"   : "rgba(255,255,255,0.12)";
   return (
     <div style={{
-      minHeight: "100vh", display: "flex", flexDirection: "column",
+      minHeight: "calc(var(--vh, 1vh) * 100)", display: "flex", flexDirection: "column",
       alignItems: "center", justifyContent: "center",
       background: bg, fontFamily: "'Share Tech Mono', monospace",
     }}>
@@ -761,7 +821,7 @@ export default function App() {
     return (
       <ErrorBoundary>
         <div style={{
-          minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center",
+          minHeight: "calc(var(--vh, 1vh) * 100)", display: "flex", flexDirection: "column", alignItems: "center",
           justifyContent: "flex-start", padding: "24px", background: "#000",
         }}>
           <div style={{

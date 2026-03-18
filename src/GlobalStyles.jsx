@@ -291,7 +291,7 @@ export class ErrorBoundary extends React.Component {
         : String(s ?? ""));
       return (
         <div style={{
-          minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+          minHeight: "calc(var(--vh, 1vh) * 100)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
           background: "#000", color: "#fff", fontFamily: "'Share Tech Mono', monospace", padding: "24px", textAlign: "center",
         }}>
           <div style={{ fontSize: "15px", color: "#ccc", letterSpacing: "2px", marginBottom: "20px", fontWeight: "bold" }}>RITMOL — ERROR</div>

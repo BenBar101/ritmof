@@ -373,7 +373,7 @@ export default function ChatTab() {
   ];
 
   return (
-    <div style={{ height: "calc(100vh - 56px - 60px)", display: "flex", flexDirection: "column" }}>
+    <div style={{ height: "calc(var(--vh, 1vh) * 100 - 56px - 60px)", display: "flex", flexDirection: "column" }}>
       {/* Data disclosure (one-time) */}
       {!disclosureDismissed && (
         <div style={{
