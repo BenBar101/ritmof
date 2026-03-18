@@ -62,6 +62,7 @@ Respond ONLY with a JSON object with any of: xpPerLevel, gachaCost, streakShield
         "You output only valid JSON with numeric values.",
         true,
         _dcAbort.signal,
+        128, // dynamic cost responses are tiny JSON — cap to save token budget
       );
     } catch (err) {
       if (err?.name !== "AbortError") {

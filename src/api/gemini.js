@@ -27,7 +27,7 @@ function sleep(ms, signal) {
   });
 }
 
-export async function callGemini(apiKey, messages, systemPrompt, jsonMode = false, signal = undefined) {
+export async function callGemini(apiKey, messages, systemPrompt, jsonMode = false, signal = undefined, maxOutputTokens = 1024) {
   // Fix #10: guard against null/undefined/empty key so callers get a clear error
   // instead of a cryptic 400 from the API with "x-goog-api-key: null".
   if (!apiKey || typeof apiKey !== "string" || !apiKey.trim()) {
@@ -50,7 +50,7 @@ export async function callGemini(apiKey, messages, systemPrompt, jsonMode = fals
     systemInstruction: { parts: [{ text: finalSystem }] },
     generationConfig: {
       temperature: 0.7,
-      maxOutputTokens: 1024,
+      maxOutputTokens: Math.min(Math.max(64, Math.round(maxOutputTokens)), 8192),
     },
   };
 

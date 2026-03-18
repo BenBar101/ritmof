@@ -729,7 +729,7 @@ Respond ONLY with JSON:
       // Final guard: ensure no stray backticks remain anywhere in the prompt.
       prompt = prompt.replace(/`/g, "");
 
-      const { text: raw, tokensUsed } = await callGemini(apiKey, [{ role: "user", content: prompt }], "You are a master of literary atmosphere and ASCII art. Respond only in JSON.", true, controller.signal);
+      const { text: raw, tokensUsed } = await callGemini(apiKey, [{ role: "user", content: prompt }], "You are a master of literary atmosphere and ASCII art. Respond only in JSON.", true, controller.signal, 512);
       if (mountedRef.current) {
         trackTokens(tokensUsed);
       }

@@ -20,3 +20,4 @@ data/
 *.log
 *.swp
 .cache/
+src.zip

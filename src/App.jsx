@@ -50,16 +50,21 @@ async function generateAiMissions(apiKey, profile, period, trackTokens, signal) 
   const isWeekly = period === "weekly";
   const count    = isWeekly ? 5 : 3;
   const xpRange  = isWeekly ? "150-400" : "500-1500";
-  const major     = (profile?.major     || "").replace(/[<>"'`]/g, "").slice(0, 60);
-  const interests = (profile?.interests || "").replace(/[<>"'`]/g, "").slice(0, 80);
-  const context   = [major, interests].filter(Boolean).join(", ") || "general studies";
+  const major     = (profile?.major     || "").replace(/[<>"'`]/g, "").slice(0, 40);
+  const interests = (profile?.interests || "").replace(/[<>"'`]/g, "").slice(0, 50);
+  const context   = [major, interests].filter(Boolean).join(", ") || "STEM";
 
+  // Compact prompt — every token in the request is billed, so keep it tight.
+  // The system instruction is short and purely structural; all context goes in
+  // the user turn so the model has one focused input to parse.
   const prompt =
-    `Student: ${context}. ` +
-    `Write ${count} ${isWeekly ? "weekly" : "monthly"} RPG missions, XP ${xpRange}. ` +
-    `JSON array only: [{"id":"1","desc":"text","type":"habits","target":5,"xp":200}]`;
+    `${context}. ` +
+    `${count} ${isWeekly ? "weekly" : "monthly"} RPG missions XP ${xpRange}. ` +
+    `Reply JSON array only: [{"id":"1","desc":"short text","type":"habits","target":5,"xp":200}]`;
 
-  // Hard 20-second race so the promise always resolves
+  // Hard 20-second race so the promise always resolves.
+  // Mission responses are tiny JSON arrays — 256 output tokens is more than enough
+  // for 5 missions and eliminates ~768 tokens of unnecessary output budget per call.
   const hardTimeout = new Promise((_, rej) =>
     setTimeout(() => rej(new Error("mission_timeout")), 20000)
   );
@@ -69,9 +74,10 @@ async function generateAiMissions(apiKey, profile, period, trackTokens, signal) 
       callGemini(
         apiKey,
         [{ role: "user", content: prompt }],
-        "Output a JSON array only. No markdown fences, no explanation.",
+        "JSON array only. No markdown. No explanation.",
         false,
         signal,
+        256, // missions are small — cap output tokens to save budget
       ),
       hardTimeout,
     ]);
