@@ -232,29 +232,54 @@ function isPWAMode() {
 }
 
 function setVhVariable() {
-  // In PWA / standalone mode on iOS, window.innerHeight includes the area
-  // behind the home indicator at the bottom. visualViewport.height gives the
-  // true *usable* visible height (excluding the system home bar).
-  // In regular Safari browser mode, visualViewport.height matches innerHeight
-  // so this is safe to use unconditionally.
+  // ── PWA vs Browser height strategy ───────────────────────────
+  //
+  // iOS PWA mode (standalone):
+  //   • window.innerHeight = full screen height including the home indicator
+  //     notch area (~34 px on iPhone with Face ID). Using this directly causes
+  //     the layout container to be taller than the visible area, leaving a dead
+  //     strip above the bottom nav.
+  //   • The system already reserves the home indicator via env(safe-area-inset-bottom).
+  //   • Best approach: set --vh from innerHeight BUT subtract the actual
+  //     safe-area-inset-bottom so the layout height = truly usable pixels.
+  //     We read the inset via a hidden sentinel div with padding-bottom set to
+  //     env(safe-area-inset-bottom) — the only reliable cross-browser way to
+  //     read env() values from JS.
+  //
+  // Safari browser mode:
+  //   • innerHeight already excludes the browser chrome. Use it directly.
+  //   • safe-area-inset-bottom is 0 in browser mode so no subtraction needed.
+
+  // Read env(safe-area-inset-bottom) into JS via a sentinel element.
+  let safeAreaBottom = 0;
+  try {
+    let sentinel = document.getElementById("__vh-sentinel");
+    if (!sentinel) {
+      sentinel = document.createElement("div");
+      sentinel.id = "__vh-sentinel";
+      sentinel.style.cssText =
+        "position:fixed;bottom:0;left:0;width:1px;height:1px;" +
+        "padding-bottom:env(safe-area-inset-bottom,0px);" +
+        "pointer-events:none;opacity:0;z-index:-1;";
+      document.documentElement.appendChild(sentinel);
+    }
+    const computed = getComputedStyle(sentinel);
+    safeAreaBottom = parseFloat(computed.paddingBottom) || 0;
+  } catch (_) { /* ignore */ }
+
   const pwa = isPWAMode();
-  let height;
-  if (pwa && window.visualViewport) {
-    // In PWA mode, visualViewport.height is the correct usable height —
-    // it excludes the iOS home indicator safe area that innerHeight includes.
-    height = window.visualViewport.height;
-  } else {
-    // Browser mode: innerHeight already excludes the browser chrome correctly.
-    height = window.innerHeight;
-  }
-  const vh = height * 0.01;
+  // In PWA mode, subtract the home indicator height so --vh * 100 = usable height.
+  // In browser mode, safeAreaBottom is 0 so this is a no-op.
+  const usableHeight = pwa
+    ? window.innerHeight - safeAreaBottom
+    : window.innerHeight;
+
+  const vh = usableHeight * 0.01;
   document.documentElement.style.setProperty("--vh", `${vh}px`);
 
-  // --sab (safe-area-bottom) controls the bottom padding on the nav bar and
-  // scroll container. In PWA mode the safe area is already baked into --vh
-  // (visualViewport excludes the home indicator), so --sab must be 0 to avoid
-  // double-counting. In browser mode we leave --sab unset so the fallback
-  // env(safe-area-inset-bottom, 0px) is used natively via CSS.
+  // --sab: in PWA mode the nav/scroll padding for the home indicator is already
+  // subtracted from --vh, so set --sab=0 to avoid double-counting.
+  // In browser mode remove --sab so CSS falls back to env(safe-area-inset-bottom).
   if (pwa) {
     document.documentElement.style.setProperty("--sab", "0px");
   } else {
@@ -284,23 +309,20 @@ export function GlobalStyles() {
     styleEl.textContent = GLOBAL_CSS;
     document.head.appendChild(styleEl);
 
-    // Set --vh immediately and on every resize/orientationchange.
-    // Also listen to visualViewport resize — in PWA mode on iOS, this fires
-    // when the home indicator area changes, keeping --vh accurate.
+    // Set --vh immediately (first pass: safeAreaBottom may be 0 before the
+    // sentinel's style is computed, which is fine — we correct it one frame later).
     setVhVariable();
+    // Second pass after layout: sentinel paddingBottom is now computed correctly.
+    requestAnimationFrame(() => setVhVariable());
     window.addEventListener("resize", setVhVariable);
     window.addEventListener("orientationchange", setVhVariable);
-    if (window.visualViewport) {
-      window.visualViewport.addEventListener("resize", setVhVariable);
-    }
 
     return () => {
       styleEl.remove();
       window.removeEventListener("resize", setVhVariable);
       window.removeEventListener("orientationchange", setVhVariable);
-      if (window.visualViewport) {
-        window.visualViewport.removeEventListener("resize", setVhVariable);
-      }
+      const sentinel = document.getElementById("__vh-sentinel");
+      if (sentinel) sentinel.remove();
     };
   }, []);
   return null;
