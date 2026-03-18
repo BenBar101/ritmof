@@ -4,6 +4,67 @@
 // Accepts an optional AbortSignal so callers (ChatTab, HabitsTab, etc.) can cancel
 // in-flight requests when the component unmounts or the user navigates away.
 
+// ── Client-side hard rate cap: 4 calls per 60-second sliding window ──────────
+//
+// This cap is enforced BEFORE any request leaves the browser. When the cap is
+// reached, callGemini throws a RateLimitedError immediately instead of queuing
+// or hitting the Gemini API. All call sites (chat, gacha, missions, habits, costs)
+// go through callGemini, so this is the single choke point.
+//
+// RateLimitedError carries `retryAfterMs` — the milliseconds until the oldest
+// call in the window ages out and a slot opens up. UI components use this to
+// display a running countdown.
+
+export const RATE_LIMIT_CAP = 4;       // max calls per window
+export const RATE_LIMIT_WINDOW_MS = 60_000; // window size in ms
+
+export class RateLimitedError extends Error {
+  constructor(retryAfterMs) {
+    super("CLIENT_RATE_LIMITED");
+    this.name = "RateLimitedError";
+    this.retryAfterMs = retryAfterMs; // ms until next slot opens
+  }
+}
+
+// Timestamps (Date.now()) of the most recent RATE_LIMIT_CAP calls.
+// Module-level so it survives across React re-renders and hook instances.
+const _callTimestamps = [];
+
+/**
+ * Returns the current rate-limit status.
+ * { limited: false } — a call can proceed now.
+ * { limited: true, retryAfterMs: N } — blocked for N more milliseconds.
+ */
+export function getRateLimitStatus() {
+  const now = Date.now();
+  // Drop timestamps older than the window
+  while (_callTimestamps.length && now - _callTimestamps[0] >= RATE_LIMIT_WINDOW_MS) {
+    _callTimestamps.shift();
+  }
+  if (_callTimestamps.length < RATE_LIMIT_CAP) {
+    return { limited: false };
+  }
+  // Oldest call in window + window size = when the next slot opens
+  const retryAfterMs = RATE_LIMIT_WINDOW_MS - (now - _callTimestamps[0]);
+  return { limited: true, retryAfterMs: Math.max(0, retryAfterMs) };
+}
+
+/** Record a call timestamp (called just before a real request fires). */
+function _recordCall() {
+  const now = Date.now();
+  // Trim stale entries first
+  while (_callTimestamps.length && now - _callTimestamps[0] >= RATE_LIMIT_WINDOW_MS) {
+    _callTimestamps.shift();
+  }
+  _callTimestamps.push(now);
+}
+
+if (import.meta.hot) {
+  import.meta.hot.dispose(() => {
+    _callTimestamps.length = 0;
+  });
+}
+
 // Retryable HTTP status codes — transient server errors only, NOT 429.
 // 429 (rate limit) is thrown immediately so callers decide whether to retry;
 // auto-retrying 429 inside callGemini causes request storms when the app
@@ -14,26 +75,72 @@ const MAX_ATTEMPTS = 2;
 // Base delay in ms for exponential backoff.
 const BASE_DELAY_MS = 1500;
 
-// ── Global request queue ─────────────────────────────────────
-// All callGemini calls are serialized through this queue so concurrent
-// triggers (level-up + mission complete + gacha on first load) never fire
-// simultaneously and cause 429s. Each request waits for the previous one
-// to finish, then observes a minimum gap before sending.
-const MIN_GAP_MS = 4000; // minimum ms between consecutive requests
-let _queueTail = Promise.resolve(); // chain every call onto this
-let _lastRequestTime = 0;
+// ── Two-lane request queue ────────────────────────────────────
+//
+// INTERACTIVE lane (chat, gacha, habits, quote):
+//   Calls queue immediately and fire with MIN_GAP_MS between them.
+//
+// BACKGROUND lane (mission generation):
+//   Calls DO NOT join the shared chain. Instead they poll until the
+//   interactive lane has been idle for BG_IDLE_MS, then fire — and
+//   they still respect MIN_GAP_MS from the last request of either lane.
+//   This means a chat message sent at any point always takes priority:
+//   the background call keeps waiting until the interactive lane is quiet.
+//
+// Both lanes share _lastRequestTime so the API never sees two requests
+// closer than MIN_GAP_MS regardless of which lane fired last.
 
-function enqueue(fn) {
-  const result = _queueTail.then(async () => {
-    const now = Date.now();
-    const wait = MIN_GAP_MS - (now - _lastRequestTime);
+const MIN_GAP_MS   = 4000;   // minimum gap between any two requests (both lanes)
+const BG_IDLE_MS   = 10000;  // background fires only after interactive lane idle this long
+const BG_POLL_MS   = 1000;   // how often background checks if it can proceed
+
+let _interactiveTail  = Promise.resolve(); // interactive calls chain onto this
+let _backgroundTail   = Promise.resolve(); // background calls chain onto this (serialized)
+let _lastRequestTime  = Date.now();        // initialise to now so BG_IDLE_MS is measured from load, not epoch
+
+function enqueueInteractive(fn) {
+  const result = _interactiveTail.then(async () => {
+    const wait = MIN_GAP_MS - (Date.now() - _lastRequestTime);
     if (wait > 0) await new Promise((r) => setTimeout(r, wait));
     _lastRequestTime = Date.now();
     return fn();
   });
-  // Swallow rejections on the tail so one failure doesn't break the queue.
-  _queueTail = result.catch(() => {});
+  _interactiveTail = result.catch(() => {});
   return result;
+}
+
+function enqueueBackground(fn, signal) {
+  // Background calls chain onto _backgroundTail so they are serialized among
+  // themselves. Each one also polls _lastRequestTime to ensure the interactive
+  // lane has been quiet for BG_IDLE_MS before it fires.
+  const result = _backgroundTail.then(() => new Promise((resolve, reject) => {
+    function attempt() {
+      if (signal?.aborted) { reject(new DOMException("Aborted", "AbortError")); return; }
+      const idleMs = Date.now() - _lastRequestTime;
+      if (idleMs >= BG_IDLE_MS) {
+        // Also enforce MIN_GAP_MS in case a background call just fired
+        const gapWait = MIN_GAP_MS - idleMs;
+        const fire = () => { _lastRequestTime = Date.now(); resolve(fn()); };
+        if (gapWait > 0) setTimeout(fire, gapWait);
+        else fire();
+      } else {
+        setTimeout(attempt, BG_POLL_MS);
+      }
+    }
+    attempt();
+  }));
+  _backgroundTail = result.catch(() => {});
+  return result;
+}
+
+// Reset queue state on Vite HMR hot-swap so dev-mode file saves don't leave
+// stale queue tails or timestamps that cause post-HMR calls to wait unnecessarily.
+if (import.meta.hot) {
+  import.meta.hot.dispose(() => {
+    _interactiveTail = Promise.resolve();
+    _backgroundTail  = Promise.resolve();
+    _lastRequestTime = Date.now();
+  });
 }
 
 function retryDelay(attempt) {
@@ -49,7 +156,7 @@ function sleep(ms, signal) {
   });
 }
 
-export async function callGemini(apiKey, messages, systemPrompt, jsonMode = false, signal = undefined, maxOutputTokens = 1024) {
+export async function callGemini(apiKey, messages, systemPrompt, jsonMode = false, signal = undefined, maxOutputTokens = 1024, background = false) {
   // Fix #10: guard against null/undefined/empty key so callers get a clear error
   // instead of a cryptic 400 from the API with "x-goog-api-key: null".
   if (!apiKey || typeof apiKey !== "string" || !apiKey.trim()) {
@@ -57,7 +164,11 @@ export async function callGemini(apiKey, messages, systemPrompt, jsonMode = fals
   }
   // Always work with the trimmed key so whitespace from paste/storage never causes 403.
   apiKey = apiKey.trim();
-  const url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent";
+
+  // FIX: use the stable versioned model endpoint. The unversioned "gemini-2.0-flash"
+  // alias can route to preview endpoints with tighter rate limits.
+  const url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-001:generateContent";
+
   const contents = messages.map((m) => ({
     role: m.role === "assistant" ? "model" : "user",
     parts: [{ text: m.content }],
@@ -76,44 +187,46 @@ export async function callGemini(apiKey, messages, systemPrompt, jsonMode = fals
     },
   };
 
-  // Fix #8: On browsers without AbortSignal.any (Firefox < 124, older Safari), combining
-  // a caller signal with a timeout signal silently dropped the timeout. We now use a
-  // manual setTimeout fallback so the 30-second timeout always fires on all browsers.
-  let effectiveSignal;
-  let _cleanup = null;
+  // The AbortSignal / timeout is created INSIDE the enqueue callback so the
+  // 30-second clock starts only when the request actually fires, not when it
+  // enters the queue. A call that waits 20s in the background lane must not
+  // arrive with a pre-expired signal.
 
-  if (signal && typeof AbortSignal.any === "function") {
-    const timeoutSignal = AbortSignal.timeout ? AbortSignal.timeout(30000) : undefined;
-    effectiveSignal = timeoutSignal ? AbortSignal.any([signal, timeoutSignal]) : signal;
-  } else if (signal) {
-    // Browser lacks AbortSignal.any — combine manually.
-    const combined = new AbortController();
-    const abort = () => combined.abort();
-    signal.addEventListener("abort", abort, { once: true });
-    const tid = setTimeout(abort, 30000);
-    effectiveSignal = combined.signal;
-    _cleanup = () => {
-      clearTimeout(tid);
-      signal.removeEventListener("abort", abort);
-    };
-  } else {
-    // No caller signal provided.
-    if (AbortSignal.timeout) {
-      effectiveSignal = AbortSignal.timeout(30000);
+  return await (background ? (fn) => enqueueBackground(fn, signal) : enqueueInteractive)(async () => {
+    // ── Build the effective abort signal for this specific attempt ──
+    let effectiveSignal;
+    let _cleanup = null;
+
+    if (signal && typeof AbortSignal.any === "function") {
+      // Fix #8: combine caller signal + fresh timeout signal.
+      const timeoutSignal = AbortSignal.timeout ? AbortSignal.timeout(30000) : undefined;
+      effectiveSignal = timeoutSignal ? AbortSignal.any([signal, timeoutSignal]) : signal;
+    } else if (signal) {
+      // Browser lacks AbortSignal.any — combine manually.
+      const combined = new AbortController();
+      const abort = () => combined.abort();
+      signal.addEventListener("abort", abort, { once: true });
+      const tid = setTimeout(abort, 30000);
+      effectiveSignal = combined.signal;
+      _cleanup = () => {
+        clearTimeout(tid);
+        signal.removeEventListener("abort", abort);
+      };
     } else {
-      // Fix: AbortSignal.timeout is unavailable (older browsers) and no caller signal
-      // was provided. Without this fallback the fetch would run with NO timeout at all,
-      // potentially hanging forever. Use a manual AbortController so the 30-second
-      // deadline always fires regardless of browser support.
-      const fallback = new AbortController();
-      const tid = setTimeout(() => fallback.abort(), 30000);
-      effectiveSignal = fallback.signal;
-      _cleanup = () => clearTimeout(tid);
+      // No caller signal provided — use a standalone 30s timeout.
+      if (AbortSignal.timeout) {
+        effectiveSignal = AbortSignal.timeout(30000);
+      } else {
+        // AbortSignal.timeout unavailable (older browsers) — manual fallback so the
+        // fetch never hangs forever.
+        const fallback = new AbortController();
+        const tid = setTimeout(() => fallback.abort(), 30000);
+        effectiveSignal = fallback.signal;
+        _cleanup = () => clearTimeout(tid);
+      }
     }
-  }
 
-  try {
-    return await enqueue(async () => {
+    try {
       let lastError;
 
       for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
@@ -123,6 +236,14 @@ export async function callGemini(apiKey, messages, systemPrompt, jsonMode = fals
         // Wait before retrying (never before the first attempt).
         if (attempt > 0) {
           await sleep(retryDelay(attempt - 1), effectiveSignal);
+        }
+
+        // ── Client-side hard rate cap ──
+        // Only on first attempt so a server-side 5xx retry does not burn a slot.
+        if (attempt === 0) {
+          const rlStatus = getRateLimitStatus();
+          if (rlStatus.limited) throw new RateLimitedError(rlStatus.retryAfterMs);
+          _recordCall();
         }
 
         const res = await fetch(url, {
@@ -183,12 +304,12 @@ export async function callGemini(apiKey, messages, systemPrompt, jsonMode = fals
 
       // All attempts exhausted — surface the last retryable error clearly.
       throw lastError ?? new Error("Gemini request failed after retries.");
-    });
-  } finally {
-    try {
-      _cleanup?.();
-    } catch {
-      // cleanup errors must never propagate
+    } finally {
+      try {
+        _cleanup?.();
+      } catch {
+        // cleanup errors must never propagate
+      }
     }
-  }
+  });
 }

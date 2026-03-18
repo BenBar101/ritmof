@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { useAppContext } from "./context/AppContext";
 import { todayUTC, localDateFromUTC } from "./utils/db";
 import { STYLE_CSS, DAILY_TOKEN_LIMIT } from "./constants";
-import { callGemini } from "./api/gemini";
+import { callGemini, RateLimitedError } from "./api/gemini";
 // Fix [H-1]: import the canonical sanitizeForPrompt instead of maintaining a local copy.
 // The duplicate copy diverged from the canonical version and missed the U+2028/2029 and
 // single-quote fixes. A single canonical implementation ensures all prompt-injection fixes
@@ -114,7 +114,9 @@ Respond ONLY with JSON array:
         // mount attempt will retry.
         const msg = err?.message || "";
         const isAbort = err?.name === "AbortError";
-        const isPermanent = !isAbort && (
+        const isRateLimited = err instanceof RateLimitedError;
+        // RateLimitedError is transient — don't mark permanent, let next mount retry.
+        const isPermanent = !isAbort && !isRateLimited && (
           msg.includes("403") ||
           msg.includes("401") ||
           msg.includes("API key") ||

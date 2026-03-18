@@ -1,16 +1,24 @@
-import { callGemini } from "./gemini";
+import { callGemini, RateLimitedError } from "./gemini";
 import { storageKey, todayUTC } from "../utils/db";
 import { idbGet } from "../utils/db";
 import { DAILY_TOKEN_LIMIT, DEFAULT_XP_PER_LEVEL, DEFAULT_GACHA_COST, DEFAULT_STREAK_SHIELD_COST } from "../constants";
 import { getLevel } from "../utils/xp";
 
 let _dcInFlight = false;
+// Cooldown: at most one updateDynamicCosts call per hour across the whole session.
+// This prevents chat responses that award XP + trigger a level-up from chaining
+// a second Gemini request immediately after the chat request.
+let _dcLastCalledAt = 0;
+const DC_COOLDOWN_MS = 60 * 60 * 1000; // 1 hour
 
 // Ask AI to update dynamic costs (xpPerLevel, gachaCost, streakShieldCost) after level-up, gacha pull, or shield use.
 // event: "level_up" | "gacha_pull" | "streak_shield_use". Returns partial costs to merge into state.dynamicCosts.
 export async function updateDynamicCosts(apiKey, state, event, onTokensUsed) {
   if (_dcInFlight) return {};
+  const now = Date.now();
+  if (now - _dcLastCalledAt < DC_COOLDOWN_MS) return {};
   _dcInFlight = true;
+  _dcLastCalledAt = now;
   let _dcTimeout;
   try {
     if (!apiKey) return {};
@@ -62,9 +70,12 @@ Respond ONLY with a JSON object with any of: xpPerLevel, gachaCost, streakShield
         "You output only valid JSON with numeric values.",
         true,
         _dcAbort.signal,
-        128, // dynamic cost responses are tiny JSON — cap to save token budget
+        128,  // dynamic cost responses are tiny JSON — cap to save token budget
+        true, // background=true: never blocks interactive calls (chat, gacha)
       );
     } catch (err) {
+      // RateLimitedError = client cap hit; silently skip — not an error worth logging.
+      if (err instanceof RateLimitedError) { return {}; }
       if (err?.name !== "AbortError") {
         const raw = err?.message ?? String(err ?? "");
         const safeMsg = raw

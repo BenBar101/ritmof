@@ -75,6 +75,8 @@ async function _generateQuoteWithGemini(apiKey, profile, onTokens) {
       "You are a literary curator. Return only a raw JSON object with quote, author, and source fields. No markdown, no backticks.",
       false, // jsonMode=false — we parse manually; avoids response_mime_type breaking the call
       AbortSignal.timeout ? AbortSignal.timeout(12000) : undefined,
+      1024, // default maxOutputTokens
+      true, // background=true: never blocks interactive calls (chat, gacha)
     );
 
     if (onTokens && tokensUsed) onTokens(tokensUsed);

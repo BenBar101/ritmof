@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useMemo } from "react";
 import { useAppContext } from "./context/AppContext";
 import { todayUTC, localDateFromUTC, LS, storageKey } from "./utils/db";
 import { DAILY_TOKEN_LIMIT, DATA_DISCLOSURE_SEEN_KEY } from "./constants";
-import { callGemini } from "./api/gemini";
+import { callGemini, RateLimitedError, getRateLimitStatus, RATE_LIMIT_WINDOW_MS, RATE_LIMIT_CAP } from "./api/gemini";
 
 function NeuralEnergyBar({ usage, theme }) {
   if (!usage || typeof usage.date !== "string") return null;
@@ -43,6 +43,9 @@ export default function ChatTab() {
   const [loading, setLoading] = useState(false);
   const [isListening, setIsListening] = useState(false);
   const [disclosureDismissed, setDisclosureDismissed] = useState(() => !!LS.get(storageKey(DATA_DISCLOSURE_SEEN_KEY)));
+  // Client-side rate-limit countdown: null = not limited, number = Date.now() target when limit lifts
+  const [rateLimitedUntil, setRateLimitedUntil] = useState(null);
+  const rateLimitTimerRef = useRef(null);
   const chatEndRef = useRef(null);
   const recognitionRef = useRef(null);
   // Fix #12: AbortController so navigating away mid-request cancels the fetch and prevents
@@ -50,6 +53,21 @@ export default function ChatTab() {
   const abortRef = useRef(null);
   const inFlightRef = useRef(false);
   const mountedRef = useRef(true);
+
+  // Countdown ticker: updates every second while rate-limited so the UI re-renders the timer
+  useEffect(() => {
+    if (!rateLimitedUntil) return;
+    const tick = () => {
+      if (!mountedRef.current) return;
+      if (Date.now() >= rateLimitedUntil) {
+        setRateLimitedUntil(null);
+        return;
+      }
+      rateLimitTimerRef.current = setTimeout(tick, 500);
+    };
+    rateLimitTimerRef.current = setTimeout(tick, 500);
+    return () => clearTimeout(rateLimitTimerRef.current);
+  }, [rateLimitedUntil]);
 
   const messages = useMemo(() => state.chatHistory || [], [state.chatHistory]);
   const latestHistoryRef = useRef(messages);
@@ -81,6 +99,8 @@ export default function ChatTab() {
 
   async function sendMessage(text) {
     if (!text.trim() || loading || inFlightRef.current) return;
+    // Block send while client-side rate cap is active
+    if (rateLimitedUntil && Date.now() < rateLimitedUntil) return;
     // FIX: enforce max input length so a giant paste or voice transcript can't fire a
     // 10 000-token request and silently drain the daily budget.
     if (text.length > MAX_INPUT_LENGTH) {
@@ -213,6 +233,28 @@ export default function ChatTab() {
         setTimeout(() => executeCommands(parsed.commands), 300);
       }
     } catch (e) {
+      if (e instanceof RateLimitedError) {
+        // Hard cap hit — set countdown and show an in-chat system message with timer
+        const unlocksAt = Date.now() + e.retryAfterMs;
+        if (mountedRef.current) setRateLimitedUntil(unlocksAt);
+        const secsLeft = Math.ceil(e.retryAfterMs / 1000);
+        const rateLimitMsg = {
+          role: "assistant",
+          content: `⏳ SYSTEM: Rate cap reached (${RATE_LIMIT_CAP} calls/min). AI functions locked for ${secsLeft}s. Retry when the timer clears.`,
+          ts: Date.now(),
+          seq: ++_msgSeq,
+          date: localDateFromUTC(),
+          isError: true,
+          isRateLimit: true,
+          rateLimitUnlocksAt: unlocksAt,
+        };
+        if (mountedRef.current) {
+          setState((s) => ({ ...s, chatHistory: [...s.chatHistory, rateLimitMsg].slice(-1000) }));
+          setLoading(false);
+          inFlightRef.current = false;
+        }
+        return;
+      }
       if (e?.name === "AbortError") {
         if (mountedRef.current) setLoading(false);
         return;
@@ -366,14 +408,44 @@ export default function ChatTab() {
         </div>
       )}
 
+      {/* Rate-limit countdown banner */}
+      {rateLimitedUntil && Date.now() < rateLimitedUntil && (
+        <div style={{
+          padding: "8px 16px", borderTop: "2px solid #fff",
+          background: "#000", display: "flex", alignItems: "center", gap: "10px",
+          fontFamily: "'Share Tech Mono', monospace", fontSize: "11px", letterSpacing: "2px",
+        }}>
+          <span style={{ color: "#fff", opacity: 0.5 }}>⏳ RATE CAP — WAIT</span>
+          <span style={{
+            color: "#fff", fontWeight: "bold", fontSize: "14px",
+            minWidth: "32px", textAlign: "center",
+          }}>
+            {Math.max(0, Math.ceil((rateLimitedUntil - Date.now()) / 1000))}s
+          </span>
+          <div style={{ flex: 1, height: "2px", background: "#333", position: "relative", overflow: "hidden" }}>
+            <div style={{
+              position: "absolute", left: 0, top: 0, height: "100%", background: "#fff",
+              width: `${Math.max(0, Math.min(100, ((rateLimitedUntil - Date.now()) / RATE_LIMIT_WINDOW_MS) * 100))}%`,
+              transition: "width 0.5s linear",
+            }} />
+          </div>
+          <span style={{ color: "#fff", opacity: 0.5 }}>AI LOCKED</span>
+        </div>
+      )}
+
       {/* Input */}
       <div style={{ padding: "12px 16px", borderTop: "3px solid #fff", display: "flex", gap: "8px", alignItems: "flex-end" }}>
         <textarea
           value={input}
           onChange={(e) => setInput(e.target.value.slice(0, MAX_INPUT_LENGTH))}
           maxLength={MAX_INPUT_LENGTH}
-          onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(input); } }}
-          placeholder="Message RITMOL..."
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault();
+              if (!rateLimitedUntil || Date.now() >= rateLimitedUntil) sendMessage(input);
+            }
+          }}
+          placeholder={rateLimitedUntil && Date.now() < rateLimitedUntil ? "Rate cap active — please wait..." : "Message RITMOL..."}
           rows={2}
           style={{
             flex: 1, background: "#000", border: "2px solid #fff",
@@ -392,13 +464,17 @@ export default function ChatTab() {
           }}>
             {isListening ? "■" : "◎"}
           </button>
-          <button type="button" onClick={() => sendMessage(input)} disabled={loading} style={{
-            width: "48px", height: "48px", border: loading ? "2px solid #444" : "2px solid #fff",
-            background: loading ? "#000" : "#fff",
-            color: loading ? "#fff" : "#000",
-            fontFamily: "'Share Tech Mono', monospace", fontSize: "20px",
-          }}>
-            ›
+          <button type="button" onClick={() => sendMessage(input)}
+            disabled={loading || (rateLimitedUntil && Date.now() < rateLimitedUntil)}
+            style={{
+              width: "48px", height: "48px",
+              border: (loading || (rateLimitedUntil && Date.now() < rateLimitedUntil)) ? "2px solid #444" : "2px solid #fff",
+              background: (loading || (rateLimitedUntil && Date.now() < rateLimitedUntil)) ? "#000" : "#fff",
+              color: (loading || (rateLimitedUntil && Date.now() < rateLimitedUntil)) ? "#444" : "#000",
+              fontFamily: "'Share Tech Mono', monospace", fontSize: "20px",
+              cursor: (loading || (rateLimitedUntil && Date.now() < rateLimitedUntil)) ? "not-allowed" : "pointer",
+            }}>
+            {rateLimitedUntil && Date.now() < rateLimitedUntil ? "⏳" : "›"}
           </button>
           {messages.length > 0 && (
             <button

@@ -5,7 +5,7 @@ import { todayUTC, localDateFromUTC, getGeminiApiKey, setGeminiApiKey, getMaxDat
 import { ACHIEVEMENT_RARITIES, STYLE_CSS, DAILY_TOKEN_LIMIT, RANKS, sampleGachaRarity } from "./constants";
 import { DATA_DISCLOSURE_SEEN_KEY, THEME_KEY } from "./constants";
 import { getLevelProgress } from "./utils/xp";
-import { callGemini } from "./api/gemini";
+import { callGemini, RateLimitedError } from "./api/gemini";
 import { fetchGCalEvents, fetchCalendarList, loadGoogleGIS } from "./api/gcal";
 import { SyncManager, FSAPI_SUPPORTED } from "./sync/SyncManager";
 import GeometricCorners from "./GeometricCorners";
@@ -298,7 +298,18 @@ function CalendarSection({ state, setState, profile, apiKey, buildSystemPrompt, 
   // Pending token held while the user is choosing calendars in the picker.
   const pendingTokenRef = React.useRef(null);
 
-  const events = [...(state.calendarEvents || [])].sort((a, b) => new Date(a.start) - new Date(b.start));
+  const now = Date.now();
+  const allEvents = [...(state.calendarEvents || [])].sort((a, b) => new Date(a.start) - new Date(b.start));
+  const events     = allEvents.filter((e) => !e.start || new Date(e.start).getTime() >= now);
+  const pastEvents = allEvents.filter((e) => e.start && new Date(e.start).getTime() < now);
+
+  function clearPastEvents() {
+    setState((s) => ({
+      ...s,
+      calendarEvents: (s.calendarEvents || []).filter((e) => !e.start || new Date(e.start).getTime() >= Date.now()),
+    }));
+    showBanner(`Cleared ${pastEvents.length} past event${pastEvents.length !== 1 ? "s" : ""}.`, "info");
+  }
 
   function addEvent() {
     if (!form.title || !form.start) return;
@@ -329,7 +340,8 @@ function CalendarSection({ state, setState, profile, apiKey, buildSystemPrompt, 
     try {
       const events = await fetchGCalEvents(accessToken, ids);
       setState((s) => {
-        const manualEvents = (s.calendarEvents || []).filter((e) => e.source === "manual");
+        const syncNow = Date.now();
+        const manualEvents = (s.calendarEvents || []).filter((e) => e.source === "manual" && (!e.start || new Date(e.start).getTime() >= syncNow));
         return { ...s, calendarEvents: [...manualEvents, ...events], gCalConnected: true, gCalSelectedIds: ids };
       });
       showBanner(`Synced ${events.length} events from ${ids.length} calendar${ids.length !== 1 ? "s" : ""}.`, "success");
@@ -495,6 +507,18 @@ function CalendarSection({ state, setState, profile, apiKey, buildSystemPrompt, 
         </div>
         <button type="button" onClick={addEvent} style={primaryBtn}>ADD EVENT</button>
       </div>
+
+      {pastEvents.length > 0 && (
+        <button
+          type="button"
+          onClick={clearPastEvents}
+          style={{
+            padding: "10px", border: "1px solid #555", background: "transparent", color: "#aaa",
+            fontFamily: "'Share Tech Mono', monospace", fontSize: "13px", letterSpacing: "1px", cursor: "pointer",
+          }}>
+          CLEAR {pastEvents.length} PAST EVENT{pastEvents.length !== 1 ? "S" : ""}
+        </button>
+      )}
 
       {/* Events list */}
       <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
@@ -840,6 +864,16 @@ Respond ONLY with JSON:
     } catch (err) {
       if (err?.name === "AbortError") {
         if (mountedRef.current) setPulling(false);
+        pullingRef.current = false;
+        return;
+      }
+      if (err instanceof RateLimitedError) {
+        // Client cap hit — no XP consumed, tell user how long to wait
+        const secsLeft = Math.ceil(err.retryAfterMs / 1000);
+        if (mountedRef.current) {
+          showBanner(`Rate cap reached. Wait ${secsLeft}s before pulling again.`, "alert");
+          setPulling(false);
+        }
         pullingRef.current = false;
         return;
       }

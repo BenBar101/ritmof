@@ -17,7 +17,8 @@ import { getLevel, getRank, getXpPerLevel, getGachaCost, getStreakShieldCost, ca
 import { THEME_KEY, SESSION_TYPES, DEFAULT_XP_PER_LEVEL, DEFAULT_GACHA_COST, DEFAULT_STREAK_SHIELD_COST, DAILY_TOKEN_LIMIT } from "./constants";
 import { buildSystemPrompt } from "./api/systemPrompt";
 import { fetchDailyQuote } from "./api/quotes";
-import { callGemini } from "./api/gemini";
+import { fetchGCalEvents, loadGoogleGIS } from "./api/gcal";
+import { callGemini, RateLimitedError } from "./api/gemini";
 import { FSAPI_SUPPORTED } from "./sync/SyncManager";
 import { verifyOAuthState } from "./api/dropbox";
 
@@ -77,7 +78,8 @@ async function generateAiMissions(apiKey, profile, period, trackTokens, signal) 
         "JSON array only. No markdown. No explanation.",
         false,
         signal,
-        256, // missions are small — cap output tokens to save budget
+        256,  // missions are small — cap output tokens to save budget
+        true, // background = true: yields to interactive calls (chat, gacha)
       ),
       hardTimeout,
     ]);
@@ -108,7 +110,13 @@ async function generateAiMissions(apiKey, profile, period, trackTokens, signal) 
       done: false,
       ai: true,
     }));
-  } catch {
+  } catch (err) {
+    // Re-throw abort and rate-limit errors so tryGenerate can handle them
+    // correctly — abort should not advance the date key, and 429 should not
+    // either (so the next session retries rather than showing empty missions forever).
+    if (err?.name === "AbortError") throw err;
+    if (err?.message?.includes("429")) throw err;
+    if (err instanceof RateLimitedError) throw err;  // treat same as 429 — back off and retry next session
     return [];
   }
 }
@@ -553,8 +561,20 @@ export default function App() {
             [dateKey]: currentPeriodKey,
           }));
         })
-        .catch(() => {
-          // Write [] so the UI shows "no missions" instead of spinning forever.
+        .catch((err) => {
+          // On abort (effect cleanup) or 429 (rate limit): clear the attempted flag
+          // so the next session can retry, and do NOT advance the date key.
+          const isAbort = err?.name === "AbortError";
+          const isRateLimit = err?.message?.includes("429") || err instanceof RateLimitedError;
+          if (isAbort || isRateLimit) {
+            missionAttemptedRef.current[period] = false;
+            try { sessionStorage.removeItem(`ritmol_mission_attempted_${period}_${currentPeriodKey}`); } catch { /* ignore */ }
+            // On 429 specifically, write [] so the UI shows "no missions" this session
+            // rather than a permanent spinner, but leave dateKey unset so next load retries.
+            if (isRateLimit) setState((s) => ({ ...s, [key]: [] }));
+            return;
+          }
+          // Other errors: write [] so the UI shows "no missions" instead of spinning forever.
           // Do NOT change the date key on failure — next app load can retry.
           setState((s) => ({ ...s, [key]: [] }));
         })
@@ -562,16 +582,84 @@ export default function App() {
     }
 
     tryGenerate("weekly");
-    // Stagger monthly by 3 s so both calls don't hit the API simultaneously
-    const monthlyTimer = setTimeout(() => tryGenerate("monthly"), 3000);
+    // Stagger monthly by 8 s — enough for the weekly call to clear the queue
+    // (4 s MIN_GAP in gemini.js) before monthly fires, preventing back-to-back
+    // requests that trigger 429s on free-tier keys.
+    const monthlyTimer = setTimeout(() => tryGenerate("monthly"), 8000);
     return () => {
       clearTimeout(monthlyTimer);
       abortControllers.weekly.abort();
       abortControllers.monthly.abort();
     };
-  // Only re-run when profile or apiKey first becomes available — never on state changes
+  // Only re-run when profile or apiKey first becomes available — never on state changes.
+  // profile.name is intentionally omitted: a name change does not warrant new missions,
+  // and including it caused spurious re-runs that fired duplicate API calls.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [!!profile, !!apiKey, profile?.name ?? ""]);
+  }, [!!profile, !!apiKey]);
+
+  // ── Daily Google Calendar auto-sync ──────────────────────────
+  // Fires once per day when the user has already connected GCal.
+  // Uses a silent token request (prompt: "") so no popup appears —
+  // Google reuses the existing session if the user has already consented.
+  // On success:
+  //   • fetches the rolling 14-day window of events
+  //   • drops all past events (both GCal and manual) to keep the AI context lean
+  //   • stamps gCalLastSync so it won't fire again today
+  // On any failure (token expired, offline, etc.) it silently skips —
+  // the user can always re-sync manually from the Calendar tab.
+  const gCalAutoSyncRef = useRef(false);
+  useEffect(() => {
+    if (!profile || !state?.gCalConnected || !state?.gCalSelectedIds?.length) return;
+    if (gCalAutoSyncRef.current) return;
+
+    const todayStr = todayUTC();
+    if (state.gCalLastSync === todayStr) return; // already synced today
+
+    gCalAutoSyncRef.current = true;
+
+    const clientId = profile?.googleClientId || (import.meta.env.VITE_GOOGLE_CLIENT_ID || "").trim();
+    if (!clientId) { gCalAutoSyncRef.current = false; return; }
+    if (typeof navigator !== "undefined" && navigator.onLine === false) { gCalAutoSyncRef.current = false; return; }
+
+    (async () => {
+      try {
+        await loadGoogleGIS();
+        const tokenResponse = await new Promise((resolve, reject) => {
+          const tokenClient = window.google.accounts.oauth2.initTokenClient({
+            client_id: clientId,
+            scope: "https://www.googleapis.com/auth/calendar.readonly",
+            // Empty prompt = silent re-auth using existing Google session.
+            // If the session has expired this will reject and we skip silently.
+            callback: (resp) => { if (resp.error) reject(new Error(resp.error)); else resolve(resp); },
+          });
+          tokenClient.requestAccessToken({ prompt: "" });
+        });
+
+        const accessToken = tokenResponse?.access_token;
+        if (!accessToken) return;
+
+        const freshEvents = await fetchGCalEvents(accessToken, state.gCalSelectedIds);
+        const nowMs = Date.now();
+
+        setState((s) => {
+          // Keep only manual events that haven't started yet — past ones are pruned too.
+          const keptManual = (s.calendarEvents || []).filter(
+            (e) => e.source === "manual" && e.start && new Date(e.start).getTime() >= nowMs
+          );
+          return {
+            ...s,
+            calendarEvents: [...keptManual, ...freshEvents],
+            gCalLastSync: todayStr,
+          };
+        });
+      } catch {
+        // Silent failure — user will see stale events until they sync manually.
+        gCalAutoSyncRef.current = false;
+      }
+    })();
+  // Run once on mount when profile and gCalConnected are ready.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [!!profile, !!state?.gCalConnected]);
 
   // Quote is cached in localStorage by quotes.js itself (per-day + per-profile hash),
   // so sessionStorage just prevents re-firing the Gemini call on rapid reloads within
