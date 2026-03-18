@@ -484,11 +484,19 @@ export default function App() {
   }, [!!profile, setState]);
 
   // ── Weekly & Monthly AI missions ───────────────────────────
-  // Session-level guard: tracks which periods have been attempted this app load.
-  // Using a ref (not state) means it never causes re-renders, and persists across
-  // effect re-runs so a 429 failure never triggers a retry loop.
-  const missionAttemptedRef = useRef({ weekly: false, monthly: false });
+  // Session-persistent guards — survive page reload within the same browser session.
+  // Using sessionStorage means a refresh won't re-fire all background AI calls and
+  // blow the free-tier RPM limit. Keys are namespaced by period so a new week/month
+  // automatically gets a fresh attempt.
+  const missionAttemptedRef = useRef({ weekly: false, monthly: false, _seeded: false });
   const missionGenRef = useRef({ weekly: false, monthly: false });
+  if (!missionAttemptedRef.current._seeded) {
+    try {
+      missionAttemptedRef.current.weekly  = sessionStorage.getItem(`ritmol_mission_attempted_weekly_${localWeekKey()}`)  === "1";
+      missionAttemptedRef.current.monthly = sessionStorage.getItem(`ritmol_mission_attempted_monthly_${localMonthKey()}`) === "1";
+    } catch { /* sessionStorage unavailable */ }
+    missionAttemptedRef.current._seeded = true;
+  }
 
   useEffect(() => {
     if (!profile || !apiKey) return;
@@ -516,13 +524,18 @@ export default function App() {
       const usage = state?.tokenUsage;
       if (usage && usage.date === todayUTC() && usage.tokens >= DAILY_TOKEN_LIMIT) return;
 
-      // Mark attempted immediately — before the async call — so no re-render can sneak in a second call
+      // Mark attempted immediately — before the async call — so no re-render can sneak in a second call.
+      // Also persist to sessionStorage so a page reload within the same session doesn't re-fire.
       missionAttemptedRef.current[period] = true;
       missionGenRef.current[period] = true;
+      try {
+        sessionStorage.setItem(`ritmol_mission_attempted_${period}_${currentPeriodKey}`, "1");
+      } catch { /* sessionStorage unavailable */ }
 
       if (typeof navigator !== "undefined" && navigator.onLine === false) {
         missionAttemptedRef.current[period] = false;
         missionGenRef.current[period] = false;
+        try { sessionStorage.removeItem(`ritmol_mission_attempted_${period}_${currentPeriodKey}`); } catch { /* ignore */ }
         return;
       }
 
@@ -560,6 +573,9 @@ export default function App() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [!!profile, !!apiKey, profile?.name ?? ""]);
 
+  // Quote is cached in localStorage by quotes.js itself (per-day + per-profile hash),
+  // so sessionStorage just prevents re-firing the Gemini call on rapid reloads within
+  // the same session when the LS cache hasn't been written yet.
   const quoteFetchedRef = useRef(false);
   const quoteInputRef = useRef("");
   const quoteInput = `${profile?.books ?? ""}|${profile?.interests ?? ""}|${profile?.major ?? ""}`;
@@ -568,9 +584,13 @@ export default function App() {
     if (quoteInputRef.current !== quoteInput) {
       quoteFetchedRef.current = false;
       quoteInputRef.current = quoteInput;
+      try { sessionStorage.removeItem("ritmol_quote_fetched"); } catch { /* ignore */ }
     }
     if (quoteFetchedRef.current) return;
+    // Also check sessionStorage so a page reload doesn't re-fire the call.
+    try { if (sessionStorage.getItem("ritmol_quote_fetched") === "1") { quoteFetchedRef.current = true; return; } } catch { /* ignore */ }
     quoteFetchedRef.current = true;
+    try { sessionStorage.setItem("ritmol_quote_fetched", "1"); } catch { /* ignore */ }
     fetchDailyQuote(apiKey || null, profile, trackTokens || null)
       .then((result) => {
         if (result === null) {
