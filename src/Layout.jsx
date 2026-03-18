@@ -18,6 +18,7 @@ export function TopBar({ xp, xpPerLevel, level, rank, profile, syncStatus, lastS
 
   return (
     <div style={{
+      flexShrink: 0,
       background: "#000", borderBottom: "3px solid #fff",
       paddingTop: "env(safe-area-inset-top, 0px)",
       paddingLeft: "10px", paddingRight: "10px", paddingBottom: "0px",
@@ -102,6 +103,7 @@ export function BottomNav({ tab, setTab }) {
 
   return (
     <div data-bottom-nav="" style={{
+      position: "fixed", bottom: 0, left: 0, right: 0,
       background: "#000", borderTop: "3px solid #fff",
       display: "flex",
       height: "calc(60px + env(safe-area-inset-bottom, 0px))",
