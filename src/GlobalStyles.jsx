@@ -1,14 +1,7 @@
 import React from "react";
 import { useEffect } from "react";
 
-// ═══════════════════════════════════════════════════════════════
-// CSS — E-INK SAFE
-// Injected via a component + useEffect so it runs only in a live browser context,
-// not at module parse time (which would throw in SSR or test environments).
-// ═══════════════════════════════════════════════════════════════
 const GLOBAL_CSS = `
-  /* ── Animations: unconditionally disabled for E-ink ───────── */
-  /* All keyframe names kept as no-ops so references don't break */
   @keyframes slideDown { from { opacity:1; } to { opacity:1; } }
   @keyframes slideUp   { from { opacity:1; } to { opacity:1; } }
   @keyframes fadeIn    { from { opacity:1; } to { opacity:1; } }
@@ -16,7 +9,6 @@ const GLOBAL_CSS = `
   @keyframes spin      { from { transform: rotate(0deg); } to { transform: rotate(0deg); } }
   @keyframes scan      { from { left: -40%; } to { left: 140%; } }
 
-  /* Kill every animation and transition globally — E-ink cannot render motion */
   *, *::before, *::after {
     animation-duration: 0.001ms !important;
     animation-iteration-count: 1 !important;
@@ -27,53 +19,58 @@ const GLOBAL_CSS = `
     text-shadow: none !important;
   }
 
-  /* ── E-ink: solid border data attribute ──────────────────── */
   [data-eink-border] { border: 3px solid #000 !important; }
-
-  /* ── Base reset ──────────────────────────────────────────── */
   *, *::before, *::after { box-sizing: border-box; }
 
-  html {
-    /* Step 1: tell html itself to fill the available space Safari gives it.
-       Without this, body and #root cannot measure the true visible height. */
-    height: 100%;
-    height: -webkit-fill-available;
-    height: 100dvh;
-  }
+  /* ── Viewport height fix for iOS Safari browser mode ────────
+     Safari in browser mode (not PWA) has TWO viewport height bugs:
+     1. 100vh = the height INCLUDING the hidden-behind-chrome area,
+        so fixed elements at bottom:0 are obscured by the toolbar.
+     2. overflow:hidden on body does NOT prevent the page from
+        rubber-band scrolling, revealing blank space below the nav.
 
-  body, #root {
+     The solution:
+     - Set --vh via JS to window.innerHeight (the true visible height).
+     - Use calc(var(--vh) * 100) everywhere instead of 100vh/100dvh.
+     - Block overscroll with overscroll-behavior:none on html+body.
+     - Use touch-action:none on #root to kill iOS momentum scroll at
+       the container level, while allowing scroll inside [data-scroll].
+  ── */
+
+  html, body {
     width: 100%;
-    /* Height cascade:
-       100%                    — chains up to html (universal fallback)
-       -webkit-fill-available  — Safari/iOS: the actual gap between top
-                                 and bottom browser chrome, so
-                                 position:fixed;bottom:0 hits the true
-                                 visible bottom, not the hidden-under-
-                                 toolbar layout bottom.
-       100dvh                  — Chrome/Firefox mobile: dynamic viewport
-                                 height that shrinks with the address bar. */
     height: 100%;
-    height: -webkit-fill-available;
-    height: 100dvh;
     margin: 0;
     padding: 0;
     overflow: hidden;
+    overscroll-behavior: none;   /* kills rubber-band / bounce scroll */
     background: #000;
     color: #fff;
     font-size: 16px;
     font-family: 'Share Tech Mono', monospace;
   }
 
-  /* ── Clamp font sizes to avoid overflow on small screens ─── */
-  body { font-size: clamp(14px, 4vw, 18px); }
+  #root {
+    width: 100%;
+    /* Use the JS-measured visible height. Falls back to 100dvh → 100%. */
+    height: 100%;
+    height: calc(var(--vh, 1vh) * 100);
+    overflow: hidden;
+    overscroll-behavior: none;
+    background: #000;
+  }
 
-  /* ── Mobile: prevent text-size bump on rotation ─────────── */
+  /* Only allow scrolling in explicitly marked containers */
+  [data-scroll] {
+    overflow-y: auto;
+    overflow-x: hidden;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-y: contain;
+  }
+
+  body { font-size: clamp(14px, 4vw, 18px); }
   html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 
-  /* ── iOS PWA: safe-area side insets only ─────────────────── */
-  /* Do NOT add padding-top/bottom here — the fixed TopBar and BottomNav   */
-  /* each handle their own safe-area insets so adding them on body too      */
-  /* would shift the entire fixed layout on iPhone notch / Dynamic Island.  */
   body {
     padding-top:    0px;
     padding-bottom: 0px;
@@ -81,13 +78,14 @@ const GLOBAL_CSS = `
     padding-right:  env(safe-area-inset-right,  0px);
   }
 
-  /* ── Touch: no 300ms tap delay, no highlight flash ─────── */
   * {
     -webkit-tap-highlight-color: transparent;
     touch-action: manipulation;
   }
 
-  /* ── Scrollbars: high-contrast for E-ink ────────────────── */
+  /* Allow normal vertical scrolling inside scroll containers */
+  [data-scroll] { touch-action: pan-y; }
+
   ::-webkit-scrollbar { width: 10px; height: 10px; }
   ::-webkit-scrollbar-track { background: #000; }
   ::-webkit-scrollbar-thumb { background: #fff; border-radius: 0; }
@@ -100,7 +98,6 @@ const GLOBAL_CSS = `
     background: #f0f0f0 !important;
     color: #000 !important;
   }
-  /* Flip all backgrounds and text colors */
   html[data-theme="light"] div,
   html[data-theme="light"] span,
   html[data-theme="light"] section,
@@ -125,26 +122,22 @@ const GLOBAL_CSS = `
     color: #000 !important;
     border-color: #000 !important;
   }
-  /* Buttons: default ghost style */
   html[data-theme="light"] button {
     background-color: #f0f0f0 !important;
     color: #000 !important;
     border-color: #000 !important;
   }
-  /* Active bottom nav tab — uses data-active attribute for reliable targeting */
   html[data-theme="light"] button[data-active="true"] {
     background-color: #000 !important;
     color: #fff !important;
     border-color: #000 !important;
   }
-  /* All descendants of inverted buttons must inherit black bg, not be overridden to #f0f0f0 */
   html[data-theme="light"] button[data-active="true"] *,
   html[data-theme="light"] button[data-active="true"] span,
   html[data-theme="light"] button[data-active="true"] div {
     background-color: transparent !important;
     color: #fff !important;
   }
-  /* Completed protocol button — uses data-done attribute for reliable targeting */
   html[data-theme="light"] button[data-done="true"] {
     background-color: #000 !important;
     color: #fff !important;
@@ -156,8 +149,6 @@ const GLOBAL_CSS = `
     background-color: transparent !important;
     color: #fff !important;
   }
-  /* Primary/filled buttons: invert (was white bg + black text).
-     Exclude nav buttons (handled above) to avoid double-invert. */
   html[data-theme="light"] button:not([data-active])[style*="background: rgb(255, 255, 255)"],
   html[data-theme="light"] button:not([data-active])[style*="background: #fff"],
   html[data-theme="light"] button:not([data-active])[style*="background: white"],
@@ -166,7 +157,6 @@ const GLOBAL_CSS = `
     color: #fff !important;
     border-color: #000 !important;
   }
-  /* Dim/mid text elements */
   html[data-theme="light"] [style*="color: rgb(170"],
   html[data-theme="light"] [style*="color: #aaa"],
   html[data-theme="light"] [style*="color: #888"],
@@ -174,7 +164,6 @@ const GLOBAL_CSS = `
   html[data-theme="light"] [style*="color: #555"],
   html[data-theme="light"] [style*="color: #444"],
   html[data-theme="light"] [style*="color: #ccc"] { color: #444 !important; }
-  /* Dark track backgrounds */
   html[data-theme="light"] [style*="background: #333"],
   html[data-theme="light"] [style*="background:#333"],
   html[data-theme="light"] [style*="background: rgb(51"] { background-color: #bbb !important; }
@@ -183,7 +172,6 @@ const GLOBAL_CSS = `
   html[data-theme="light"] [style*="background: rgb(17"] { background-color: #ddd !important; }
   html[data-theme="light"] [style*="background: #222"],
   html[data-theme="light"] [style*="background:#222"] { background-color: #ccc !important; }
-  /* Inputs */
   html[data-theme="light"] input,
   html[data-theme="light"] textarea,
   html[data-theme="light"] select {
@@ -192,23 +180,17 @@ const GLOBAL_CSS = `
     border-color: #000 !important;
   }
   html[data-theme="light"] select option { background: #fff !important; color: #000 !important; }
-  /* Range input */
   html[data-theme="light"] input[type=range] { background: #bbb !important; }
   html[data-theme="light"] input[type=range]::-webkit-slider-thumb { background: #000 !important; border-color: #fff !important; }
   html[data-theme="light"] input[type=range]::-moz-range-thumb { background: #000 !important; border-color: #fff !important; }
-  /* Calendar picker: undo the dark-mode invert */
   html[data-theme="light"] input[type="date"]::-webkit-calendar-picker-indicator,
   html[data-theme="light"] input[type="datetime-local"]::-webkit-calendar-picker-indicator { filter: none !important; }
-  /* Scrollbars */
   html[data-theme="light"] * { scrollbar-color: #000 #f0f0f0 !important; }
   html[data-theme="light"] ::-webkit-scrollbar-track { background: #f0f0f0 !important; }
   html[data-theme="light"] ::-webkit-scrollbar-thumb { background: #000 !important; }
-  /* Focus ring */
   html[data-theme="light"] :focus-visible { outline-color: #000 !important; }
 
-  /* ── Inputs ─────────────────────────────────────────────── */
   input, textarea, select {
-    /* prevent iOS Safari zoom on focus (font-size must be ≥16px or use this) */
     font-size: max(16px, 1em);
     border-radius: 0;
   }
@@ -219,95 +201,75 @@ const GLOBAL_CSS = `
   input[type="datetime-local"]::-webkit-calendar-picker-indicator { filter: invert(1); }
   select option { background: #111; }
 
-  /* ── Buttons: large enough touch targets ────────────────── */
   button {
-    min-height: 48px;           /* E-ink safe touch target */
+    min-height: 48px;
     min-width:  48px;
     cursor: pointer;
     border-radius: 0;
   }
 
-  /* ── Focus: visible ring for keyboard/e-ink nav ─────────── */
   :focus-visible { outline: 3px solid #fff; outline-offset: 3px; }
   :focus:not(:focus-visible) { outline: none; }
 
-  /* ── Prevent content overflow on narrow screens ─────────── */
   img, video, canvas, svg { max-width: 100%; }
   pre { overflow-x: auto; }
 
-  /* ── Mobile-specific: tighter padding on very small screens ─ */
   @media (max-width: 380px) {
-    /* Reduce letter-spacing so labels don't overflow */
     * { letter-spacing: 0 !important; }
-    /* Tighter padding for cards */
     [data-card] { padding: 10px !important; }
   }
 
-  /* ── Landscape mobile: reduce vertical whitespace ──────── */
   @media (max-height: 500px) and (orientation: landscape) {
     [data-modal-inner] { padding: 12px !important; }
   }
-
-  /* ── iPhone Safari browser-mode bottom nav fix ──────────────
-     In Safari as a web page (not installed PWA), safe-area-inset-bottom
-     is 0 but the browser's bottom toolbar still overlaps fixed elements.
-     The -webkit-fill-available height cascade above is the primary fix.
-     This rule is a belt-and-suspenders: it targets the bottom nav via
-     data attribute and adds a minimum bottom padding on small-height
-     touchscreen devices where the browser toolbar is most intrusive.
-     We cannot detect "browser mode vs PWA" in CSS alone, but
-     @media (display-mode: browser) is supported in Safari 16.4+. ── */
-  @media (display-mode: browser) {
-    [data-bottom-nav] {
-      /* In browser mode the nav is already at bottom:0 of the visual
-         viewport thanks to -webkit-fill-available on #root.
-         Keep padding-bottom at safe-area-inset-bottom (handles notch),
-         the height calc already includes it. No additional override needed. */
-      bottom: 0 !important;
-    }
-  }
-
-  /* Standalone / fullscreen PWA mode — same as before */
-  @media (display-mode: standalone), (display-mode: fullscreen) {
-    [data-bottom-nav] {
-      bottom: 0 !important;
-    }
-  }
 `;
 
-// Injects/updates <meta> tags that must be present for correct mobile/PWA behaviour.
-// Called once at mount so it works even when index.html is minimal.
+function setVhVariable() {
+  // window.innerHeight is the true visible height on iOS Safari —
+  // it excludes the top address bar and bottom toolbar.
+  // We set it as --vh so calc(var(--vh) * 100) === actual visible height.
+  const vh = window.innerHeight * 0.01;
+  document.documentElement.style.setProperty("--vh", `${vh}px`);
+}
+
 function ensureHeadMeta() {
   function setMeta(name, content, attr = "name") {
     let el = document.querySelector(`meta[${attr}="${name}"]`);
     if (!el) { el = document.createElement("meta"); el.setAttribute(attr, name); document.head.appendChild(el); }
     el.setAttribute("content", content);
   }
-  // Correct viewport: no user-scalable so the layout isn't broken, but allow pinch-zoom
   setMeta("viewport", "width=device-width, initial-scale=1, viewport-fit=cover");
-  // PWA standalone display
   setMeta("mobile-web-app-capable", "yes");
   setMeta("apple-mobile-web-app-capable", "yes");
   setMeta("apple-mobile-web-app-status-bar-style", "black-translucent");
-  // Theme colour (dark default; updated dynamically when theme changes)
   setMeta("theme-color", "#000");
 }
 
 export function GlobalStyles() {
   useEffect(() => {
     ensureHeadMeta();
+
     const styleEl = document.createElement("style");
     styleEl.setAttribute("data-ritmol", "global");
     styleEl.textContent = GLOBAL_CSS;
     document.head.appendChild(styleEl);
-    return () => { styleEl.remove(); };
+
+    // Set --vh immediately and on every resize/orientationchange.
+    // This is the core fix: keeps the layout locked to the visible
+    // viewport height even as Safari's chrome appears/disappears.
+    setVhVariable();
+    window.addEventListener("resize", setVhVariable);
+    window.addEventListener("orientationchange", setVhVariable);
+
+    return () => {
+      styleEl.remove();
+      window.removeEventListener("resize", setVhVariable);
+      window.removeEventListener("orientationchange", setVhVariable);
+    };
   }, []);
   return null;
 }
 
-// ═══════════════════════════════════════════════════════════════
-// ERROR BOUNDARY (prevents white screen on uncaught React errors)
-// ═══════════════════════════════════════════════════════════════
 export class ErrorBoundary extends React.Component {
   constructor(props) {
     super(props);
@@ -317,9 +279,6 @@ export class ErrorBoundary extends React.Component {
     return { hasError: true, error };
   }
   componentDidCatch(error, info) {
-    // Fix #14 (code quality): log to console so the error is visible in DevTools even
-    // after the boundary catches it. The generic UI message is shown to the user but
-    // the full stack is preserved for self-hosted debugging.
     console.error("[RITMOL ErrorBoundary]", error, info?.componentStack);
   }
   render() {
@@ -339,7 +298,6 @@ export class ErrorBoundary extends React.Component {
           <div style={{ fontSize: "16px", color: "#fff", maxWidth: "380px", lineHeight: "1.6", marginBottom: "28px" }}>
             Something went wrong. Reload the page to continue.
           </div>
-          {/* Show redacted error details only in dev builds — stack traces reveal internal structure in prod. */}
           {(typeof import.meta !== "undefined" && import.meta.env?.DEV) && (
           <details style={{ marginBottom: "20px", maxWidth: "420px", textAlign: "left" }}>
             <summary style={{ fontSize: "14px", color: "#ccc", cursor: "pointer", marginBottom: "10px" }}>▶ Error details</summary>
@@ -370,7 +328,3 @@ export class ErrorBoundary extends React.Component {
     return this.props.children;
   }
 }
-
-// Mount logic has been moved to main.jsx so importing App.jsx does not
-// trigger ReactDOM.createRoot as a module-load side effect.
-// See main.jsx for the entry point.

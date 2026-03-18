@@ -838,7 +838,7 @@ export default function App() {
   return (
     <AppContext.Provider value={ctx}>
       <GlobalStyles />
-      <div style={{ height: "100%", display: "flex", flexDirection: "column", background: "#000", color: "#fff", overflow: "hidden", ...(isReloading ? { pointerEvents: "none", userSelect: "none" } : {}) }}>
+      <div style={{ height: "calc(var(--vh, 1vh) * 100)", display: "flex", flexDirection: "column", background: "#000", color: "#fff", overflow: "hidden", ...(isReloading ? { pointerEvents: "none", userSelect: "none" } : {}) }}>
         {isReloading && (
           <div
             aria-label="Syncing — please wait"
@@ -878,7 +878,7 @@ export default function App() {
           </div>
         )}
         <TopBar xp={state.xp} xpPerLevel={xpPerLevel} level={level} rank={rank} profile={profile} syncStatus={syncStatus} lastSynced={lastSynced} onPush={syncPush} onPull={syncPull} syncFileConnected={syncFileConnected} isReloading={isReloading} />
-        <div style={{ flex: 1, overflowY: "auto", overflowX: "hidden", paddingBottom: "calc(64px + env(safe-area-inset-bottom, 0px))", paddingTop: "calc(56px + env(safe-area-inset-top, 0px))" }}>
+        <div data-scroll="" style={{ flex: 1, overflowY: "auto", overflowX: "hidden", paddingBottom: "calc(64px + env(safe-area-inset-bottom, 0px))", paddingTop: "calc(56px + env(safe-area-inset-top, 0px))" }}>
           {tab === "home"    && <ErrorBoundary key="home"><HomeTab /></ErrorBoundary>}
           {tab === "habits"  && <ErrorBoundary key="habits"><HabitsTab /></ErrorBoundary>}
           {tab === "tasks"   && <ErrorBoundary key="tasks"><TasksTab /></ErrorBoundary>}
