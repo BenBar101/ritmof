@@ -67,7 +67,7 @@ Respond ONLY with a JSON object with any of: xpPerLevel, gachaCost, streakShield
       if (err?.name !== "AbortError") {
         const raw = err?.message ?? String(err ?? "");
         const safeMsg = raw
-          .replace(/AIza[A-Za-z0-9_-]{35,45}/g, "[key]")
+          .replace(/AIza[A-Za-z0-9_-]{20,60}/g, "[key]")
           .replace(/eyJ[\w.-]+/g, "[token]")
           .replace(/ya29\.[A-Za-z0-9_-]{20,}/g, "[oauth]")
           .replace(/[A-Za-z0-9_-]{60,}/g, "[token]")

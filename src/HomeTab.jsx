@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { useAppContext } from "./context/AppContext";
 import { localDateFromUTC, nowHour, sanitizeForDisplay } from "./utils/db";
 
@@ -161,6 +161,12 @@ function MissionsPanel({ state, setState, textPrimary, textDim, borderMid, hudBg
 
 export default function HomeTab() {
   const { state, setState, rank, dailyQuote, showBanner, setTab, profile, theme, setModal } = useAppContext();
+  const activeTimers = useMemo(
+    () => (state.activeTimers || []).filter(
+      (t) => typeof t.endsAt === "number" && t.endsAt > Date.now() + 1000
+    ),
+    [state.activeTimers]
+  );
   const todayLog = state.habitLog[localDateFromUTC()] || [];
   const totalHabits = state.habits.length;
   const doneHabits = todayLog.length;
@@ -387,11 +393,11 @@ export default function HomeTab() {
       )}
 
       {/* ── ACTIVE TIMERS ───────────────────────────────────── */}
-      {(state.activeTimers || []).filter((t) => typeof t.endsAt === "number" && t.endsAt > Date.now() + 1000).length > 0 && (
+      {activeTimers.length > 0 && (
         <div>
           <SectionLabel>ACTIVE TIMERS</SectionLabel>
           <HudPanel style={{ "--hud-bg": hudBg }}>
-            {(state.activeTimers || []).filter((t) => typeof t.endsAt === "number" && t.endsAt > Date.now() + 1000).map((timer) => (
+            {activeTimers.map((timer) => (
               <CountdownTimer
                 key={timer.id}
                 timer={timer}

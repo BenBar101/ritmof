@@ -46,7 +46,7 @@ function localMonthKey() {
 }
 
 // ── Ask Gemini to generate weekly or monthly missions ──────────
-async function generateAiMissions(apiKey, profile, period, trackTokens) {
+async function generateAiMissions(apiKey, profile, period, trackTokens, signal) {
   const isWeekly = period === "weekly";
   const count    = isWeekly ? 5 : 3;
   const xpRange  = isWeekly ? "150-400" : "500-1500";
@@ -70,7 +70,8 @@ async function generateAiMissions(apiKey, profile, period, trackTokens) {
         apiKey,
         [{ role: "user", content: prompt }],
         "Output a JSON array only. No markdown fences, no explanation.",
-        false, // jsonMode=false so response_mime_type is NOT set — arrays work fine
+        false,
+        signal,
       ),
       hardTimeout,
     ]);
@@ -79,8 +80,17 @@ async function generateAiMissions(apiKey, profile, period, trackTokens) {
     const stripped = text.replace(/```[\w]*\n?/g, "").trim();
     const match = stripped.match(/\[[\s\S]*\]/);
     if (!match) return [];
-    const parsed = JSON.parse(match[0]);
+    let parsed;
+    try {
+      parsed = JSON.parse(match[0]);
+    } catch {
+      // Return null to signal parse failure (distinct from "empty result").
+      return null;
+    }
     if (!Array.isArray(parsed) || !parsed.length) return [];
+    // Prototype-pollution guard — mirrors every other JSON parse site in the codebase.
+    const { isSafeSyncValue } = await import("./sync/SyncManager.js");
+    if (!isSafeSyncValue(parsed)) return [];
 
     return parsed.slice(0, count).map((m, i) => ({
       id: `${period}_ai_${i}_${Date.now()}`,
@@ -479,6 +489,7 @@ export default function App() {
 
     const wk = localWeekKey();
     const mo = localMonthKey();
+    const abortControllers = { weekly: new AbortController(), monthly: new AbortController() };
 
     function tryGenerate(period) {
       const key     = period === "weekly" ? "weeklyMissions"         : "monthlyMissions";
@@ -503,8 +514,20 @@ export default function App() {
       missionAttemptedRef.current[period] = true;
       missionGenRef.current[period] = true;
 
-      generateAiMissions(apiKey, profile, period, trackTokens)
+      if (typeof navigator !== "undefined" && navigator.onLine === false) {
+        missionAttemptedRef.current[period] = false;
+        missionGenRef.current[period] = false;
+        return;
+      }
+
+      generateAiMissions(apiKey, profile, period, trackTokens, abortControllers[period].signal)
         .then((missions) => {
+          if (missions === null) {
+            // Parse failure — write empty array but do NOT advance the date key
+            // so the next app load retries generation.
+            setState((s) => ({ ...s, [key]: [] }));
+            return;
+          }
           setState((s) => ({
             ...s,
             [key]: Array.isArray(missions) && missions.length ? missions : [],
@@ -522,7 +545,11 @@ export default function App() {
     tryGenerate("weekly");
     // Stagger monthly by 3 s so both calls don't hit the API simultaneously
     const monthlyTimer = setTimeout(() => tryGenerate("monthly"), 3000);
-    return () => clearTimeout(monthlyTimer);
+    return () => {
+      clearTimeout(monthlyTimer);
+      abortControllers.weekly.abort();
+      abortControllers.monthly.abort();
+    };
   // Only re-run when profile or apiKey first becomes available — never on state changes
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [!!profile, !!apiKey, profile?.name ?? ""]);

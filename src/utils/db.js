@@ -177,7 +177,12 @@ export const getMaxDateSeen = () => {
       } catch { /* ignore */ }
     }
   } catch { /* localStorage unavailable or invalid JSON */ }
+  // In dev builds the TinyBase store uses DB_NAME = 'ritmol_tb_dev' and
+  // storageKey() prefixes bare jv_ keys with DEV_PREFIX. Read both the
+  // bare key (production path) and the prefixed key (dev path) so the
+  // watermark is found regardless of which environment wrote it.
   const legacy = idbGet(_MAX_DATE_STORE_KEY, null)
+    ?? idbGet((IS_DEV ? DEV_PREFIX : '') + _MAX_DATE_STORE_KEY, null);
   return (typeof legacy === 'string' && _DATE_RE.test(legacy)) ? legacy : null
 }
 export const updateMaxDateSeen = (dateStr) => {
@@ -186,8 +191,12 @@ export const updateMaxDateSeen = (dateStr) => {
   if (!current || dateStr > current) {
     // Write to TinyBase store under the bare key (consistent with getMaxDateSeen read).
     store.setValue(_MAX_DATE_STORE_KEY, dateStr)
-    // Write to legacy IDB via idbSet (also uses bare key for TinyBase path).
     idbSet(_MAX_DATE_STORE_KEY, dateStr)
+    // In dev builds also write under the prefixed key so getMaxDateSeen's
+    // IDB fallback finds the watermark after a store wipe in dev.
+    if (IS_DEV) {
+      idbSet(DEV_PREFIX + _MAX_DATE_STORE_KEY, dateStr)
+    }
     // Write to localStorage for cross-boot persistence fallback.
     try {
       localStorage.setItem((IS_DEV ? DEV_PREFIX : '') + _MAX_DATE_STORE_KEY, JSON.stringify(dateStr))

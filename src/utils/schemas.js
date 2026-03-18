@@ -223,6 +223,10 @@ export const SyncPayloadSchema = z.object({
   jv_screen_log:          LogObjSchema.optional(),
   jv_missions:            z.array(MissionSchema).max(20).nullable().optional(),
   jv_mission_date:        nullOrDate.optional(),
+  jv_weekly_missions:     z.array(MissionSchema).max(20).nullable().optional(),
+  jv_weekly_mission_date: z.string().regex(/^\d{4}-W\d{2}$/).nullable().optional(),
+  jv_monthly_missions:    z.array(MissionSchema).max(20).nullable().optional(),
+  jv_monthly_mission_date: z.string().regex(/^\d{4}-\d{2}$/).nullable().optional(),
   jv_habit_suggestions:   z.array(z.string().max(200)).max(200).optional(),
   jv_chronicles:          z.array(z.object({
     id:      z.string().max(80),
@@ -233,6 +237,7 @@ export const SyncPayloadSchema = z.object({
     xp:      z.number().min(0).max(500).optional(),
   }).strip()).max(500).optional(),
   jv_gcal_connected:        z.boolean().optional(),
+  jv_gcal_selected_ids:     z.array(z.string().max(300)).max(50).nullable().optional(),
   jv_token_usage:           TokenUsageSchema.optional(),
   jv_habits_init:           z.boolean().optional(),
   jv_dynamic_costs:         DynamicCostsSchema.optional(),
@@ -240,5 +245,5 @@ export const SyncPayloadSchema = z.object({
   jv_last_shield_buy_date:  nullOrDate.optional(),
   // geminiKey is allowed in the payload for reading (extracted to sessionStorage)
   // but is never written back out on push
-  geminiKey:                z.string().max(60).regex(/^AIza[A-Za-z0-9_-]{35,45}$/).optional(),
+  geminiKey:                z.string().max(60).regex(/^AIza[A-Za-z0-9_-]{20,60}$/).optional(),
 })

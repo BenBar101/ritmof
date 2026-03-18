@@ -53,9 +53,13 @@ function persistState(s) {
     idbSet(storageKey("jv_daily_goal"),         s.dailyGoal);
     idbSet(storageKey("jv_sleep_log"),          s.sleepLog);
     idbSet(storageKey("jv_screen_log"),         s.screenTimeLog);
-    idbSet(storageKey("jv_missions"),           s.dailyMissions);
-    idbSet(storageKey("jv_mission_date"),       s.lastMissionDate);
-    idbSet(storageKey("jv_chronicles"),         s.chronicles);
+    idbSet(storageKey("jv_missions"),                s.dailyMissions);
+    idbSet(storageKey("jv_mission_date"),            s.lastMissionDate);
+    idbSet(storageKey("jv_weekly_missions"),         s.weeklyMissions ?? null);
+    idbSet(storageKey("jv_weekly_mission_date"),     s.lastWeeklyMissionDate ?? null);
+    idbSet(storageKey("jv_monthly_missions"),        s.monthlyMissions ?? null);
+    idbSet(storageKey("jv_monthly_mission_date"),    s.lastMonthlyMissionDate ?? null);
+    idbSet(storageKey("jv_chronicles"),              s.chronicles);
     idbSet(storageKey("jv_token_usage"),        s.tokenUsage);
     idbSet(storageKey("jv_timers"),             Array.isArray(s.activeTimers) ? s.activeTimers.filter(t => typeof t.endsAt === "number" && t.endsAt > Date.now() - 3_600_000) : []);
     idbSet(storageKey("jv_habit_suggestions"),  Array.isArray(s.pendingHabitSuggestions) ? s.pendingHabitSuggestions : []);

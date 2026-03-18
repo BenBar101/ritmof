@@ -130,12 +130,12 @@ export async function callGemini(apiKey, messages, systemPrompt, jsonMode = fals
         const errBody = await res.text().catch(() => "");
         const safeBody = errBody
           .replace(/eyJ[\w.-]+/g, "[token]")
-          .replace(/AIza[A-Za-z0-9_-]{35,45}/g, "[key]")
+          .replace(/AIza[A-Za-z0-9_-]{20,60}/g, "[key]")
           .replace(/ya29\.[A-Za-z0-9_-]{20,}/g, "[oauth]")
           .replace(/[A-Za-z0-9_-]{40,}/g, "[token]");
         const slicedBody = safeBody.slice(0, 200);
         const safeErrorMsg = (`Gemini ${res.status}: ${slicedBody}`)
-          .replace(/AIza[A-Za-z0-9_-]{35,45}/g, "[key]")
+          .replace(/AIza[A-Za-z0-9_-]{20,60}/g, "[key]")
           .replace(/ya29\.[A-Za-z0-9_-]{20,}/g, "[oauth]");
         throw new Error(safeErrorMsg);
       }

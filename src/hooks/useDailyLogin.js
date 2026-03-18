@@ -42,7 +42,7 @@ export function useDailyLogin({ profile, setState, setModal, setLevelUpData, sho
     const effectiveDate = localDateFromUTC();
     const maxDateSeen = getMaxDateSeen();
     if (maxDateSeen && effectiveDate < maxDateSeen) {
-      setState((s) => ({ ...s, lastLoginDate: effectiveDate, streak: 0, xp: s.xp }));
+      setState((s) => ({ ...s, lastLoginDate: maxDateSeen, streak: 0, xp: s.xp }));
       queueMicrotask(() => {
         if (cancelled) return;
         setModal({ type: "daily_login", xp: 0, streak: 0 });

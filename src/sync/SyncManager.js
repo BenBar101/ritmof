@@ -75,6 +75,8 @@ export const SYNC_KEYS = [
   // jv_max_date_seen is intentionally excluded — it is a device-local
   // anti-cheat watermark that must not be overwritten by sync.
   "jv_last_shield_buy_date",
+  "jv_weekly_missions", "jv_weekly_mission_date",
+  "jv_monthly_missions", "jv_monthly_mission_date",
 ];
 
 // ── Helpers (used by sanitizeChatMessages and isSafeSyncValue) ─────

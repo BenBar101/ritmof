@@ -1154,7 +1154,7 @@ function SettingsSection({ profile, setState, showBanner, syncStatus, lastSynced
           DROPBOX_QUOTA_EXCEEDED:"Import failed: Dropbox storage is full.",
         };
         const safeErrMsg = (err?.message || "")
-          .replace(/AIza[A-Za-z0-9_-]{35,45}/g, "[key]")
+          .replace(/AIza[A-Za-z0-9_-]{20,60}/g, "[key]")
           .replace(/eyJ[\w.-]+/g, "[token]")
           .replace(/ya29\.[A-Za-z0-9_-]{20,}/g, "[oauth]")
           .slice(0, 80);
