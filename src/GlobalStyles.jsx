@@ -37,13 +37,27 @@ const GLOBAL_CSS = `
        the container level, while allowing scroll inside [data-scroll].
   ── */
 
-  html, body {
+  html {
     width: 100%;
     height: 100%;
     margin: 0;
     padding: 0;
+    /* Do NOT set overflow:hidden on html — iOS PWA clips fixed elements incorrectly */
+    overscroll-behavior: none;
+    background: #000;
+  }
+
+  body {
+    width: 100%;
+    /* lvh = largest viewport height. In iOS PWA standalone this equals the full
+       screen height. dvh shrinks when the keyboard appears which we don't want.
+       Falls back to 100% for browsers that don't support lvh. */
+    height: 100%;
+    height: 100lvh;
+    margin: 0;
+    padding: 0;
     overflow: hidden;
-    overscroll-behavior: none;   /* kills rubber-band / bounce scroll */
+    overscroll-behavior: none;
     background: #000;
     color: #fff;
     font-size: 16px;
@@ -52,11 +66,8 @@ const GLOBAL_CSS = `
 
   #root {
     width: 100%;
-    /* 100dvh = the true usable viewport height on iOS Safari PWA and browser.
-       It correctly excludes the top status bar and bottom home indicator in
-       standalone (PWA) mode — no JS measurement needed. Falls back to 100%. */
     height: 100%;
-    height: 100dvh;
+    height: 100lvh;
     overflow: hidden;
     overscroll-behavior: none;
     background: #000;
