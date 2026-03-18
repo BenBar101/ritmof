@@ -52,9 +52,11 @@ const GLOBAL_CSS = `
 
   #root {
     width: 100%;
-    /* Use the JS-measured visible height. Falls back to 100dvh → 100%. */
+    /* 100dvh = the true usable viewport height on iOS Safari PWA and browser.
+       It correctly excludes the top status bar and bottom home indicator in
+       standalone (PWA) mode — no JS measurement needed. Falls back to 100%. */
     height: 100%;
-    height: calc(var(--vh, 1vh) * 100);
+    height: 100dvh;
     overflow: hidden;
     overscroll-behavior: none;
     background: #000;
