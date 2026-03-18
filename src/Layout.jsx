@@ -102,7 +102,7 @@ export function BottomNav({ tab, setTab }) {
 
   return (
     <div style={{
-      position: "fixed", bottom: 0, left: 0, right: 0, zIndex: 200,
+      position: "fixed", bottom: 0, left: 0, right: 0, zIndex: 300,
       background: "#000", borderTop: "3px solid #fff",
       display: "flex",
       height: "calc(60px + env(safe-area-inset-bottom, 0px))",

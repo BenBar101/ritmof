@@ -269,47 +269,195 @@ function GCalOnboardingStep({ onSkip, onAdvance, profile, onClientIdChange }) {
 
 
 export function GeminiKeySetupScreen({ onSave }) {
-  const [key, setKey] = useState("");
-  const [error, setError] = useState("");
+  const [key, setKey]           = useState("");
+  const [showKey, setShowKey]   = useState(false);
+  const [status, setStatus]     = useState("idle"); // "idle" | "verifying" | "ok" | "error"
+  const [error, setError]       = useState("");
 
-  function handleSave() {
+  const mono = { fontFamily: "'Share Tech Mono', monospace" };
+
+  // Validate format only — no network call until the user hits Verify
+  const formatOk = /^AIza[A-Za-z0-9_-]{20,60}$/.test(key.trim());
+
+  async function handleVerify() {
     const trimmed = key.trim();
-    if (!/^AIza[A-Za-z0-9_-]{20,60}$/.test(trimmed)) {
-      setError("Invalid key format. Get one free at aistudio.google.com/apikey");
+    if (!formatOk) {
+      setError("Key must start with AIza and be 24–64 characters.");
       return;
     }
     setError("");
-    onSave(trimmed);
+    setStatus("verifying");
+    try {
+      // Minimal probe: 1-token ping to confirm the key is live.
+      // We send this directly to Google — RITMOL itself never sees the response
+      // server-side because there is no server.
+      const res = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent?key=${trimmed}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: "." }] }],
+            generationConfig: { maxOutputTokens: 1 },
+          }),
+        }
+      );
+      if (res.ok) {
+        setStatus("ok");
+      } else {
+        const body = await res.json().catch(() => ({}));
+        const msg = body?.error?.message || `HTTP ${res.status}`;
+        setError(`Google returned: ${msg}`);
+        setStatus("error");
+      }
+    } catch {
+      setError("Network error — check your connection and try again.");
+      setStatus("error");
+    }
+  }
+
+  function handleSave() {
+    if (status !== "ok") return;
+    onSave(key.trim());
+  }
+
+  // Row helper for the "where it goes" disclosure table
+  function InfoRow({ icon, text }) {
+    return (
+      <div style={{ display: "flex", gap: "10px", alignItems: "flex-start" }}>
+        <span style={{ ...mono, fontSize: "14px", color: "#fff", flexShrink: 0, lineHeight: "1.6" }}>{icon}</span>
+        <span style={{ ...mono, fontSize: "13px", color: "#fff", lineHeight: "1.6" }}>{text}</span>
+      </div>
+    );
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-      <div style={{ fontSize: "15px", color: "#fff", lineHeight: "1.7" }}>
-        Enter your Gemini API key to enable RITMOL&apos;s AI features.
-        Get one free at aistudio.google.com/apikey
+    <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
+
+      {/* ── Step-by-step guide ── */}
+      <div style={{ border: "2px solid #fff", padding: "14px", display: "flex", flexDirection: "column", gap: "10px" }}>
+        <div style={{ ...mono, fontSize: "11px", letterSpacing: "3px", color: "#fff", fontWeight: "bold", marginBottom: "2px" }}>
+          HOW TO GET YOUR FREE KEY
+        </div>
+        {[
+          ["1", "Open", "aistudio.google.com/apikey", "https://aistudio.google.com/apikey"],
+          ["2", "Click", "Create API key", null],
+          ["3", "Copy the key and paste it below", null, null],
+        ].map(([num, prefix, label, href]) => (
+          <div key={num} style={{ display: "flex", gap: "10px", alignItems: "center" }}>
+            <span style={{
+              ...mono, fontSize: "11px", fontWeight: "bold", color: "#000",
+              background: "#fff", width: "20px", height: "20px",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              flexShrink: 0,
+            }}>{num}</span>
+            <span style={{ ...mono, fontSize: "13px", color: "#fff", lineHeight: "1.5" }}>
+              {prefix}{" "}
+              {href
+                ? <a href={href} target="_blank" rel="noopener noreferrer"
+                     style={{ color: "#fff", textDecoration: "underline" }}>{label}</a>
+                : <strong>{label}</strong>
+              }
+            </span>
+          </div>
+        ))}
       </div>
-      <input
-        type="password"
-        value={key}
-        onChange={(e) => setKey(e.target.value)}
-        placeholder="AIza..."
-        maxLength={60}
-        style={{
-          width: "100%", padding: "14px", background: "#000", border: "2px solid #fff",
-          color: "#fff", fontSize: "18px", fontFamily: "'Share Tech Mono', monospace", outline: "none",
-        }}
-      />
-      {error && <div style={{ color: "#fff", fontSize: "16px", fontFamily: "'Share Tech Mono', monospace", fontWeight: "bold" }}>[ ERR ] {error}</div>}
-      <button
-        type="button"
-        onClick={handleSave}
-        style={{
-          width: "100%", padding: "14px", border: "2px solid #fff", background: "#fff", color: "#000",
-          fontFamily: "'Share Tech Mono', monospace", fontSize: "16px", letterSpacing: "2px", cursor: "pointer",
-        }}
-      >
-        SAVE &amp; CONTINUE
-      </button>
+
+      {/* ── Key input ── */}
+      <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+        <label style={{ ...mono, fontSize: "11px", letterSpacing: "3px", color: "#fff", fontWeight: "bold" }}>
+          YOUR API KEY
+        </label>
+        <div style={{ display: "flex", gap: "0", border: "2px solid #fff" }}>
+          <input
+            type={showKey ? "text" : "password"}
+            value={key}
+            onChange={(e) => { setKey(e.target.value); setStatus("idle"); setError(""); }}
+            placeholder="AIza..."
+            maxLength={64}
+            autoComplete="off"
+            spellCheck={false}
+            style={{
+              flex: 1, padding: "12px", background: "#000",
+              color: "#fff", fontSize: "15px", ...mono,
+              outline: "none", border: "none",
+              // Mask placeholder dots for password type
+              letterSpacing: showKey ? "0.5px" : "2px",
+            }}
+          />
+          <button
+            type="button"
+            onClick={() => setShowKey((v) => !v)}
+            title={showKey ? "Hide key" : "Show key"}
+            style={{
+              ...mono, fontSize: "13px", padding: "0 12px",
+              background: "none", border: "none", borderLeft: "2px solid #fff",
+              color: "#fff", cursor: "pointer", minWidth: "52px",
+            }}
+          >
+            {showKey ? "HIDE" : "SHOW"}
+          </button>
+        </div>
+      </div>
+
+      {/* ── Transparency disclosure ── */}
+      <div style={{ border: "2px solid #555", padding: "14px", display: "flex", flexDirection: "column", gap: "8px" }}>
+        <div style={{ ...mono, fontSize: "11px", letterSpacing: "3px", color: "#fff", fontWeight: "bold", marginBottom: "2px" }}>
+          WHERE YOUR KEY GOES
+        </div>
+        <InfoRow icon="▸" text="Stored in sessionStorage only — cleared when you close the tab." />
+        <InfoRow icon="▸" text="Saved inside your own sync file (ritmol-data.json) on Dropbox or your local drive. Never on any RITMOL server — there is no server." />
+        <InfoRow icon="▸" text={'Sent only to generativelanguage.googleapis.com. You can verify this in DevTools → Network and filter by "generativelanguage".'} />
+        <InfoRow icon="▸" text="Never logged, never sent to analytics, never embedded in bug reports." />
+      </div>
+
+      {/* ── Verify button ── */}
+      {status !== "ok" && (
+        <button
+          type="button"
+          onClick={handleVerify}
+          disabled={!formatOk || status === "verifying"}
+          style={{
+            ...mono, width: "100%", padding: "14px",
+            border: "2px solid #fff",
+            background: (!formatOk || status === "verifying") ? "transparent" : "#fff",
+            color: (!formatOk || status === "verifying") ? "#555" : "#000",
+            fontSize: "15px", letterSpacing: "2px",
+            cursor: (!formatOk || status === "verifying") ? "not-allowed" : "pointer",
+          }}
+        >
+          {status === "verifying" ? "VERIFYING WITH GOOGLE…" : "VERIFY KEY"}
+        </button>
+      )}
+
+      {/* ── Error ── */}
+      {error && (
+        <div style={{ ...mono, color: "#fff", fontSize: "14px", fontWeight: "bold", border: "2px solid #fff", padding: "10px" }}>
+          [ ERR ] {error}
+        </div>
+      )}
+
+      {/* ── Success + confirm ── */}
+      {status === "ok" && (
+        <>
+          <div style={{ ...mono, color: "#fff", fontSize: "14px", border: "2px solid #fff", padding: "10px", display: "flex", alignItems: "center", gap: "10px" }}>
+            <span style={{ fontSize: "20px" }}>✓</span>
+            <span>KEY VERIFIED — Google confirmed this key is active.</span>
+          </div>
+          <button
+            type="button"
+            onClick={handleSave}
+            style={{
+              ...mono, width: "100%", padding: "14px",
+              border: "2px solid #fff", background: "#fff", color: "#000",
+              fontSize: "15px", letterSpacing: "2px", cursor: "pointer",
+              fontWeight: "bold",
+            }}
+          >
+            SAVE &amp; CONTINUE ›
+          </button>
+        </>
+      )}
     </div>
   );
 }

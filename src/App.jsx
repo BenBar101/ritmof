@@ -838,7 +838,7 @@ export default function App() {
   return (
     <AppContext.Provider value={ctx}>
       <GlobalStyles />
-      <div style={{ height: "100%", display: "flex", flexDirection: "column", background: "#000", color: "#fff", overflow: "hidden", ...(isReloading ? { pointerEvents: "none", userSelect: "none" } : {}) }}>
+      <div style={{ height: "100%", minHeight: "100dvh", display: "flex", flexDirection: "column", background: "#000", color: "#fff", overflow: "hidden", ...(isReloading ? { pointerEvents: "none", userSelect: "none" } : {}) }}>
         {isReloading && (
           <div
             aria-label="Syncing — please wait"

@@ -14,6 +14,7 @@ const GLOBAL_CSS = `
   @keyframes fadeIn    { from { opacity:1; } to { opacity:1; } }
   @keyframes pulse     { 0%, 100% { opacity:1; } 50% { opacity:1; } }
   @keyframes spin      { from { transform: rotate(0deg); } to { transform: rotate(0deg); } }
+  @keyframes scan      { from { left: -40%; } to { left: 140%; } }
 
   /* Kill every animation and transition globally — E-ink cannot render motion */
   *, *::before, *::after {
@@ -34,7 +35,13 @@ const GLOBAL_CSS = `
 
   html, body, #root {
     width: 100%;
+    /* Use dvh (dynamic viewport height) so the layout tracks the actual
+       visible area on mobile browsers with a collapsible address bar.
+       This keeps the fixed BottomNav pinned to the real bottom edge
+       instead of slipping behind the browser chrome.
+       Falls back to 100% for browsers that don't support dvh. */
     height: 100%;
+    height: 100dvh;
     margin: 0;
     padding: 0;
     overflow: hidden;           /* root handles its own scroll */
