@@ -14,6 +14,28 @@ const MAX_ATTEMPTS = 2;
 // Base delay in ms for exponential backoff.
 const BASE_DELAY_MS = 1500;
 
+// ── Global request queue ─────────────────────────────────────
+// All callGemini calls are serialized through this queue so concurrent
+// triggers (level-up + mission complete + gacha on first load) never fire
+// simultaneously and cause 429s. Each request waits for the previous one
+// to finish, then observes a minimum gap before sending.
+const MIN_GAP_MS = 1000; // minimum ms between consecutive requests
+let _queueTail = Promise.resolve(); // chain every call onto this
+let _lastRequestTime = 0;
+
+function enqueue(fn) {
+  const result = _queueTail.then(async () => {
+    const now = Date.now();
+    const wait = MIN_GAP_MS - (now - _lastRequestTime);
+    if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+    _lastRequestTime = Date.now();
+    return fn();
+  });
+  // Swallow rejections on the tail so one failure doesn't break the queue.
+  _queueTail = result.catch(() => {});
+  return result;
+}
+
 function retryDelay(attempt) {
   // Exponential backoff: 1s, 2s, 4s — plus up to 500ms random jitter each time.
   return BASE_DELAY_MS * Math.pow(2, attempt) + Math.random() * 500;
@@ -91,76 +113,77 @@ export async function callGemini(apiKey, messages, systemPrompt, jsonMode = fals
   }
 
   try {
-    let lastError;
+    return await enqueue(async () => {
+      let lastError;
 
-    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-      // Honour cancellation before every attempt (including the first).
-      if (effectiveSignal?.aborted) throw new DOMException("Aborted", "AbortError");
+      for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+        // Honour cancellation before every attempt (including the first).
+        if (effectiveSignal?.aborted) throw new DOMException("Aborted", "AbortError");
 
-      // Wait before retrying (never before the first attempt).
-      if (attempt > 0) {
-        await sleep(retryDelay(attempt - 1), effectiveSignal);
-      }
-
-      const res = await fetch(url, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          // NOTE: The API key is visible in the browser's DevTools Network tab.
-          // This is unavoidable for a purely client-side app; warn users in the README
-          // not to share screenshots of request headers or HAR files.
-          "x-goog-api-key": apiKey,
-        },
-        body: JSON.stringify(body),
-        signal: effectiveSignal,
-      });
-
-      if (!res.ok) {
-        // Respect Retry-After header if the server sends one (common with 429).
-        const retryAfterSec = res.headers?.get?.("Retry-After");
-        const retryAfterMs = retryAfterSec ? parseFloat(retryAfterSec) * 1000 : null;
-
-        if (RETRYABLE_STATUSES.has(res.status) && attempt < MAX_ATTEMPTS - 1) {
-          const waitMs = retryAfterMs ?? retryDelay(attempt);
-          await sleep(waitMs, effectiveSignal);
-          lastError = new Error(`Gemini ${res.status} (retrying…)`);
-          continue;
+        // Wait before retrying (never before the first attempt).
+        if (attempt > 0) {
+          await sleep(retryDelay(attempt - 1), effectiveSignal);
         }
 
-        const errBody = await res.text().catch(() => "");
-        const safeBody = errBody
-          .replace(/eyJ[\w.-]+/g, "[token]")
-          .replace(/AIza[A-Za-z0-9_-]{20,60}/g, "[key]")
-          .replace(/ya29\.[A-Za-z0-9_-]{20,}/g, "[oauth]")
-          .replace(/[A-Za-z0-9_-]{40,}/g, "[token]");
-        const slicedBody = safeBody.slice(0, 200);
-        const safeErrorMsg = (`Gemini ${res.status}: ${slicedBody}`)
-          .replace(/AIza[A-Za-z0-9_-]{20,60}/g, "[key]")
-          .replace(/ya29\.[A-Za-z0-9_-]{20,}/g, "[oauth]");
-        throw new Error(safeErrorMsg);
+        const res = await fetch(url, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            // NOTE: The API key is visible in the browser's DevTools Network tab.
+            // This is unavoidable for a purely client-side app; warn users in the README
+            // not to share screenshots of request headers or HAR files.
+            "x-goog-api-key": apiKey,
+          },
+          body: JSON.stringify(body),
+          signal: effectiveSignal,
+        });
+
+        if (!res.ok) {
+          // Respect Retry-After header if the server sends one (common with 429).
+          const retryAfterSec = res.headers?.get?.("Retry-After");
+          const retryAfterMs = retryAfterSec ? parseFloat(retryAfterSec) * 1000 : null;
+
+          if (RETRYABLE_STATUSES.has(res.status) && attempt < MAX_ATTEMPTS - 1) {
+            const waitMs = retryAfterMs ?? retryDelay(attempt);
+            await sleep(waitMs, effectiveSignal);
+            lastError = new Error(`Gemini ${res.status} (retrying…)`);
+            continue;
+          }
+
+          const errBody = await res.text().catch(() => "");
+          const safeBody = errBody
+            .replace(/eyJ[\w.-]+/g, "[token]")
+            .replace(/AIza[A-Za-z0-9_-]{20,60}/g, "[key]")
+            .replace(/ya29\.[A-Za-z0-9_-]{20,}/g, "[oauth]")
+            .replace(/[A-Za-z0-9_-]{40,}/g, "[token]");
+          const slicedBody = safeBody.slice(0, 200);
+          const safeErrorMsg = (`Gemini ${res.status}: ${slicedBody}`)
+            .replace(/AIza[A-Za-z0-9_-]{20,60}/g, "[key]")
+            .replace(/ya29\.[A-Za-z0-9_-]{20,}/g, "[oauth]");
+          throw new Error(safeErrorMsg);
+        }
+
+        const data = await res.json();
+
+        if (data.promptFeedback?.blockReason) {
+          throw new Error(`Blocked: ${data.promptFeedback.blockReason}`);
+        }
+
+        const text = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+        if (!text) throw new Error("Empty response from Gemini");
+
+        const enc = new TextEncoder();
+        const tokensUsed = data.usageMetadata
+          ? (data.usageMetadata.totalTokenCount ||
+             (data.usageMetadata.promptTokenCount || 0) + (data.usageMetadata.candidatesTokenCount || 0))
+          : Math.ceil((enc.encode(JSON.stringify(body)).length + enc.encode(text).length) / 4);
+
+        return { text, tokensUsed };
       }
 
-      const data = await res.json();
-
-      if (data.promptFeedback?.blockReason) {
-        throw new Error(`Blocked: ${data.promptFeedback.blockReason}`);
-      }
-
-      const text = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
-      if (!text) throw new Error("Empty response from Gemini");
-
-      const enc = new TextEncoder();
-      const tokensUsed = data.usageMetadata
-  ? (data.usageMetadata.totalTokenCount ||
-     (data.usageMetadata.promptTokenCount || 0) + (data.usageMetadata.candidatesTokenCount || 0))
-  : Math.ceil((enc.encode(JSON.stringify(body)).length + enc.encode(text).length) / 4);
-
-
-      return { text, tokensUsed };
-    }
-
-    // All attempts exhausted — surface the last retryable error clearly.
-    throw lastError ?? new Error("Gemini request failed after retries.");
+      // All attempts exhausted — surface the last retryable error clearly.
+      throw lastError ?? new Error("Gemini request failed after retries.");
+    });
   } finally {
     try {
       _cleanup?.();
