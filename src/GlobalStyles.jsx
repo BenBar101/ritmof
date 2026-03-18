@@ -224,12 +224,42 @@ const GLOBAL_CSS = `
   }
 `;
 
+function isPWAMode() {
+  return (
+    window.matchMedia("(display-mode: standalone)").matches ||
+    window.navigator.standalone === true
+  );
+}
+
 function setVhVariable() {
-  // window.innerHeight is the true visible height on iOS Safari —
-  // it excludes the top address bar and bottom toolbar.
-  // We set it as --vh so calc(var(--vh) * 100) === actual visible height.
-  const vh = window.innerHeight * 0.01;
+  // In PWA / standalone mode on iOS, window.innerHeight includes the area
+  // behind the home indicator at the bottom. visualViewport.height gives the
+  // true *usable* visible height (excluding the system home bar).
+  // In regular Safari browser mode, visualViewport.height matches innerHeight
+  // so this is safe to use unconditionally.
+  const pwa = isPWAMode();
+  let height;
+  if (pwa && window.visualViewport) {
+    // In PWA mode, visualViewport.height is the correct usable height —
+    // it excludes the iOS home indicator safe area that innerHeight includes.
+    height = window.visualViewport.height;
+  } else {
+    // Browser mode: innerHeight already excludes the browser chrome correctly.
+    height = window.innerHeight;
+  }
+  const vh = height * 0.01;
   document.documentElement.style.setProperty("--vh", `${vh}px`);
+
+  // --sab (safe-area-bottom) controls the bottom padding on the nav bar and
+  // scroll container. In PWA mode the safe area is already baked into --vh
+  // (visualViewport excludes the home indicator), so --sab must be 0 to avoid
+  // double-counting. In browser mode we leave --sab unset so the fallback
+  // env(safe-area-inset-bottom, 0px) is used natively via CSS.
+  if (pwa) {
+    document.documentElement.style.setProperty("--sab", "0px");
+  } else {
+    document.documentElement.style.removeProperty("--sab");
+  }
 }
 
 function ensureHeadMeta() {
@@ -255,16 +285,22 @@ export function GlobalStyles() {
     document.head.appendChild(styleEl);
 
     // Set --vh immediately and on every resize/orientationchange.
-    // This is the core fix: keeps the layout locked to the visible
-    // viewport height even as Safari's chrome appears/disappears.
+    // Also listen to visualViewport resize — in PWA mode on iOS, this fires
+    // when the home indicator area changes, keeping --vh accurate.
     setVhVariable();
     window.addEventListener("resize", setVhVariable);
     window.addEventListener("orientationchange", setVhVariable);
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener("resize", setVhVariable);
+    }
 
     return () => {
       styleEl.remove();
       window.removeEventListener("resize", setVhVariable);
       window.removeEventListener("orientationchange", setVhVariable);
+      if (window.visualViewport) {
+        window.visualViewport.removeEventListener("resize", setVhVariable);
+      }
     };
   }, []);
   return null;

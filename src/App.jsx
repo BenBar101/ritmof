@@ -938,7 +938,7 @@ export default function App() {
           </div>
         )}
         <TopBar xp={state.xp} xpPerLevel={xpPerLevel} level={level} rank={rank} profile={profile} syncStatus={syncStatus} lastSynced={lastSynced} onPush={syncPush} onPull={syncPull} syncFileConnected={syncFileConnected} isReloading={isReloading} />
-        <div data-scroll="" style={{ flex: 1, overflowY: "auto", overflowX: "hidden", paddingBottom: "calc(64px + env(safe-area-inset-bottom, 0px))", paddingTop: "calc(56px + env(safe-area-inset-top, 0px))" }}>
+        <div data-scroll="" style={{ flex: 1, overflowY: "auto", overflowX: "hidden", paddingBottom: "calc(64px + var(--sab, env(safe-area-inset-bottom, 0px)))", paddingTop: "calc(56px + env(safe-area-inset-top, 0px))" }}>
           {tab === "home"    && <ErrorBoundary key="home"><HomeTab /></ErrorBoundary>}
           {tab === "habits"  && <ErrorBoundary key="habits"><HabitsTab /></ErrorBoundary>}
           {tab === "tasks"   && <ErrorBoundary key="tasks"><TasksTab /></ErrorBoundary>}
