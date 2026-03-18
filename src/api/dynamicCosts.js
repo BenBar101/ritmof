@@ -11,14 +11,30 @@ let _dcInFlight = false;
 let _dcLastCalledAt = 0;
 const DC_COOLDOWN_MS = 60 * 60 * 1000; // 1 hour
 
+// Startup grace period: do not fire updateDynamicCosts within the first 30 s of
+// the page loading. The startup burst (weekly missions, quote, dynamic costs) all
+// fire in this window. A daily-login level-up that arrives here during that window
+// would add a 4th Gemini call on top of the 3 already queued, reliably hitting the
+// Gemini free-tier burst limit. The 30 s grace lets the queue drain first.
+const _moduleLoadTime = Date.now();
+const DC_STARTUP_GRACE_MS = 30_000;
+
 // Ask AI to update dynamic costs (xpPerLevel, gachaCost, streakShieldCost) after level-up, gacha pull, or shield use.
 // event: "level_up" | "gacha_pull" | "streak_shield_use". Returns partial costs to merge into state.dynamicCosts.
 export async function updateDynamicCosts(apiKey, state, event, onTokensUsed) {
   if (_dcInFlight) return {};
   const now = Date.now();
   if (now - _dcLastCalledAt < DC_COOLDOWN_MS) return {};
-  _dcInFlight = true;
+  // Startup grace: defer until the initial background burst (missions + quote) has
+  // had time to clear the queue. Returns {} silently — the next event (gacha pull,
+  // next day's level-up) will fire normally once the grace period has elapsed.
+  if (now - _moduleLoadTime < DC_STARTUP_GRACE_MS) return {};
+  // Stamp BEFORE setting _dcInFlight so that a second synchronous caller that
+  // arrives between these two lines will be turned away by the cooldown check
+  // above on its next tick — eliminating the TOCTOU race where two simultaneous
+  // callers both pass the _dcInFlight=false guard before either sets it true.
   _dcLastCalledAt = now;
+  _dcInFlight = true;
   let _dcTimeout;
   try {
     if (!apiKey) return {};
@@ -129,5 +145,6 @@ export function resetDcInFlight() {
 if (import.meta.hot) {
   import.meta.hot.dispose(() => {
     _dcInFlight = false;
+    _dcLastCalledAt = 0;
   });
 }

@@ -207,12 +207,15 @@ function MissingKeyGate({ connectDropbox, dropboxConnected, pickSyncFile, syncPu
     } catch (e) {
       setSyncStatus("error");
       const msgs = {
-        NO_HANDLE:            "No sync file linked yet.",
-        CORRUPT_FILE:         "Sync file is corrupt or not valid JSON.",
-        SYNC_SCHEMA_OUTDATED: "Sync file was written by an older version of RITMOL.",
-        SYNC_FILE_TOO_LARGE:  "Sync file exceeds 10 MB.",
-        SYNC_BUSY:            "Sync already in progress. Please wait.",
-        IDB_NOT_READY:        "Still loading, try again in a moment.",
+        NO_HANDLE:              "No sync file linked yet. Use the button above to link your file.",
+        CORRUPT_FILE:           "Sync file is corrupt or not valid JSON. Re-export from another device.",
+        SYNC_SCHEMA_OUTDATED:   "Sync file was written by an older version of RITMOL. Update the app first.",
+        SYNC_FILE_TOO_LARGE:    "Sync file exceeds 10 MB. Check for unusually large chat or session history.",
+        SYNC_BUSY:              "Sync already in progress. Please wait a moment and try again.",
+        IDB_NOT_READY:          "Still loading — try again in a moment.",
+        DROPBOX_FILE_NOT_FOUND: "No RITMOL file found in Dropbox. Push from another device first.",
+        DROPBOX_OFFLINE:        "No network connection. Connect to the internet and try again.",
+        DROPBOX_TOKEN_EXPIRED:  "Dropbox session expired. Reconnect Dropbox and try again.",
       };
       setSyncError(msgs[e?.message] ?? "Pull failed. Check your sync file and try again.");
     }
@@ -582,10 +585,11 @@ export default function App() {
     }
 
     tryGenerate("weekly");
-    // Stagger monthly by 8 s — enough for the weekly call to clear the queue
-    // (4 s MIN_GAP in gemini.js) before monthly fires, preventing back-to-back
-    // requests that trigger 429s on free-tier keys.
-    const monthlyTimer = setTimeout(() => tryGenerate("monthly"), 8000);
+    // Stagger monthly by 20 s — gives the weekly call, quote, and dynamic-costs calls
+    // time to clear the queue before monthly fires. The previous 8 s gap was too tight
+    // when all three other background calls were also starting up simultaneously,
+    // causing back-to-back requests that triggered 429s on free-tier keys.
+    const monthlyTimer = setTimeout(() => tryGenerate("monthly"), 20000);
     return () => {
       clearTimeout(monthlyTimer);
       abortControllers.weekly.abort();
@@ -679,17 +683,23 @@ export default function App() {
     try { if (sessionStorage.getItem("ritmol_quote_fetched") === "1") { quoteFetchedRef.current = true; return; } } catch { /* ignore */ }
     quoteFetchedRef.current = true;
     try { sessionStorage.setItem("ritmol_quote_fetched", "1"); } catch { /* ignore */ }
-    fetchDailyQuote(apiKey || null, profile, trackTokens || null)
-      .then((result) => {
-        if (result === null) {
+    // Delay by 5 s on cold load so the quote doesn't race with the weekly-mission
+    // background call that fires immediately on startup. Both are background=true,
+    // but staggering them avoids hitting Gemini's burst quota simultaneously.
+    const quoteTimer = setTimeout(() => {
+      fetchDailyQuote(apiKey || null, profile, trackTokens || null)
+        .then((result) => {
+          if (result === null) {
+            quoteFetchedRef.current = false;
+            return;
+          }
+          setDailyQuote(result);
+        })
+        .catch(() => {
           quoteFetchedRef.current = false;
-          return;
-        }
-        setDailyQuote(result);
-      })
-      .catch(() => {
-        quoteFetchedRef.current = false;
-      });
+        });
+    }, 5000);
+    return () => clearTimeout(quoteTimer);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [!!profile, !!apiKey, quoteInput]);
 
@@ -814,7 +824,7 @@ export default function App() {
 
   // ── Context value ────────────────────────────────────────
   const ctx = {
-    state, setState, latestStateRef, profile, apiKey, theme, setTheme,
+    state, setState, latestStateRef, rehydrate, profile, apiKey, theme, setTheme,
     level, rank, xpPerLevel, gachaCost, streakShieldCost,
     awardXP, checkMissions, unlockAchievement, executeCommands, trackTokens, logHabit, actionLocksRef,
     showBanner, showToast, setModal,
@@ -828,7 +838,7 @@ export default function App() {
   return (
     <AppContext.Provider value={ctx}>
       <GlobalStyles />
-      <div style={{ height: "100%", display: "flex", flexDirection: "column", background: "#000", color: "#fff", overflow: "hidden" }}>
+      <div style={{ height: "100%", display: "flex", flexDirection: "column", background: "#000", color: "#fff", overflow: "hidden", ...(isReloading ? { pointerEvents: "none", userSelect: "none" } : {}) }}>
         {isReloading && (
           <div
             aria-label="Syncing — please wait"
@@ -842,7 +852,8 @@ export default function App() {
               alignItems: "center",
               justifyContent: "center",
               fontFamily: "'Share Tech Mono', monospace",
-              pointerEvents: "all",
+              pointerEvents: "auto",
+              userSelect: "none",
             }}
           >
             <div style={{ fontSize: "11px", color: theme === "light" ? "#000" : "#fff", letterSpacing: "3px", fontWeight: "bold", opacity: 0.7 }}>SYNC COMPLETE</div>

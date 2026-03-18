@@ -199,8 +199,17 @@ export const updateMaxDateSeen = (dateStr) => {
     }
     // Write to localStorage for cross-boot persistence fallback.
     try {
-      localStorage.setItem((IS_DEV ? DEV_PREFIX : '') + _MAX_DATE_STORE_KEY, JSON.stringify(dateStr))
-    } catch { /* localStorage full or unavailable */ }
+      localStorage.setItem((IS_DEV ? DEV_PREFIX : '') + _MAX_DATE_STORE_KEY, JSON.stringify(dateStr));
+    } catch (e) {
+      // Anti-cheat watermark failed to persist to localStorage.
+      // TinyBase and IDB writes above already committed, so the watermark is not lost;
+      // but dispatch ls-quota-exceeded so the UI can warn the user about storage pressure.
+      if (e?.name === 'QuotaExceededError' || e?.name === 'NS_ERROR_DOM_QUOTA_REACHED') {
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('ls-quota-exceeded'));
+        }
+      }
+    }
   }
 }
 

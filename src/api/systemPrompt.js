@@ -170,6 +170,8 @@ export function buildSystemPrompt(state, profile) {
     .replace(/[\n\r]/g, " ")
     // Collapse any double-spaces introduced by keyword removal.
     .replace(/  +/g, " ")
+    // Defence-in-depth: strip pipe homoglyphs that could spoof RECENT_CONTEXT turn boundaries.
+    .replace(/[\u2223\uFF5C\u01C0\u01C1\u0964\u0965\uFE31\uFE32\u2758\u2506\u254E\u2502\u2503\u2016\u2225\u007C]/g, "")
     .trim();
 
   return `You are RITMOL — the AI companion of a gamified life-OS for STEM university students. Solo Leveling RPG aesthetic. Be brief, punchy, motivating. Never break character.

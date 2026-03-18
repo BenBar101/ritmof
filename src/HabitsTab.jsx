@@ -63,7 +63,7 @@ Respond ONLY with JSON array:
 ]`;
 
     callGemini(apiKey, [{ role: "user", content: prompt }],
-      "You generate personalized habit protocols. Respond only in JSON.", true, controller.signal, 512)
+      "You generate personalized habit protocols. Respond only in JSON.", true, controller.signal, 512, true) // background=true: yields to chat/gacha
       .then(async ({ text, tokensUsed }) => {
         if (controller.signal.aborted || !mounted) return;
         trackTokens?.(tokensUsed);

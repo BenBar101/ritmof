@@ -173,7 +173,7 @@ export const MissionSchema = z.object({
   desc:   z.string().max(200),
   xp:     z.number().min(0).max(2000),
   done:   z.boolean(),
-  type:   z.enum(['habits', 'session', 'task', 'chat']),
+  type:   z.enum(['habits', 'session', 'task', 'chat', 'streak', 'custom']),
   target: z.number().min(0).max(100),
 })
 
@@ -238,6 +238,7 @@ export const SyncPayloadSchema = z.object({
   }).strip()).max(500).optional(),
   jv_gcal_connected:        z.boolean().optional(),
   jv_gcal_selected_ids:     z.array(z.string().max(300)).max(50).nullable().optional(),
+  jv_gcal_last_sync:        z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
   jv_token_usage:           TokenUsageSchema.optional(),
   jv_habits_init:           z.boolean().optional(),
   jv_dynamic_costs:         DynamicCostsSchema.optional(),
@@ -245,5 +246,5 @@ export const SyncPayloadSchema = z.object({
   jv_last_shield_buy_date:  nullOrDate.optional(),
   // geminiKey is allowed in the payload for reading (extracted to sessionStorage)
   // but is never written back out on push
-  geminiKey:                z.string().max(60).regex(/^AIza[A-Za-z0-9_-]{20,60}$/).optional(),
+  geminiKey:                z.string().max(64).regex(/^AIza[A-Za-z0-9_-]{20,60}$/).optional(),
 })

@@ -4,7 +4,7 @@
 // Accepts an optional AbortSignal so callers (ChatTab, HabitsTab, etc.) can cancel
 // in-flight requests when the component unmounts or the user navigates away.
 
-// ── Client-side hard rate cap: 4 calls per 60-second sliding window ──────────
+// ── Client-side hard rate cap: 3 calls per 60-second sliding window ──────────
 //
 // This cap is enforced BEFORE any request leaves the browser. When the cap is
 // reached, callGemini throws a RateLimitedError immediately instead of queuing
@@ -14,8 +14,13 @@
 // RateLimitedError carries `retryAfterMs` — the milliseconds until the oldest
 // call in the window ages out and a slot opens up. UI components use this to
 // display a running countdown.
+//
+// Cap is 3 (not 4) to leave headroom for multi-tab usage and the startup burst
+// (missions + quote + costs all fire within the first 30 s on a cold load).
+// Timestamps are persisted to sessionStorage so a hard-reload within the same
+// browser session doesn't reset the window and let the burst fire again.
 
-export const RATE_LIMIT_CAP = 4;       // max calls per window
+export const RATE_LIMIT_CAP = 3;       // max calls per window
 export const RATE_LIMIT_WINDOW_MS = 60_000; // window size in ms
 
 export class RateLimitedError extends Error {
@@ -28,7 +33,28 @@ export class RateLimitedError extends Error {
 
 // Timestamps (Date.now()) of the most recent RATE_LIMIT_CAP calls.
 // Module-level so it survives across React re-renders and hook instances.
-const _callTimestamps = [];
+// Seeded from sessionStorage on load so a hard page-reload within the same
+// browser session doesn't reset the window and allow the startup burst to
+// re-fire immediately.
+const _SS_KEY = "ritmol_rl_timestamps";
+function _loadTimestamps() {
+  try {
+    const raw = sessionStorage.getItem(_SS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    const now = Date.now();
+    // Only keep timestamps still inside the current window.
+    return parsed.filter((t) => typeof t === "number" && now - t < RATE_LIMIT_WINDOW_MS);
+  } catch {
+    return [];
+  }
+}
+function _saveTimestamps(ts) {
+  try { sessionStorage.setItem(_SS_KEY, JSON.stringify(ts)); } catch { /* ignore quota */ }
+}
+
+const _callTimestamps = _loadTimestamps();
 
 /**
  * Returns the current rate-limit status.
@@ -57,11 +83,22 @@ function _recordCall() {
     _callTimestamps.shift();
   }
   _callTimestamps.push(now);
+  _saveTimestamps(_callTimestamps);
+}
+
+/**
+ * Clears the sliding-window call history.
+ * Call this when the API key changes so the new key starts with a clean slate.
+ */
+export function clearRateLimitWindow() {
+  _callTimestamps.length = 0;
+  try { sessionStorage.removeItem(_SS_KEY); } catch { /* ignore */ }
 }
 
 if (import.meta.hot) {
   import.meta.hot.dispose(() => {
     _callTimestamps.length = 0;
+    try { sessionStorage.removeItem(_SS_KEY); } catch { /* ignore */ }
   });
 }
 
@@ -96,7 +133,11 @@ const BG_POLL_MS   = 1000;   // how often background checks if it can proceed
 
 let _interactiveTail  = Promise.resolve(); // interactive calls chain onto this
 let _backgroundTail   = Promise.resolve(); // background calls chain onto this (serialized)
-let _lastRequestTime  = Date.now();        // initialise to now so BG_IDLE_MS is measured from load, not epoch
+// Initialise to 0 (epoch) so the background lane's BG_IDLE_MS idle check is measured
+// from the first real API call, not from module load. Initialising to Date.now() caused
+// background calls to fire immediately after BG_IDLE_MS elapsed from page load even when
+// no real request had ever gone out, defeating the idle-wait intent.
+let _lastRequestTime  = 0;
 
 function enqueueInteractive(fn) {
   const result = _interactiveTail.then(async () => {
@@ -139,7 +180,7 @@ if (import.meta.hot) {
   import.meta.hot.dispose(() => {
     _interactiveTail = Promise.resolve();
     _backgroundTail  = Promise.resolve();
-    _lastRequestTime = Date.now();
+    _lastRequestTime = 0;
   });
 }
 
@@ -165,9 +206,10 @@ export async function callGemini(apiKey, messages, systemPrompt, jsonMode = fals
   // Always work with the trimmed key so whitespace from paste/storage never causes 403.
   apiKey = apiKey.trim();
 
-  // FIX: use the stable versioned model endpoint. The unversioned "gemini-2.0-flash"
-  // alias can route to preview endpoints with tighter rate limits.
-  const url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-001:generateContent";
+  // Use gemini-2.5-flash (GA, not preview) — matches the README spec and has
+  // better free-tier limits than the old gemini-2.0-flash-001 endpoint.
+  // Free tier: 15 RPM, 1M TPM, 1500 RPD.
+  const url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent";
 
   const contents = messages.map((m) => ({
     role: m.role === "assistant" ? "model" : "user",
@@ -184,6 +226,11 @@ export async function callGemini(apiKey, messages, systemPrompt, jsonMode = fals
     generationConfig: {
       temperature: 0.7,
       maxOutputTokens: Math.min(Math.max(64, Math.round(maxOutputTokens)), 8192),
+      // Force valid JSON output at the API level when jsonMode is requested.
+      // This is far more reliable than prompt-based enforcement — the model
+      // cannot return markdown fences, prose preambles, or malformed JSON.
+      // Supported on gemini-2.5-flash and all current Gemini 1.5+ models.
+      ...(jsonMode ? { responseMimeType: "application/json" } : {}),
     },
   };
 
@@ -260,7 +307,7 @@ export async function callGemini(apiKey, messages, systemPrompt, jsonMode = fals
         });
 
         if (!res.ok) {
-          // Respect Retry-After header if the server sends one (common with 429).
+          // Read Retry-After header before consuming the body.
           const retryAfterSec = res.headers?.get?.("Retry-After");
           const retryAfterMs = retryAfterSec ? parseFloat(retryAfterSec) * 1000 : null;
 
@@ -271,13 +318,53 @@ export async function callGemini(apiKey, messages, systemPrompt, jsonMode = fals
             continue;
           }
 
+          // ── 429 handling ──────────────────────────────────────────────────────
+          // Parse body as JSON first to extract the machine-readable status field
+          // ("RATE_LIMIT_EXCEEDED" vs "RESOURCE_EXHAUSTED") before sanitizing.
+          // Previously a blanket 40-char regex wiped out Google's error message
+          // entirely, making all 429s completely opaque and impossible to diagnose.
+          if (res.status === 429) {
+            const rawText = await res.text().catch(() => "");
+            let geminiStatus = "";
+            try {
+              const parsed = JSON.parse(rawText);
+              geminiStatus = parsed?.error?.status ?? "";
+            } catch { /* not JSON — leave geminiStatus empty */ }
+
+            // RESOURCE_EXHAUSTED = daily RPD or TPM quota consumed.
+            // This does NOT clear until midnight Pacific (Google's reset time).
+            if (geminiStatus === "RESOURCE_EXHAUSTED") {
+              throw new Error(
+                "Gemini 429: RESOURCE_EXHAUSTED — daily request or token quota used up. " +
+                "AI features will resume at Google's daily reset (~midnight Pacific). " +
+                "Check your quota in Google Cloud Console → Generative Language API → Quotas."
+              );
+            }
+
+            // RATE_LIMIT_EXCEEDED (or unclassified 429) = RPM burst limit hit.
+            // Temporary — back off and retry after Retry-After seconds.
+            const waitSec = retryAfterMs ? Math.ceil(retryAfterMs / 1000) : 60;
+            const rlErr = new Error(
+              `Gemini 429: RATE_LIMIT_EXCEEDED — too many requests per minute. ` +
+              `Retry in ~${waitSec}s. If this happens often, check for multiple ` +
+              `open tabs (each tab has its own rate counter).`
+            );
+            // Attach retryAfterMs so callers (ChatTab) can show a countdown timer.
+            rlErr.retryAfterMs = retryAfterMs ?? 60_000;
+            rlErr.isGemini429 = true;
+            throw rlErr;
+          }
+
+          // Other non-retryable errors (400, 401, 403, etc.).
+          // Sanitize body but only redact very long tokens (60+ chars) —
+          // not Google's short error status strings like "INVALID_ARGUMENT".
           const errBody = await res.text().catch(() => "");
           const safeBody = errBody
             .replace(/eyJ[\w.-]+/g, "[token]")
             .replace(/AIza[A-Za-z0-9_-]{20,60}/g, "[key]")
             .replace(/ya29\.[A-Za-z0-9_-]{20,}/g, "[oauth]")
-            .replace(/[A-Za-z0-9_-]{40,}/g, "[token]");
-          const slicedBody = safeBody.slice(0, 200);
+            .replace(/[A-Za-z0-9_-]{60,}/g, "[token]");
+          const slicedBody = safeBody.slice(0, 300);
           const safeErrorMsg = (`Gemini ${res.status}: ${slicedBody}`)
             .replace(/AIza[A-Za-z0-9_-]{20,60}/g, "[key]")
             .replace(/ya29\.[A-Za-z0-9_-]{20,}/g, "[oauth]");
@@ -290,8 +377,26 @@ export async function callGemini(apiKey, messages, systemPrompt, jsonMode = fals
           throw new Error(`Blocked: ${data.promptFeedback.blockReason}`);
         }
 
-        const text = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+        const candidate = data.candidates?.[0];
+        // Join all parts — Gemini sometimes splits the response across multiple parts,
+        // especially with responseMimeType set. Reading only parts[0] truncates the output.
+        const text = (candidate?.content?.parts ?? [])
+          .map(p => p?.text ?? "")
+          .join("") || "";
         if (!text) throw new Error("Empty response from Gemini");
+
+        // Detect genuine mid-response truncation from hitting the token limit.
+        // Only throw if the text is visibly incomplete — Gemini 2.5 Flash with
+        // responseMimeType set sometimes returns finishReason MAX_TOKENS even for
+        // fully-formed JSON responses, so we check the content itself first.
+        const finishReason = candidate?.finishReason ?? "";
+        if (finishReason === "MAX_TOKENS") {
+          const trimmed = text.trimEnd();
+          const looksComplete = trimmed.endsWith("}") || trimmed.endsWith("]") || trimmed.endsWith("\"");
+          if (!looksComplete) {
+            throw new Error("Gemini response truncated (MAX_TOKENS) — increase maxOutputTokens or shorten the prompt.");
+          }
+        }
 
         const enc = new TextEncoder();
         const tokensUsed = data.usageMetadata

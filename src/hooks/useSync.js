@@ -77,10 +77,15 @@ export function useSync({ latestStateRef, rehydrate, showBanner }) {
     if (typeof navigator !== "undefined" && navigator.onLine === false) return;
     autoPullAttemptedRef.current = true;
     setSyncStatus("syncing");
+    let cancelled = false;
+    // Set the mutex inside the effect body (not before) so if React Strict Mode
+    // double-invokes the effect and the cleanup runs, the finally block below
+    // always releases it — preventing a permanently blocked pull mutex.
     isPullingRef.current = true;
     (async () => {
       try {
         await SyncManager.pull();
+        if (cancelled) { isPullingRef.current = false; return; }
         await rehydrate();
         LS.set(storageKey("jv_last_synced"), String(Date.now()));
         setLastSynced(Date.now());
@@ -91,6 +96,7 @@ export function useSync({ latestStateRef, rehydrate, showBanner }) {
           try { window.location.reload(); } catch { isPullingRef.current = false; }
         }, 400);
       } catch (e) {
+        if (cancelled) { isPullingRef.current = false; return; }
         // Token expired: clear auth so the user sees a clean reconnect prompt.
         if (e.message === "DROPBOX_TOKEN_EXPIRED") {
           clearTokens();
@@ -103,6 +109,13 @@ export function useSync({ latestStateRef, rehydrate, showBanner }) {
         isPullingRef.current = false;
       }
     })();
+    // Cleanup: if the component unmounts while the auto-pull is in flight
+    // (e.g. React Strict Mode double-invoke), release the mutex so future
+    // Pulls and auto-pushes are not permanently blocked.
+    return () => {
+      cancelled = true;
+      if (isPullingRef.current) isPullingRef.current = false;
+    };
   // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional mount-only effect
   }, []);
 
@@ -486,10 +499,14 @@ export function useSync({ latestStateRef, rehydrate, showBanner }) {
       clearTimeout(debounceTimerRef.current);
       debounceTimerRef.current = null;
     }
-    await SyncManager.forget();
-    setSyncFileConnected(false);
-    setSyncStatus("idle");
-    showBanner("Sync file unlinked.", "success");
+    try {
+      await SyncManager.forget();
+      setSyncFileConnected(false);
+      setSyncStatus("idle");
+      showBanner("Sync file unlinked.", "success");
+    } catch {
+      showBanner("Could not unlink sync file. Try again.", "alert");
+    }
   }, [confirmForgetSync, showBanner]);
 
   return {

@@ -1,11 +1,10 @@
 import React, { useState, useEffect, useRef } from "react";
-import { flushSync } from "react-dom";
 import { useAppContext } from "./context/AppContext";
 import { todayUTC, localDateFromUTC, getGeminiApiKey, setGeminiApiKey, getMaxDateSeen, IS_DEV } from "./utils/db";
 import { ACHIEVEMENT_RARITIES, STYLE_CSS, DAILY_TOKEN_LIMIT, RANKS, sampleGachaRarity } from "./constants";
 import { DATA_DISCLOSURE_SEEN_KEY, THEME_KEY } from "./constants";
 import { getLevelProgress } from "./utils/xp";
-import { callGemini, RateLimitedError } from "./api/gemini";
+import { callGemini, RateLimitedError, clearRateLimitWindow } from "./api/gemini";
 import { fetchGCalEvents, fetchCalendarList, loadGoogleGIS } from "./api/gcal";
 import { SyncManager, FSAPI_SUPPORTED } from "./sync/SyncManager";
 import GeometricCorners from "./GeometricCorners";
@@ -20,10 +19,10 @@ const APP_CONSTANT_KEYS = new Set([DATA_DISCLOSURE_SEEN_KEY, THEME_KEY, "jv_last
 // Strip control chars, BiDi overrides/zero-width chars from stored gacha fields at render time.
 // Also used by GachaCard to defensively clean up legacy cards saved before stricter sanitizers.
 // eslint-disable-next-line no-control-regex
-const SAFE_GACHA_RENDER_REGEX = /[\u0000-\u001F\u007F-\u009F\u200B-\u200D\uFEFF\u202A-\u202E\u2066-\u2069]/g;
+const SAFE_GACHA_RENDER_REGEX = /[\u0000-\u0009\u000B-\u001F\u007F-\u009F\u200B-\u200D\uFEFF\u202A-\u202E\u2066-\u2069]/g;
 
 export default function ProfileTab() {
-  const { state, setState, latestStateRef, profile, level, rank, xpPerLevel, showBanner, showToast, executeCommands, apiKey, buildSystemPrompt, syncStatus, lastSynced, syncFileConnected, dropboxConnected, confirmForgetSync, syncPush: onPush, syncPull: onPull, pickSyncFile: onPickSyncFile, forgetSyncFile: onForgetSyncFile, connectDropbox, disconnectDropbox, theme, setTheme, streakShieldCost, gachaCost, trackTokens } = useAppContext();
+  const { state, setState, latestStateRef, rehydrate, profile, level, rank, xpPerLevel, showBanner, showToast, executeCommands, apiKey, buildSystemPrompt, syncStatus, lastSynced, syncFileConnected, dropboxConnected, confirmForgetSync, syncPush: onPush, syncPull: onPull, pickSyncFile: onPickSyncFile, forgetSyncFile: onForgetSyncFile, connectDropbox, disconnectDropbox, theme, setTheme, streakShieldCost, gachaCost, trackTokens } = useAppContext();
   const [section, setSection] = useState("overview");
   // showGacha state is reserved for future gacha modal implementation
   // eslint-disable-next-line no-unused-vars
@@ -75,7 +74,7 @@ export default function ProfileTab() {
       {section === "achievements" && <AchievementsSection state={state} />}
       {section === "calendar" && <CalendarSection state={state} setState={setState} profile={profile} apiKey={apiKey} buildSystemPrompt={buildSystemPrompt} showBanner={showBanner} executeCommands={executeCommands} />}
       {section === "gacha" && <GachaSection state={state} setState={setState} profile={profile} apiKey={apiKey} gachaCost={gachaCost} showBanner={showBanner} showToast={showToast} trackTokens={trackTokens} latestStateRef={latestStateRef} />}
-      {section === "settings" && <SettingsSection profile={profile} setState={setState} showBanner={showBanner} syncStatus={syncStatus} lastSynced={lastSynced} syncFileConnected={syncFileConnected} dropboxConnected={dropboxConnected} onPush={onPush} onPull={onPull} onPickSyncFile={onPickSyncFile} onForgetSyncFile={onForgetSyncFile} confirmForgetSync={confirmForgetSync} connectDropbox={connectDropbox} disconnectDropbox={disconnectDropbox} theme={theme} setTheme={setTheme} latestStateRef={latestStateRef} />}
+      {section === "settings" && <SettingsSection profile={profile} setState={setState} showBanner={showBanner} syncStatus={syncStatus} lastSynced={lastSynced} syncFileConnected={syncFileConnected} dropboxConnected={dropboxConnected} onPush={onPush} onPull={onPull} onPickSyncFile={onPickSyncFile} onForgetSyncFile={onForgetSyncFile} confirmForgetSync={confirmForgetSync} connectDropbox={connectDropbox} disconnectDropbox={disconnectDropbox} theme={theme} setTheme={setTheme} latestStateRef={latestStateRef} rehydrate={rehydrate} />}
     </div>
   );
 }
@@ -90,12 +89,21 @@ function ProfileOverview({ state, setState, profile, level, streakShieldCost, ap
   const shieldSnapshotRef = useRef(null);
   const buyShieldInFlightRef = useRef(false);
   const buyShieldSkipReasonRef = useRef(null); // "already_purchased" | "insufficient_xp" | null
+  const [buyShieldInFlight, setBuyShieldInFlight] = useState(false);
 
   function buyShield() {
     if (buyShieldInFlightRef.current) return;
     buyShieldInFlightRef.current = true;
+    setBuyShieldInFlight(true);
     if (!apiKey) {
       buyShieldInFlightRef.current = false;
+      setBuyShieldInFlight(false);
+      return;
+    }
+    if (typeof navigator !== "undefined" && navigator.onLine === false) {
+      buyShieldInFlightRef.current = false;
+      setBuyShieldInFlight(false);
+      showBanner("No network connection. Shield purchase requires connectivity for dynamic pricing.", "alert");
       return;
     }
 
@@ -136,12 +144,14 @@ function ProfileOverview({ state, setState, profile, level, streakShieldCost, ap
     queueMicrotask(() => {
       if (!shieldSnapshotRef.current) {
         buyShieldInFlightRef.current = false;
+        setBuyShieldInFlight(false);
         if (buyShieldSkipReasonRef.current === "already_purchased") {
           showBanner("Streak shield already purchased today.", "info");
         }
         return;
       }
       buyShieldInFlightRef.current = false;
+      setBuyShieldInFlight(false);
       const snapshotForApi = shieldSnapshotRef.current;
       shieldSnapshotRef.current = null;
       if (!snapshotForApi) return;
@@ -191,7 +201,7 @@ function ProfileOverview({ state, setState, profile, level, streakShieldCost, ap
         <button
           type="button"
           onClick={buyShield}
-          disabled={!canBuyShield || !apiKey}
+          disabled={!canBuyShield || !apiKey || buyShieldInFlight || (typeof navigator !== "undefined" && navigator.onLine === false)}
           style={{
             padding: "12px 16px", border: canBuyShield && apiKey ? "2px solid #fff" : "2px solid #444", background: canBuyShield && apiKey ? "#fff" : "#000",
             color: canBuyShield && apiKey ? "#000" : "#444", fontFamily: "'Share Tech Mono', monospace", fontSize: "16px", letterSpacing: "2px", cursor: canBuyShield && apiKey ? "pointer" : "default",
@@ -700,75 +710,155 @@ function GachaSection({ state, setState, profile, apiKey, gachaCost, showBanner,
     gachaAbortRef.current = controller;
 
     try {
-      // Fix [PR-2]: extract sanitized books once and reuse it in BOTH the JSON block
-      // AND the chronicle sub-prompt. The original code sanitized books in the JSON
-      // block but interpolated raw profile?.books in the prose instruction line, creating
-      // a prompt-injection bypass for that second interpolation point.
-      const sanitizedBooks = sanitizeForPrompt(
-        (profile?.books || "their favorites").replace(/[<>{}[\]`"'\\]/g, "")
-      , 200)
+      const sp = (s, max) => sanitizeForPrompt(
+        (s || "").replace(/[<>{}[\]`"'\\]/g, ""), max
+      ).replace(/[`$]/g, "");
+
+      // ── Compute behavioural patterns from real state data ──────────────
+      const now = Date.now();
+
+      // Habit consistency: count completions per habit over the last 30 days
+      const thirtyDaysAgo = new Date(now - 30 * 86400000).toISOString().slice(0, 10);
+      const habitLog = state.habitLog || {};
+      const habitCounts = {}; // habitId → count
+      for (const [date, ids] of Object.entries(habitLog)) {
+        if (date < thirtyDaysAgo) continue;
+        for (const id of (ids || [])) {
+          habitCounts[id] = (habitCounts[id] || 0) + 1;
+        }
+      }
+      const habits = state.habits || [];
+      // Days with any log entry (= days the app was used) for denominator
+      const activeDays = Object.keys(habitLog).filter(d => d >= thirtyDaysAgo).length || 1;
+      const habitSummary = habits
+        .map(h => ({ label: h.label, count: habitCounts[h.id] || 0, category: h.category }))
+        .filter(h => h.count > 0)
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 6)
+        .map(h => {
+          const pct = Math.round((h.count / activeDays) * 100);
+          return sp(`${h.label} (${pct}% consistency)`, 60);
+        });
+
+      // Task patterns: early, on-time, or overdue
+      const tasks = state.tasks || [];
+      const doneTasks = tasks.filter(t => t.done && t.doneDate && t.due);
+      let earlyCount = 0, onTimeCount = 0, overdueCount = 0;
+      for (const t of doneTasks) {
+        if (t.doneDate < t.due) earlyCount++;
+        else if (t.doneDate === t.due) onTimeCount++;
+        else overdueCount++;
+      }
+      const taskStyle = earlyCount > onTimeCount + overdueCount ? "finishes early"
+        : onTimeCount > overdueCount ? "deadline-precise"
+        : overdueCount > 0 ? "battles deadlines"
+        : "no task pattern yet";
+
+      // Recent completed task labels for flavour
+      const recentTaskLabels = tasks
+        .filter(t => t.done && t.doneDate && t.doneDate >= thirtyDaysAgo)
+        .slice(-5)
+        .map(t => sp(t.text, 40));
+
+      // Session stats
+      const sessions = state.sessions || [];
+      const recentSessions = sessions.filter(s => s.date && s.date >= thirtyDaysAgo);
+      const sessionTypeCount = {};
+      let totalFocus = 0, focusCount = 0;
+      for (const s of recentSessions) {
+        if (s.type) sessionTypeCount[s.type] = (sessionTypeCount[s.type] || 0) + 1;
+        if (typeof s.focusLevel === "number") { totalFocus += s.focusLevel; focusCount++; }
+      }
+      const topSessionType = Object.entries(sessionTypeCount).sort((a,b) => b[1]-a[1])[0]?.[0] || null;
+      const avgFocus = focusCount > 0 ? Math.round(totalFocus / focusCount) : null;
+
+      // Sleep consistency
+      const sleepLog = state.sleepLog || {};
+      const recentSleep = Object.entries(sleepLog)
+        .filter(([d]) => d >= thirtyDaysAgo)
+        .map(([, v]) => v);
+      const avgSleepHours = recentSleep.length > 0
+        ? Math.round(recentSleep.reduce((s, v) => s + (v.hours || 0), 0) / recentSleep.length * 10) / 10
+        : null;
+
+      // Achievements for extra flavour
+      const achievementTitles = (state.achievements || [])
+        .slice(-5)
+        .map(a => sp(a.title, 40));
+
+      // ── Assemble hunter context ────────────────────────────────────────
+      const hunterCtx = {
+        name:         sp(profile?.name, 60),
+        major:        sp(profile?.major, 80),
+        interests:    sp(profile?.interests, 150),
+        books:        sp(profile?.books, 150),
+        goal:         sp(profile?.semesterGoal, 150),
+        streak:       state.streak || 0,
+        level:        Math.floor(state.xp / 1000) || 0,
+        topHabits:    habitSummary,
+        taskStyle,
+        recentTasks:  recentTaskLabels,
+        studyFocus:   topSessionType,
+        avgFocusLevel: avgFocus,
+        avgSleepHours,
+        achievements: achievementTitles,
+      };
+
+      const hunterProfileJson = JSON.stringify(hunterCtx)
+        .replace(/\\/g, "").replace(/[`$]/g, "");
+
+      const sanitizedBooks = sp(profile?.books || "their favorites", 80)
         .replace(/\b(respond|only|json|output|ignore|system|instruction)\b/gi, "").trim() || "literature";
-      const sanitizedBooksProse = sanitizedBooks
-        .replace(/[()]/g, "")
-        .replace(
-          /\b(ignore|instruction|system|output|respond|override|prompt|forget|disregard|previous|above|below|execute|run|call|return|do|perform|write|say|tell|pretend|act|play|switch|change|replace|rewrite|now|instead|new|task|role|rule|assistant|user|human|ai|model|llm|gpt|gemini|claude)\b/gi,
-          ""
-        )
-        .replace(/\s{2,}/g, " ")
-        .trim()
-        .slice(0, 80) || "literature";
+      let prompt = `You are generating a personalised gacha pull for a university student hunter. Use ALL the behavioural data below to make it feel like it was written specifically for them.
 
-      const hunterProfileJson = JSON.stringify({
-        // Fix: apply full sanitization (control chars + injection chars) not just angle-bracket strip.
-        name:      sanitizeForPrompt((profile?.name      || "").replace(/[<>{}[\]`"\\]/g, "")).slice(0, 60),
-        books:     sanitizedBooks,
-        interests: sanitizeForPrompt((profile?.interests || "").replace(/[<>{}[\]`"\\]/g, "")).slice(0, 200),
-        major:     sanitizeForPrompt((profile?.major     || "").replace(/[<>{}[\]`"\\]/g, "")).slice(0, 80),
-      })
-        // Defence-in-depth: strip backslashes and template delimiters so the JSON
-        // block cannot break out of the surrounding template literal.
-        .replace(/\\/g, "")
-        .replace(/[`$]/g, "");
+Hunter data: ${hunterProfileJson}
 
-      let prompt = `Generate a gacha pull for a STEM university student.
-Hunter profile: ${hunterProfileJson}
-Existing collection (don't duplicate): ${JSON.stringify(collection.slice(-50).map(c => c.id))}
+Pick ONE type (60% rank_title, 40% chronicle):
 
-Generate ONE of these (weighted random — 60% rank_cosmetic, 40% chronicle):
+rank_title: A unique 2-4 word hunter epithet that reflects their ACTUAL behaviour patterns — their top habits, task style, study focus, or sleep. Not generic. Reference something specific from the data. Then write one punchy lore sentence (max 20 words) that could only be about THIS hunter.
 
-For rank_cosmetic: a black-and-white ASCII/geometric/typewriter/dot-matrix rank badge/crest design for this hunter. Make it unique and beautiful. Style must match their interests.
+chronicle: A vivid 30-40 word prose fragment inspired by one of their actual books (${sanitizedBooks}). Ground it in the hunter's real study habits or life patterns. State the book and author in source.
 
-For chronicle: Write a vivid, atmospheric scene or passage from one of the hunter's favorite books (${sanitizedBooksProse}). Write it as a beautifully typeset literary fragment — original prose inspired by the style and world of that book. 50-100 words. Include the book/author it's inspired by.
-
-Respond ONLY with JSON:
-{
-  "id": "unique_id_string",
-  "type": "rank_cosmetic | chronicle",
-  "title": "...",
-  "content": "...",
-  "style": "ascii | dots | geometric | typewriter",
-  "source": "book or author name (for chronicles)",
-  "asciiArt": "3-5 lines of ASCII/character art for cosmetics (null for chronicles)"
-}`;
+Reply with ONLY this JSON:
+{"id":"unique_string","type":"rank_title or chronicle","title":"the epithet or piece name","content":"lore sentence or prose fragment","style":"ascii or dots or geometric or typewriter","source":"book/author for chronicles, empty string for rank_title"}`;
       // Final guard: ensure no stray backticks remain anywhere in the prompt.
       prompt = prompt.replace(/`/g, "");
 
-      const { text: raw, tokensUsed } = await callGemini(apiKey, [{ role: "user", content: prompt }], "You are a master of literary atmosphere and ASCII art. Respond only in JSON.", true, controller.signal, 512);
+      const { text: raw, tokensUsed } = await callGemini(apiKey, [{ role: "user", content: prompt }], "You are a creative RPG loremaster. Respond only in JSON.", true, controller.signal, 2048, false);
       if (mountedRef.current) {
         trackTokens(tokensUsed);
       }
-      const match = raw.match(/\{[\s\S]*\}/);
-      if (!match) throw new Error("Failed to parse Gacha JSON");
+      // With responseMimeType: "application/json" set in callGemini, the response
+      // should be clean JSON. Try direct parse first, then fall back to extraction.
+      // Log raw response always so we can diagnose parse failures.
+      if (import.meta.env.DEV) console.log("[Gacha] raw response:", JSON.stringify(raw).slice(0, 500));
       let card;
       try {
-        card = JSON.parse(match[0]);
-      } catch {
+        card = JSON.parse(raw);
+      } catch (parseErr) {
+        console.warn("[Gacha] direct parse failed:", parseErr?.message, "| raw[:200]:", raw?.slice(0, 200));
+        // Fallback: strip markdown fences and extract the first {...} block
+        const stripped = raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```\s*$/, "").trim();
+        const match = stripped.match(/\{[\s\S]*\}/);
+        if (!match) { console.error("[Gacha] no JSON object found in response"); throw new Error("Failed to parse Gacha JSON"); }
+        try {
+          card = JSON.parse(match[0]);
+        } catch (e2) {
+          console.error("[Gacha] fallback parse failed:", e2?.message, "| extracted:", match[0]?.slice(0, 200));
+          throw new Error("Failed to parse Gacha JSON");
+        }
+      }
+      if (import.meta.env.DEV) console.log("[Gacha] parsed card:", card);
+      if (!card || typeof card !== "object" || Array.isArray(card)) {
+        console.error("[Gacha] card is not a plain object:", typeof card);
         throw new Error("Failed to parse Gacha JSON");
       }
-      if (!card || typeof card !== "object" || Array.isArray(card)) throw new Error("Failed to parse Gacha JSON");
       // Prototype-pollution guard before any property access.
       const { isSafeSyncValue } = await import("./sync/SyncManager.js");
-      if (!isSafeSyncValue(card)) throw new Error("Failed to parse Gacha JSON");
+      if (!isSafeSyncValue(card)) {
+        console.error("[Gacha] isSafeSyncValue rejected card:", Object.keys(card));
+        throw new Error("Failed to parse Gacha JSON");
+      }
 
       let contentHash = "";
       const contentToHash = String(card.content || "") + String(card.title || "");
@@ -793,54 +883,80 @@ Respond ONLY with JSON:
       const stripGachaStr = (s, max) => typeof s === "string" ? sanitizeForPrompt(s).replace(/[\u200B-\u200D\uFEFF]/g, "").slice(0, max) : null;
       const safeCard = {
         id:       contentHash ? `gacha_${contentHash}` : `gacha_${crypto.randomUUID()}`,
-        type:     ["rank_cosmetic","chronicle"].includes(card.type) ? card.type : "rank_cosmetic",
-        // Client enforces rarity probabilities; ignore AI-suggested rarity.
-        rarity:   (() => { const r = sampleGachaRarity(); return ["common","rare","epic","legendary"].includes(r) ? r : "common"; })(),
+        type:     ["rank_title","chronicle"].includes(card.type) ? card.type : "rank_title",
+        // rarity is sampled atomically inside the setState updater below
         title:    stripGachaStr(card.title, 120) ?? "Unknown",
         content:  stripGachaStr(card.content, 1000) ?? "",
         style:    ["ascii","dots","geometric","typewriter"].includes(card.style) ? card.style : "ascii",
         source:   stripGachaStr(card.source, 120),
-        asciiArt: stripGachaStr(card.asciiArt, 500),
+        asciiArt: null,
       };
 
-      // ATOMIC: deduct XP and add card in a single flushSync setState so the updater
-      // runs synchronously and the committed flag is reliably set before we read it.
-      // Without flushSync, React 18 concurrent mode may batch/defer the updater,
-      // leaving committed=false even when the state change succeeded.
-      let committed = false;
-      let snapshotForCosts = null;
-      flushSync(() => {
-        setState((s) => {
-          const cost = s.dynamicCosts?.gachaCost ?? gachaCost;
-          const MAX_SAFE_XP = 10_000_000;
-          const safeXp = typeof s.xp === "number" && isFinite(s.xp) && s.xp >= 0
-            ? Math.min(Math.floor(s.xp), MAX_SAFE_XP) : 0;
-          // Re-check affordability inside the updater against live s.
-          if (safeXp < cost) return s;
-          if ((s.gachaCollection || []).length >= 2000) return s;
-          if ((s.gachaCollection || []).find(c => c.id === safeCard.id)) return s;
-          committed = true;
-          const next = {
-            ...s,
-            xp: Math.max(0, safeXp - cost),
-            gachaCollection: [...(s.gachaCollection || []), { ...safeCard, pulledAt: Date.now() }],
-          };
-          snapshotForCosts = next;
-          return next;
-        });
-      });
+      // Pre-check affordability synchronously using latestStateRef before setState.
+      // The committed-flag pattern (setting a flag inside a setState updater and reading
+      // it immediately after) does NOT work in async React 18 — React schedules the
+      // updater for the next render cycle, so the flag is always false when checked here.
+      // Instead: validate against latestStateRef.current (always the committed live state),
+      // then call setState unconditionally knowing the guards have already passed.
+      const liveState = latestStateRef?.current ?? state;
+      const liveCostNow = liveState.dynamicCosts?.gachaCost ?? gachaCost;
+      const liveXpNow = typeof liveState.xp === "number" && isFinite(liveState.xp) && liveState.xp >= 0
+        ? Math.min(Math.floor(liveState.xp), 10_000_000) : 0;
 
-      if (!committed) {
+      if (liveXpNow < liveCostNow) {
         if (mountedRef.current) {
-          showBanner("Insufficient XP or duplicate card. No XP consumed.", "info");
+          showBanner(`Insufficient XP. Need ${liveCostNow} XP to pull.`, "info");
+          setPulling(false);
+        }
+        pullingRef.current = false;
+        return;
+      }
+      if ((liveState.gachaCollection || []).length >= 2000) {
+        if (mountedRef.current) {
+          showBanner("Collection full (2000 cards max).", "info");
+          setPulling(false);
+        }
+        pullingRef.current = false;
+        return;
+      }
+      if ((liveState.gachaCollection || []).find(c => c.id === safeCard.id)) {
+        if (mountedRef.current) {
+          showBanner("Duplicate card — no XP consumed.", "info");
           setPulling(false);
         }
         pullingRef.current = false;
         return;
       }
 
-      const currentState = latestStateRef?.current ?? state;
-      const costsSnapshot = snapshotForCosts ?? currentState;
+      // All guards passed — deduct XP and store card.
+      // Build the next state snapshot here (synchronously) so we have it for
+      // updateDynamicCosts without relying on snapshotForCosts being set inside
+      // the async updater (which runs in the next render cycle, not right now).
+      let sampledRarity = "common";
+      const costsSnapshot = {
+        ...liveState,
+        xp: Math.max(0, liveXpNow - liveCostNow),
+        gachaCollection: [...(liveState.gachaCollection || []), { ...safeCard, rarity: "common", pulledAt: Date.now() }],
+      };
+      setState((s) => {
+        const cost = s.dynamicCosts?.gachaCost ?? gachaCost;
+        const safeXp = typeof s.xp === "number" && isFinite(s.xp) && s.xp >= 0
+          ? Math.min(Math.floor(s.xp), 10_000_000) : 0;
+        // Re-check inside updater as a safety net (handles race between two rapid taps).
+        if (safeXp < cost) return s;
+        if ((s.gachaCollection || []).length >= 2000) return s;
+        if ((s.gachaCollection || []).find(c => c.id === safeCard.id)) return s;
+        const rarity = (() => {
+          const r = sampleGachaRarity();
+          return ["common","rare","epic","legendary"].includes(r) ? r : "common";
+        })();
+        sampledRarity = rarity;
+        return {
+          ...s,
+          xp: Math.max(0, safeXp - cost),
+          gachaCollection: [...(s.gachaCollection || []), { ...safeCard, rarity, pulledAt: Date.now() }],
+        };
+      });
       if (typeof navigator === "undefined" || navigator.onLine !== false) {
         updateDynamicCosts(getGeminiApiKey(), costsSnapshot, "gacha_pull", trackTokens).then((costs) => {
           if (costs && Object.keys(costs).length && mountedRef.current) {
@@ -856,8 +972,8 @@ Respond ONLY with JSON:
       setCollectionPage(0);
       if (mountedRef.current) {
         setLastPull(safeCard);
-        showToast({ icon: safeCard.type === "chronicle" ? "≡" : "◈", title: safeCard.title, desc: safeCard.rarity.toUpperCase() + " PULL", rarity: safeCard.rarity, isAchievement: false });
-        showBanner(`${safeCard.rarity.toUpperCase()} — ${safeCard.title}`, "success");
+        showToast({ icon: safeCard.type === "chronicle" ? "≡" : "◈", title: safeCard.title, desc: sampledRarity.toUpperCase() + " PULL", rarity: sampledRarity, isAchievement: false });
+        showBanner(`${sampledRarity.toUpperCase()} — ${safeCard.title}`, "success");
         setPulling(false);
       }
       pullingRef.current = false;
@@ -877,9 +993,27 @@ Respond ONLY with JSON:
         pullingRef.current = false;
         return;
       }
+      if (err?.isGemini429) {
+        const secsLeft = err.retryAfterMs ? Math.ceil(err.retryAfterMs / 1000) : 60;
+        const msg = err.message?.includes("RESOURCE_EXHAUSTED")
+          ? "Daily Gemini quota used up — gacha unavailable until tomorrow."
+          : `Gemini RPM limit hit. Wait ~${secsLeft}s and try again.`;
+        if (mountedRef.current) {
+          showBanner(msg, "alert");
+          setPulling(false);
+        }
+        pullingRef.current = false;
+        return;
+      }
       // No XP to refund — deduction only happened inside setState on success.
+      console.error("[Gacha] doPull failed:", err?.message ?? err);
       if (mountedRef.current) {
-        showBanner("Gacha pull failed. No XP consumed.", "alert");
+        let msg = "Gacha pull failed. No XP consumed.";
+        if (err?.message?.includes("MAX_TOKENS") || err?.message?.includes("truncated")) {
+          msg = "Gacha response was cut off — try again in a moment.";
+        }
+        const devMsg = import.meta.env.DEV ? ` (${String(err?.message ?? err).slice(0, 80)})` : "";
+        showBanner(msg + devMsg, "alert");
         setPulling(false);
       }
       pullingRef.current = false;
@@ -1041,7 +1175,7 @@ function GachaCard({ card, compact }) {
         <div>
           <div style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: "16px", fontWeight: "bold" }}>{safeRenderStr(card.title)}</div>
           <div style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: "14px", color: "#fff", marginTop: "4px", fontWeight: "bold" }}>
-            {card.type === "chronicle" ? `CHRONICLE · ${safeRenderStr(card.source)}` : "RANK COSMETIC"} · {r.label}
+            {card.type === "chronicle" ? `CHRONICLE · ${safeRenderStr(card.source)}` : "RANK TITLE"} · {r.label}
           </div>
         </div>
         {compact && <span style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: "16px", color: "#fff" }}>{expanded ? "[ ▲ ]" : "[ ▼ ]"}</span>}
@@ -1049,17 +1183,16 @@ function GachaCard({ card, compact }) {
 
       {expanded && (
         <>
-          {card.asciiArt && (
-            <pre style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: "16px", color: "#fff", margin: "8px 0", lineHeight: "1.6", whiteSpace: "pre-wrap" }}>
-              {(() => {
-                const safeAscii = safeRenderStr(card.asciiArt)
-                  .replace(/\n{3,}/g, "\n\n")
-                  .split("\n")
-                  .map((line) => line.slice(0, 80))
-                  .join("\n");
-                return safeAscii;
-              })()}
-            </pre>
+          {card.type === "rank_title" && (
+            <div style={{
+              borderTop: "2px solid #fff", borderBottom: "2px solid #fff",
+              padding: "16px 0", margin: "12px 0", textAlign: "center",
+            }}>
+              <div style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: "11px", letterSpacing: "4px", color: "#aaa", marginBottom: "8px" }}>— HUNTER EPITHET —</div>
+              <div style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: "22px", fontWeight: "bold", color: "#fff", letterSpacing: "2px" }}>
+                {safeRenderStr(card.title)}
+              </div>
+            </div>
           )}
           <div style={{ fontSize: "16px", lineHeight: "1.7", color: "#fff", marginTop: "8px", whiteSpace: "pre-wrap" }}>
             {safeRenderStr(card.content)}
@@ -1071,7 +1204,7 @@ function GachaCard({ card, compact }) {
 }
 
 // eslint-disable-next-line no-unused-vars
-function SettingsSection({ profile, setState, showBanner, syncStatus, lastSynced, syncFileConnected, dropboxConnected, onPush, onPull, onPickSyncFile, onForgetSyncFile, confirmForgetSync, connectDropbox, disconnectDropbox, theme, setTheme, latestStateRef }) {
+function SettingsSection({ profile, setState, showBanner, syncStatus, lastSynced, syncFileConnected, dropboxConnected, onPush, onPull, onPickSyncFile, onForgetSyncFile, confirmForgetSync, connectDropbox, disconnectDropbox, theme, setTheme, latestStateRef, rehydrate }) {
   const importRef = useRef(null);
   const [importLoading, setImportLoading] = useState(false);
   const currentGeminiKey = getGeminiApiKey();
@@ -1111,7 +1244,7 @@ function SettingsSection({ profile, setState, showBanner, syncStatus, lastSynced
     if (confirmResetTimerRef.current) clearTimeout(confirmResetTimerRef.current);
   }, []);
 
-  function handleChangeGeminiKey() {
+  async function handleChangeGeminiKey() {
     try {
       const next = window.prompt(
         "Enter new Gemini API key (stored only in this browser tab):",
@@ -1124,6 +1257,12 @@ function SettingsSection({ profile, setState, showBanner, syncStatus, lastSynced
         return;
       }
       setGeminiApiKey(trimmed);
+      // Clear the client-side rate-limit window so the new key starts fresh.
+      clearRateLimitWindow();
+      // Force App to re-render so apiKey (read via getGeminiApiKey() on render)
+      // reflects the new value immediately. Without this, the context value stays
+      // stale until an unrelated re-render occurs.
+      await rehydrate?.();
       showBanner("Gemini API key updated for this session.", "success");
     } catch {
       showBanner("Could not update Gemini API key.", "alert");

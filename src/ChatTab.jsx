@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useMemo } from "react";
 import { useAppContext } from "./context/AppContext";
 import { todayUTC, localDateFromUTC, LS, storageKey } from "./utils/db";
 import { DAILY_TOKEN_LIMIT, DATA_DISCLOSURE_SEEN_KEY } from "./constants";
-import { callGemini, RateLimitedError, getRateLimitStatus, RATE_LIMIT_WINDOW_MS, RATE_LIMIT_CAP } from "./api/gemini";
+import { callGemini, RateLimitedError, RATE_LIMIT_WINDOW_MS, RATE_LIMIT_CAP } from "./api/gemini";
 
 function NeuralEnergyBar({ usage, theme }) {
   if (!usage || typeof usage.date !== "string") return null;
@@ -234,7 +234,7 @@ export default function ChatTab() {
       }
     } catch (e) {
       if (e instanceof RateLimitedError) {
-        // Hard cap hit — set countdown and show an in-chat system message with timer
+        // Client-side cap hit — set countdown and show in-chat message with timer.
         const unlocksAt = Date.now() + e.retryAfterMs;
         if (mountedRef.current) setRateLimitedUntil(unlocksAt);
         const secsLeft = Math.ceil(e.retryAfterMs / 1000);
@@ -255,10 +255,36 @@ export default function ChatTab() {
         }
         return;
       }
+
+      // Server-side 429 (RATE_LIMIT_EXCEEDED from Gemini) — also triggers countdown.
+      if (e?.isGemini429 && e?.retryAfterMs) {
+        const unlocksAt = Date.now() + e.retryAfterMs;
+        if (mountedRef.current) setRateLimitedUntil(unlocksAt);
+        const secsLeft = Math.ceil(e.retryAfterMs / 1000);
+        const rlMsg = {
+          role: "assistant",
+          content: `⏳ SYSTEM: Gemini RPM limit hit. AI locked for ~${secsLeft}s. ` +
+            `If this keeps happening, check for multiple open tabs — each tab counts separately against your API quota.`,
+          ts: Date.now(),
+          seq: ++_msgSeq,
+          date: localDateFromUTC(),
+          isError: true,
+          isRateLimit: true,
+          rateLimitUnlocksAt: unlocksAt,
+        };
+        if (mountedRef.current) {
+          setState((s) => ({ ...s, chatHistory: [...s.chatHistory, rlMsg].slice(-1000) }));
+          setLoading(false);
+          inFlightRef.current = false;
+        }
+        return;
+      }
+
       if (e?.name === "AbortError") {
         if (mountedRef.current) setLoading(false);
         return;
       }
+
       const rawMsg = e?.message || "";
       const redactedMsg = rawMsg
         .replace(/AIza[A-Za-z0-9_-]{35,45}/g, "[key]")
@@ -266,11 +292,18 @@ export default function ChatTab() {
         .replace(/ya29\.[A-Za-z0-9_-]{20,}/g, "[oauth]");
 
       // Map known error patterns to friendly in-chat messages.
+      // Order matters: check most-specific patterns first.
       let friendlyMsg;
-      if (redactedMsg.includes("429") || redactedMsg.toLowerCase().includes("quota") || redactedMsg.toLowerCase().includes("rate")) {
-        friendlyMsg = "Rate limit hit — you've exceeded the Gemini free quota. Wait a minute and try again, or check your Google AI billing.";
+      if (redactedMsg.includes("RESOURCE_EXHAUSTED")) {
+        friendlyMsg = "Daily Gemini quota used up — AI features will resume at Google's daily reset (~midnight Pacific). " +
+          "Check Google Cloud Console → Generative Language API → Quotas if this seems wrong.";
+      } else if (redactedMsg.includes("RATE_LIMIT_EXCEEDED")) {
+        friendlyMsg = "Gemini RPM limit hit — too many requests per minute. Wait ~60s and try again. " +
+          "If this keeps happening, check for multiple open tabs.";
+      } else if (redactedMsg.includes("429")) {
+        friendlyMsg = "Gemini rate limit hit — wait a minute and try again.";
       } else if (redactedMsg.includes("401") || redactedMsg.includes("403") || redactedMsg.toLowerCase().includes("api key")) {
-        friendlyMsg = "Invalid API key — check your Gemini key in the Profile settings.";
+        friendlyMsg = "Invalid API key — check your Gemini key in Profile → Settings.";
       } else if (redactedMsg.includes("400")) {
         friendlyMsg = "Bad request — the message couldn't be processed. Try rephrasing.";
       } else if (redactedMsg.toLowerCase().includes("blocked")) {

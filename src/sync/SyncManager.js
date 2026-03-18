@@ -100,6 +100,12 @@ function sanitizeChatMessages(arr) {
       // eslint-disable-next-line no-control-regex
       content = content.replace(/[\u0000-\u001F\u007F-\u009F\u200B-\u200D\uFEFF]/g, "");
       content = content.replace(/[\u202A-\u202E\u2066-\u2069]/g, "");
+      // Strip pipe homoglyphs so stored chat cannot inject turn separators into recentChatSummary.
+      content = content.replace(/[\u2223\uFF5C\u01C0\u01C1\u0964\u0965\uFE31\uFE32\u2758\u2506\u254E\u2502\u2503\u2016\u2225\u007C]/g, "");
+      // Strip mathematical alphanumeric lookalikes, Letterlike Symbols, Tags block,
+      // and Enclosed Alphanumerics — all used in prompt-injection payloads.
+      // Mirrors the strip set in sanitizeForPrompt (src/api/systemPrompt.js).
+      content = content.replace(/[\u{1D400}-\u{1D7FF}\u2100-\u214F\u2460-\u24FF\u{E0000}-\u{E01FF}]/gu, "");
       while (byteLen(content) > MAX_CHAT_MSG_BYTES) content = content.slice(0, content.length - 1);
       return {
         role: item.role === "assistant" ? "assistant" : "user",
