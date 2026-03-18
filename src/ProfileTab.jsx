@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { flushSync } from "react-dom";
 import { useAppContext } from "./context/AppContext";
-import { todayUTC, localDateFromUTC, getGeminiApiKey, setGeminiApiKey, getMaxDateSeen } from "./utils/db";
+import { todayUTC, localDateFromUTC, getGeminiApiKey, setGeminiApiKey, getMaxDateSeen, IS_DEV } from "./utils/db";
 import { ACHIEVEMENT_RARITIES, STYLE_CSS, DAILY_TOKEN_LIMIT, RANKS, sampleGachaRarity } from "./constants";
 import { DATA_DISCLOSURE_SEEN_KEY, THEME_KEY } from "./constants";
 import { getLevelProgress } from "./utils/xp";
@@ -1040,6 +1040,7 @@ function GachaCard({ card, compact }) {
 function SettingsSection({ profile, setState, showBanner, syncStatus, lastSynced, syncFileConnected, dropboxConnected, onPush, onPull, onPickSyncFile, onForgetSyncFile, confirmForgetSync, connectDropbox, disconnectDropbox, theme, setTheme, latestStateRef }) {
   const importRef = useRef(null);
   const [importLoading, setImportLoading] = useState(false);
+  const currentGeminiKey = getGeminiApiKey();
 
   // ── PWA install prompt ────────────────────────────────────────
   const [installPrompt, setInstallPrompt] = useState(null);
@@ -1075,6 +1076,25 @@ function SettingsSection({ profile, setState, showBanner, syncStatus, lastSynced
   useEffect(() => () => {
     if (confirmResetTimerRef.current) clearTimeout(confirmResetTimerRef.current);
   }, []);
+
+  function handleChangeGeminiKey() {
+    try {
+      const next = window.prompt(
+        "Enter new Gemini API key (stored only in this browser tab):",
+        currentGeminiKey || "",
+      );
+      if (next == null) return;
+      const trimmed = next.trim();
+      if (!trimmed) {
+        showBanner("Gemini API key not changed.", "info");
+        return;
+      }
+      setGeminiApiKey(trimmed);
+      showBanner("Gemini API key updated for this session.", "success");
+    } catch {
+      showBanner("Could not update Gemini API key.", "alert");
+    }
+  }
 
   async function resetAll() {
     if (!confirmReset) {
@@ -1443,6 +1463,49 @@ function SettingsSection({ profile, setState, showBanner, syncStatus, lastSynced
             </div>
           )}
         </>
+      )}
+
+      {/* ── AI CONFIG ── */}
+      <div style={{ height: "1px", background: "#333", margin: "8px 0" }} />
+      <div style={{ fontSize: "16px", color: "#fff", letterSpacing: "2px", fontWeight: "bold" }}>[ AI CONFIG ]</div>
+      <button
+        type="button"
+        onClick={handleChangeGeminiKey}
+        style={{
+          marginTop: "4px",
+          padding: "12px",
+          border: "2px solid #fff",
+          background: "transparent",
+          color: "#fff",
+          fontFamily: "'Share Tech Mono', monospace",
+          fontSize: "16px",
+          letterSpacing: "1px",
+          cursor: "pointer",
+          minHeight: "48px",
+        }}
+      >
+        CHANGE GEMINI API KEY
+      </button>
+      {IS_DEV && (
+        <div
+          style={{
+            marginTop: "8px",
+            border: "2px dashed #555",
+            padding: "10px 12px",
+            fontSize: "12px",
+            color: "#ccc",
+            fontFamily: "'Share Tech Mono', monospace",
+            lineHeight: "1.6",
+            wordBreak: "break-all",
+          }}
+        >
+          <div style={{ fontSize: "11px", letterSpacing: "2px", marginBottom: "4px", fontWeight: "bold" }}>
+            DEV ONLY — CURRENT GEMINI KEY
+          </div>
+          <div>
+            {currentGeminiKey || "(none set)"}
+          </div>
+        </div>
       )}
 
       <button type="button" onClick={resetAll} style={{
