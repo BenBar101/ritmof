@@ -459,14 +459,8 @@ function extractSecretsFromPayload(payload) {
   // slot separate from any jv_profile fields (which are validated separately).
   if (Object.prototype.hasOwnProperty.call(payload, "geminiKey") && typeof payload.geminiKey === "string") {
     const trimmed = payload.geminiKey.trim();
-    // Accept a range of plausible key lengths so future format changes don't
-    // silently break the config gate. We never log the key value itself.
-    if (/^AIza[A-Za-z0-9_-]{20,60}$/.test(trimmed)) {
+    if (trimmed) {
       setGeminiApiKey(trimmed);
-    } else {
-      // Key was present but failed the format check — surface a console warning
-      // so developers can debug why the config gate is still shown.
-      console.warn("[SyncManager] geminiKey present in sync file but did not match expected format. App will show config gate.");
     }
   }
   // googleClientId is intentionally not stored here — it would be
