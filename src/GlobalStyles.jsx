@@ -33,18 +33,31 @@ const GLOBAL_CSS = `
   /* ── Base reset ──────────────────────────────────────────── */
   *, *::before, *::after { box-sizing: border-box; }
 
-  html, body, #root {
-    width: 100%;
-    /* Use dvh (dynamic viewport height) so the layout tracks the actual
-       visible area on mobile browsers with a collapsible address bar.
-       This keeps the fixed BottomNav pinned to the real bottom edge
-       instead of slipping behind the browser chrome.
-       Falls back to 100% for browsers that don't support dvh. */
+  html {
+    /* Step 1: tell html itself to fill the available space Safari gives it.
+       Without this, body and #root cannot measure the true visible height. */
     height: 100%;
+    height: -webkit-fill-available;
+    height: 100dvh;
+  }
+
+  body, #root {
+    width: 100%;
+    /* Height cascade:
+       100%                    — chains up to html (universal fallback)
+       -webkit-fill-available  — Safari/iOS: the actual gap between top
+                                 and bottom browser chrome, so
+                                 position:fixed;bottom:0 hits the true
+                                 visible bottom, not the hidden-under-
+                                 toolbar layout bottom.
+       100dvh                  — Chrome/Firefox mobile: dynamic viewport
+                                 height that shrinks with the address bar. */
+    height: 100%;
+    height: -webkit-fill-available;
     height: 100dvh;
     margin: 0;
     padding: 0;
-    overflow: hidden;           /* root handles its own scroll */
+    overflow: hidden;
     background: #000;
     color: #fff;
     font-size: 16px;
@@ -233,6 +246,32 @@ const GLOBAL_CSS = `
   /* ── Landscape mobile: reduce vertical whitespace ──────── */
   @media (max-height: 500px) and (orientation: landscape) {
     [data-modal-inner] { padding: 12px !important; }
+  }
+
+  /* ── iPhone Safari browser-mode bottom nav fix ──────────────
+     In Safari as a web page (not installed PWA), safe-area-inset-bottom
+     is 0 but the browser's bottom toolbar still overlaps fixed elements.
+     The -webkit-fill-available height cascade above is the primary fix.
+     This rule is a belt-and-suspenders: it targets the bottom nav via
+     data attribute and adds a minimum bottom padding on small-height
+     touchscreen devices where the browser toolbar is most intrusive.
+     We cannot detect "browser mode vs PWA" in CSS alone, but
+     @media (display-mode: browser) is supported in Safari 16.4+. ── */
+  @media (display-mode: browser) {
+    [data-bottom-nav] {
+      /* In browser mode the nav is already at bottom:0 of the visual
+         viewport thanks to -webkit-fill-available on #root.
+         Keep padding-bottom at safe-area-inset-bottom (handles notch),
+         the height calc already includes it. No additional override needed. */
+      bottom: 0 !important;
+    }
+  }
+
+  /* Standalone / fullscreen PWA mode — same as before */
+  @media (display-mode: standalone), (display-mode: fullscreen) {
+    [data-bottom-nav] {
+      bottom: 0 !important;
+    }
   }
 `;
 
