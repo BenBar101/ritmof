@@ -4,7 +4,7 @@
 // Accepts an optional AbortSignal so callers (ChatTab, HabitsTab, etc.) can cancel
 // in-flight requests when the component unmounts or the user navigates away.
 
-// ── Client-side hard rate cap: 3 calls per 60-second sliding window ──────────
+// ── Client-side hard rate cap: 12 calls per 60-second sliding window ─────────
 //
 // This cap is enforced BEFORE any request leaves the browser. When the cap is
 // reached, callGemini throws a RateLimitedError immediately instead of queuing
@@ -15,12 +15,16 @@
 // call in the window ages out and a slot opens up. UI components use this to
 // display a running countdown.
 //
-// Cap is 3 (not 4) to leave headroom for multi-tab usage and the startup burst
-// (missions + quote + costs all fire within the first 30 s on a cold load).
+// Cap is 12 (Google free-tier Gemini 2.5 Flash allows 15 RPM; we stay 3 under
+// to leave headroom for multi-tab usage). The previous cap of 3 was far too
+// tight: on a new-user cold load, 5 background calls fire within ~20 s
+// (weekly missions, quote, dynamic costs, monthly missions, habit init) —
+// all within the same 60-second window — causing RateLimitedError for every
+// new user before they could interact with the app at all.
 // Timestamps are persisted to sessionStorage so a hard-reload within the same
 // browser session doesn't reset the window and let the burst fire again.
 
-export const RATE_LIMIT_CAP = 3;       // max calls per window
+export const RATE_LIMIT_CAP = 12;      // max calls per window (Google free tier: 15 RPM)
 export const RATE_LIMIT_WINDOW_MS = 60_000; // window size in ms
 
 export class RateLimitedError extends Error {

@@ -18,7 +18,7 @@ import { THEME_KEY, SESSION_TYPES, DEFAULT_XP_PER_LEVEL, DEFAULT_GACHA_COST, DEF
 import { buildSystemPrompt } from "./api/systemPrompt";
 import { fetchDailyQuote } from "./api/quotes";
 import { fetchGCalEvents, loadGoogleGIS } from "./api/gcal";
-import { callGemini, RateLimitedError } from "./api/gemini";
+import { callGemini, RateLimitedError, clearRateLimitWindow } from "./api/gemini";
 import { FSAPI_SUPPORTED } from "./sync/SyncManager";
 import { verifyOAuthState } from "./api/dropbox";
 
@@ -800,6 +800,10 @@ export default function App() {
           onComplete={async (profile) => {
             setState((s) => ({ ...s, profile }));
             setShowOnboarding(false);
+            // Clear the sliding rate-limit window so any background calls that fired
+            // during onboarding (habit init, quote, costs) don't eat into the new
+            // user's first interactive session slots.
+            clearRateLimitWindow();
             // Push immediately so the Gemini key (in sessionStorage) and the
             // new profile are written to Dropbox in one shot. Without this,
             // a fresh tab after onboarding shows MissingKeyGate because the
