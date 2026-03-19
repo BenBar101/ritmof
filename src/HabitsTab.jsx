@@ -44,8 +44,11 @@ export default function HabitsTab() {
 
   return (
     <div style={{ padding: "16px", display: "flex", flexDirection: "column", gap: "20px" }}>
-      <div style={{ fontFamily: "'Share Tech Mono', monospace", borderBottom: "3px solid #fff", paddingBottom: "16px" }}>
-        <div style={{ fontSize: "16px", color: "#fff", letterSpacing: "3px", fontWeight: "bold" }}>[ HABIT LOG ]</div>
+      <div style={{ fontFamily: "'Share Tech Mono', monospace", borderBottom: "4px double #fff", paddingBottom: "16px" }}>
+        <div className="system-header" style={{ fontSize: "13px", marginBottom: "4px" }}>
+          <span>[ HABIT LOG ]</span>
+          <div className="system-divider" />
+        </div>
         <div style={{ fontSize: "28px", fontWeight: "bold", marginTop: "4px" }}>HABITS</div>
         <div style={{ fontSize: "15px", color: "#fff", marginTop: "4px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <span>{todayLog.length}/{state.habits.length} completed today</span>
@@ -66,11 +69,14 @@ export default function HabitsTab() {
 
       {/* ── Add Habit Form ─────────────────────────────────── */}
       {showAddForm && (
-        <div style={{
-          border: "2px solid #fff", padding: "18px", fontFamily: "'Share Tech Mono', monospace",
-          display: "flex", flexDirection: "column", gap: "12px", background: "#000",
+        <div className="system-frame" style={{
+          padding: "18px", marginBottom: 0, fontFamily: "'Share Tech Mono', monospace",
+          display: "flex", flexDirection: "column", gap: "12px",
         }}>
-          <div style={{ fontSize: "13px", letterSpacing: "2px", color: "#fff", fontWeight: "bold" }}>NEW CUSTOM HABIT</div>
+          <div className="system-header" style={{ fontSize: "13px", marginBottom: "4px" }}>
+            <span>NEW CUSTOM HABIT</span>
+            <div className="system-divider" />
+          </div>
 
           <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
             <label style={{ fontSize: "12px", color: "#aaa", letterSpacing: "1px" }}>HABIT NAME *</label>

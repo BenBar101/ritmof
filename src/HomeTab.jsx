@@ -3,51 +3,41 @@ import { useAppContext } from "./context/AppContext";
 import { localDateFromUTC, nowHour, sanitizeForDisplay } from "./utils/db";
 
 // ── HUD panel wrapper ──────────────────────────────────────────
-// Gives every card a Solo Leveling–style chamfered corner with a
-// subtle notch cut from the top-right, matching the manhwa aesthetic.
+// Full 8-corner notch per design.md spec.
+// The .system-frame class (injected by GlobalStyles Task 1) provides:
+//   - 2px solid border
+//   - the ::after inner ring (1px solid, inset 4px)
+//   - clip-path with 10px notches on all 8 corners
+// The accent prop widens the border to match the emphasis variant.
 function HudPanel({ children, style = {}, accent = false }) {
-  const clipPath = "polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 0 100%)";
   return (
-    <div style={{
-      position: "relative",
-      border: accent ? "2px solid #fff" : "1.5px solid rgba(255,255,255,0.55)",
-      background: "var(--hud-bg, rgba(0,0,0,0.85))",
-      clipPath,
-      padding: "14px 16px",
-      ...style,
-    }}>
-      {/* chamfer accent line */}
-      <div style={{
-        position: "absolute", top: 0, right: 0, width: "10px", height: "10px",
-        borderBottom: accent ? "2px solid #fff" : "1.5px solid rgba(255,255,255,0.55)",
-        borderLeft: accent ? "2px solid #fff" : "1.5px solid rgba(255,255,255,0.55)",
-        background: "transparent",
-        pointerEvents: "none",
-      }} />
+    <div
+      className="system-frame"
+      style={{
+        padding: "14px 16px",
+        marginBottom: 0,
+        ...(accent ? { border: "2px solid #fff" } : {}),
+        ...style,
+      }}
+    >
       {children}
     </div>
   );
 }
 
 // ── Section label ──────────────────────────────────────────────
+// Renders as a .system-header row with a .system-divider line and terminal diamond.
 function SectionLabel({ children }) {
   return (
-    <div style={{
-      fontFamily: "'Share Tech Mono', monospace",
-      fontSize: "10px",
-      letterSpacing: "3px",
-      color: "rgba(255,255,255,0.5)",
-      textTransform: "uppercase",
-      marginBottom: "6px",
-      paddingLeft: "2px",
-    }}>
-      {children}
+    <div className="system-header" style={{ fontSize: "11px", marginBottom: "8px" }}>
+      <span>{children}</span>
+      <div className="system-divider" />
     </div>
   );
 }
 
 // ── Missions Panel (Daily / Weekly / Monthly tabs) ────────────
-function MissionsPanel({ state, setState, textPrimary, textDim, borderMid, hudBg, borderAccent }) {
+function MissionsPanel({ state, setState, textPrimary, textDim, borderMid, borderAccent }) {
   const [activeTab, setActiveTab] = useState("daily");
 
   const tabs = [
@@ -115,7 +105,7 @@ function MissionsPanel({ state, setState, textPrimary, textDim, borderMid, hudBg
         })}
       </div>
 
-      <HudPanel style={{ padding: "10px 14px", "--hud-bg": hudBg }}>
+      <HudPanel style={{ padding: "10px 14px" }}>
         {isGenerating && (
           <div style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: "12px", color: textDim, padding: "8px 0", textAlign: "center" }}>
             ◈ RITMOL IS GENERATING {activeTab.toUpperCase()} MISSIONS...
@@ -196,17 +186,13 @@ export default function HomeTab() {
   const totalAchievements = (state.achievements || []).length;
 
   const isLight = theme === "light";
-  const hudBg = isLight ? "rgba(240,240,240,0.9)" : "rgba(0,0,0,0.85)";
   const textPrimary = isLight ? "#000" : "#fff";
-  const textDim = isLight ? "rgba(0,0,0,0.55)" : "rgba(255,255,255,0.55)";
+  const textDim = isLight ? "#555" : "#888";
   const borderAccent = isLight ? "#000" : "#fff";
-  const borderMid = isLight ? "rgba(0,0,0,0.55)" : "rgba(255,255,255,0.55)";
-
-  // inject CSS variable for HudPanel
-  const hudStyle = { "--hud-bg": hudBg } ;
+  const borderMid = isLight ? "#555" : "#888";
 
   return (
-    <div style={{ padding: "14px", display: "flex", flexDirection: "column", gap: "12px", ...hudStyle }}>
+    <div style={{ padding: "14px", display: "flex", flexDirection: "column", gap: "12px" }}>
 
       {/* ── IDENTITY PANEL ──────────────────────────────────── */}
       <div style={{
@@ -248,7 +234,7 @@ export default function HomeTab() {
         if (rawDiff < -0.05) return null;
         const safeTitle = sanitizeForDisplay(exam.title ?? "", 200);
         return (
-          <HudPanel key={exam.id} accent style={{ "--hud-bg": hudBg }}>
+          <HudPanel key={exam.id} accent>
             <SectionLabel>⚠ EXAM WARNING</SectionLabel>
             <div style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: "15px", fontWeight: "bold", color: textPrimary }}>
               {safeTitle}
@@ -268,13 +254,11 @@ export default function HomeTab() {
           { label: "STREAK", value: `${state.streak}d` },
           { label: "ACHIEVEMENTS", value: totalAchievements },
         ].map((s) => (
-          <div key={s.label} style={{
-            border: `1.5px solid ${borderMid}`,
+          <div key={s.label} className="system-frame" style={{
             padding: "10px 6px", textAlign: "center",
             fontFamily: "'Share Tech Mono', monospace",
-            clipPath: "polygon(0 0, calc(100% - 6px) 0, 100% 6px, 100% 100%, 0 100%)",
-            background: hudBg,
             position: "relative",
+            marginBottom: 0,
           }}>
             <div style={{ fontSize: "20px", fontWeight: "bold", color: textPrimary }}>{s.value}</div>
             <div style={{ fontSize: "9px", color: textDim, letterSpacing: "1.5px", marginTop: "2px" }}>{s.label}</div>
@@ -288,8 +272,8 @@ export default function HomeTab() {
         onClick={() => setModal({ type: "session_log" })}
         style={{
           display: "flex", alignItems: "center", gap: "12px",
-          border: `1.5px solid ${borderMid}`,
-          background: hudBg,
+          border: `2px solid ${borderAccent}`,
+          background: isLight ? "#fff" : "#000",
           padding: "12px 16px",
           cursor: "pointer",
           clipPath: "polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 0 100%)",
@@ -298,7 +282,7 @@ export default function HomeTab() {
       >
         <div style={{
           width: "36px", height: "36px", flexShrink: 0,
-          border: `1.5px solid ${borderAccent}`,
+          border: `2px solid ${borderAccent}`,
           display: "flex", alignItems: "center", justifyContent: "center",
           fontFamily: "'Share Tech Mono', monospace", fontSize: "18px",
           color: textPrimary, background: isLight ? "#000" : "#fff",
@@ -328,8 +312,8 @@ export default function HomeTab() {
                 onClick={() => setTab("tasks")}
                 style={{
                   display: "flex", alignItems: "center", gap: "10px",
-                  border: `1.5px solid ${borderMid}`,
-                  background: hudBg, padding: "10px 12px",
+                  border: `2px solid ${borderAccent}`,
+                  background: isLight ? "#fff" : "#000", padding: "10px 12px",
                   cursor: "pointer", textAlign: "left", width: "100%",
                   clipPath: "polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 0 100%)",
                 }}
@@ -346,9 +330,9 @@ export default function HomeTab() {
                   const label = dl < 0 ? "OVERDUE" : dl === 0 ? "TODAY" : dl === 1 ? "TMRW" : dl + "d";
                   const urgent = dl <= 0;
                   return (
-                    <div style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: "10px", color: urgent ? textPrimary : textDim, flexShrink: 0, border: urgent ? `1px solid ${borderAccent}` : "none", padding: "1px 4px", background: urgent ? borderAccent : "transparent" }}>
+                    <span className="status-badge" data-urgent={urgent ? "true" : undefined} style={{ flexShrink: 0 }}>
                       {label}
-                    </div>
+                    </span>
                   );
                 })()}
                 <div style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: "10px", color: textDim, flexShrink: 0 }}>›</div>
@@ -374,14 +358,13 @@ export default function HomeTab() {
         textPrimary={textPrimary}
         textDim={textDim}
         borderMid={borderMid}
-        hudBg={hudBg}
         borderAccent={borderAccent}
       />
 
       {/* ── HABITS RING ─────────────────────────────────────── */}
       <div>
         <SectionLabel>TODAY&apos;S HABITS</SectionLabel>
-        <HudPanel accent style={{ "--hud-bg": hudBg }}>
+        <HudPanel accent>
           <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
             <HabitRing done={doneHabits} total={totalHabits} theme={theme} />
             <div style={{ fontFamily: "'Share Tech Mono', monospace" }}>
@@ -403,7 +386,7 @@ export default function HomeTab() {
 
       {/* ── DAILY OBJECTIVE ─────────────────────────────────── */}
       {state.dailyGoal && (
-        <HudPanel style={{ "--hud-bg": hudBg }}>
+        <HudPanel>
           <SectionLabel>DAILY OBJECTIVE</SectionLabel>
           <div style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: "13px", color: textPrimary, lineHeight: "1.6" }}>
             {sanitizeForDisplay(state.dailyGoal ?? "", 200)}
@@ -415,7 +398,7 @@ export default function HomeTab() {
       {activeTimers.length > 0 && (
         <div>
           <SectionLabel>ACTIVE TIMERS</SectionLabel>
-          <HudPanel style={{ "--hud-bg": hudBg }}>
+          <HudPanel>
             {activeTimers.map((timer) => (
               <CountdownTimer
                 key={timer.id}

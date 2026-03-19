@@ -12,7 +12,7 @@ export function Modal({ children, onClose }) {
       background: "#000", display: "flex",
       alignItems: "center", justifyContent: "center", padding: "24px",
     }} onClick={(e) => e.target === e.currentTarget && onClose()}>
-      <div style={{ width: "100%", maxWidth: "400px", background: "#000", border: "3px solid #fff" }}>
+      <div className="system-frame" style={{ width: "100%", maxWidth: "400px", marginBottom: 0 }}>
         {children}
       </div>
     </div>
@@ -30,7 +30,7 @@ export function DailyLoginModal({ data, onClose }) {
           {data.streak > 1 ? `Streak: ${data.streak} days. Pattern recognized.` : "System online. Begin."}
         </div>
         {data.streak >= 7 && (
-          <div style={{ border: "3px solid #fff", padding: "14px", marginBottom: "20px", fontSize: "15px", color: "#fff", fontWeight: "bold" }}>
+          <div style={{ border: "2px solid #fff", borderBottom: "4px double #fff", padding: "14px", marginBottom: "20px", fontSize: "15px", color: "#fff", fontWeight: "bold" }}>
             7-DAY STREAK BONUS ACTIVE · +50% HABIT XP
           </div>
         )}
@@ -250,7 +250,7 @@ export function AchievementToast({ toast, onClose }) {
   return (
     <div style={{
       position: "fixed", bottom: "80px", right: "16px", zIndex: 900,
-      width: "300px", background: "#000", border: "3px solid #fff",
+      width: "300px", background: "#000", border: "2px solid #fff",
       padding: "12px", fontFamily: "'Share Tech Mono', monospace",
       overflow: "hidden",
     }}>

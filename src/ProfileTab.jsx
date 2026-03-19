@@ -33,25 +33,24 @@ export default function ProfileTab() {
   return (
     <div style={{ padding: "16px", display: "flex", flexDirection: "column", gap: "16px" }}>
       {/* XP card */}
-      <div style={{
-        border: "3px solid #fff", padding: "24px",
-        background: "#000",
-        position: "relative",
-      }}>
-        <GeometricCorners style="geometric" />
+      <div className="system-frame" style={{ padding: "24px", position: "relative" }}>
         <div style={{ fontFamily: "'Share Tech Mono', monospace", textAlign: "center" }}>
-          <div style={{ fontSize: "16px", color: "#fff", letterSpacing: "3px", fontWeight: "bold" }}>[ HUNTER CARD ]</div>
+          <div className="system-header" style={{ fontSize: "13px", justifyContent: "center", marginBottom: "8px" }}>
+            <div className="system-divider" />
+            <span>[ HUNTER CARD ]</span>
+            <div className="system-divider" />
+          </div>
           <div style={{ fontSize: "clamp(20px, 6vw, 32px)", fontWeight: "bold", margin: "8px 0", wordBreak: "break-word" }}>{profile?.name || "Hunter"}</div>
           <div style={{ fontSize: "16px", color: "#fff" }}>{rank.decor} {rank.title}</div>
           <div style={{ fontSize: "16px", color: "#fff", marginTop: "4px" }}>{profile?.major ?? ""}</div>
           <div style={{ margin: "20px 0 8px", fontSize: "14px", color: "#fff", display: "flex", justifyContent: "space-between", fontWeight: "bold" }}>
             <span>LEVEL {level}</span><span>{getLevelProgress(state.xp, xpPerLevel)}/{xpPerLevel} XP</span>
           </div>
-          <div style={{ height: "6px", background: "#555" }}>
+          <div style={{ height: "2px", background: "#444" }}>
             <div style={{ width: `${(getLevelProgress(state.xp, xpPerLevel) / xpPerLevel) * 100}%`, height: "100%", background: "#fff" }} />
           </div>
           <div style={{ fontSize: "28px", fontWeight: "bold", marginTop: "8px" }}>{rank.badge}</div>
-          <div style={{ fontSize: "28px", fontWeight: "bold", marginTop: "8px" }}>{state.xp} XP</div>
+          <div style={{ fontSize: "28px", fontWeight: "bold", marginTop: "8px", letterSpacing: "-0.05em" }}>{state.xp} XP</div>
         </div>
       </div>
 
@@ -59,7 +58,7 @@ export default function ProfileTab() {
       <div style={{ display: "flex", gap: "4px", overflowX: "auto" }}>
         {sections.map((s) => (
           <button type="button" key={s} onClick={() => setSection(s)} style={{
-            padding: "10px 14px", border: "2px solid #fff",
+            padding: "10px 18px", border: "2px solid #fff",
             background: section === s ? "#fff" : "transparent",
             color: section === s ? "#000" : "#fff",
             fontFamily: "'Share Tech Mono', monospace", fontSize: "14px", letterSpacing: "1px", fontWeight: "bold",

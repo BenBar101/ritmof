@@ -227,6 +227,124 @@ const GLOBAL_CSS = `
   img, video, canvas, svg { max-width: 100%; }
   pre { overflow-x: auto; }
 
+  /* ── RPG System Frame ─────────────────────────────────────────
+     Apply class="system-frame" to any primary card/section.
+     The ::after ring gives the inner double-border effect from design.md.
+     clip-path is set on the element itself via inline style because
+     React components need to vary notch depth; ::after inherits it.
+  ── */
+  .system-frame {
+    position: relative;
+    border: 2px solid #fff;
+    background-color: #000;
+    padding: 1.5rem;
+    margin-bottom: 1.5rem;
+    clip-path: polygon(
+      0% 10px, 10px 0%,
+      calc(100% - 10px) 0%, 100% 10px,
+      100% calc(100% - 10px), calc(100% - 10px) 100%,
+      10px 100%, 0% calc(100% - 10px)
+    );
+  }
+  html[data-theme="light"] .system-frame {
+    border-color: #000;
+    background-color: #fff;
+  }
+  .system-frame::after {
+    content: "";
+    position: absolute;
+    top: 4px; left: 4px; right: 4px; bottom: 4px;
+    border: 1px solid #fff;
+    pointer-events: none;
+    clip-path: inherit;
+  }
+  html[data-theme="light"] .system-frame::after {
+    border-color: #000;
+  }
+
+  /* ── RPG System Header ──────────────────────────────────────── */
+  .system-header {
+    font-family: 'Share Tech Mono', monospace;
+    text-transform: uppercase;
+    font-weight: 900;
+    letter-spacing: -0.05em;
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    color: #fff;
+    margin-bottom: 0.75rem;
+  }
+  html[data-theme="light"] .system-header {
+    color: #000;
+  }
+
+  /* ── RPG System Divider ─────────────────────────────────────── */
+  .system-divider {
+    height: 2px;
+    background-color: #fff;
+    flex-grow: 1;
+    position: relative;
+  }
+  html[data-theme="light"] .system-divider {
+    background-color: #000;
+  }
+  .system-divider::after {
+    content: "";
+    position: absolute;
+    right: -8px;
+    top: -3px;
+    width: 8px;
+    height: 8px;
+    background-color: #fff;
+    transform: rotate(45deg);
+  }
+  html[data-theme="light"] .system-divider::after {
+    background-color: #000;
+  }
+
+  /* ── RPG Status Badge ───────────────────────────────────────── */
+  .status-badge {
+    font-size: 0.7rem;
+    padding: 2px 8px;
+    border: 1px solid #fff;
+    font-weight: bold;
+    font-family: 'Share Tech Mono', monospace;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: #fff;
+    background: transparent;
+  }
+  .status-badge[data-urgent="true"] {
+    background: #fff;
+    color: #000;
+  }
+  html[data-theme="light"] .status-badge {
+    border-color: #000;
+    color: #000;
+  }
+  html[data-theme="light"] .status-badge[data-urgent="true"] {
+    background: #000;
+    color: #fff;
+  }
+
+  /* ── RPG Task Row ───────────────────────────────────────────── */
+  .task-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid #fff;
+    padding: 1rem 0.5rem;
+    font-family: 'Share Tech Mono', monospace;
+    color: #fff;
+  }
+  html[data-theme="light"] .task-row {
+    border-bottom-color: #000;
+    color: #000;
+  }
+  .task-row:last-child {
+    border-bottom: none;
+  }
+
   @media (max-width: 380px) {
     * { letter-spacing: 0 !important; }
     [data-card] { padding: 10px !important; }

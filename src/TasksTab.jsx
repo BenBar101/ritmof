@@ -145,9 +145,14 @@ export default function TasksTab() {
 
   function SubHeader({ children, count }) {
     return (
-      <div style={{ fontFamily: mono, fontSize: "13px", color: "#fff", letterSpacing: "2px", fontWeight: "bold", padding: "8px 0 6px", borderBottom: "1px solid #fff", marginBottom: "6px", display: "flex", justifyContent: "space-between" }}>
+      <div className="system-header" style={{ fontSize: "13px", marginBottom: "8px" }}>
         <span>{children}</span>
-        <span style={{ opacity: 0.6 }}>{count}</span>
+        {count !== undefined && (
+          <span style={{ fontSize: "11px", fontWeight: "normal", letterSpacing: "1px" }}>
+            [{count}]
+          </span>
+        )}
+        <div className="system-divider" />
       </div>
     );
   }
@@ -156,7 +161,7 @@ export default function TasksTab() {
     const badge  = dueBadge(task.due);
     const linked = task.goalId ? goalTitle(task.goalId) : null;
     return (
-      <div style={{ border: "2px solid #fff", padding: "14px 16px", fontFamily: mono, display: "flex", alignItems: "center", gap: "12px", background: "#000" }}>
+      <div className="system-frame" style={{ padding: "14px 16px", marginBottom: "6px", display: "flex", alignItems: "center", gap: "12px" }}>
         <button type="button" onClick={(e) => completeTask(task.id, e)} data-testid="complete-task"
           style={{ color: "#fff", fontSize: "20px", background: "none", border: "2px solid #fff", width: "48px", height: "48px", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
           ○
@@ -166,12 +171,12 @@ export default function TasksTab() {
           <div style={{ fontSize: "13px", color: "#fff", marginTop: "4px", display: "flex", flexWrap: "wrap", gap: "8px", alignItems: "center" }}>
             <span>{priorityLabel[task.priority]} {task.priority?.toUpperCase()}</span>
             {badge && (
-              <span style={{ border: "1px solid #fff", padding: "1px 6px", fontSize: "11px", letterSpacing: "1px", background: badge.urgent ? "#fff" : "transparent", color: badge.urgent ? "#000" : "#fff" }}>
+              <span className="status-badge" data-urgent={badge.urgent ? "true" : undefined}>
                 {badge.label}
               </span>
             )}
             {linked && (
-              <span style={{ border: "1px dashed #fff", padding: "1px 6px", fontSize: "11px", letterSpacing: "1px", maxWidth: "180px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              <span style={{ border: "1px solid #fff", padding: "1px 6px", fontSize: "11px", letterSpacing: "1px", maxWidth: "180px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                 ⬡ {linked}
               </span>
             )}
@@ -188,8 +193,11 @@ export default function TasksTab() {
     <div style={{ padding: "16px", display: "flex", flexDirection: "column", gap: "16px" }}>
 
       {/* Header */}
-      <div style={{ fontFamily: mono, borderBottom: "3px solid #fff", paddingBottom: "16px" }}>
-        <div style={{ fontSize: "16px", color: "#fff", letterSpacing: "3px", fontWeight: "bold" }}>[ MISSION CONTROL ]</div>
+      <div style={{ fontFamily: mono, borderBottom: "4px double #fff", paddingBottom: "16px" }}>
+        <div className="system-header" style={{ fontSize: "13px", marginBottom: "4px" }}>
+          <span>[ MISSION CONTROL ]</span>
+          <div className="system-divider" />
+        </div>
         <div style={{ fontSize: "28px", fontWeight: "bold", marginTop: "4px" }}>TASKS & GOALS</div>
       </div>
 
@@ -212,7 +220,7 @@ export default function TasksTab() {
       {activeSection === "tasks" && (
         <>
           {/* Add task form */}
-          <div style={{ border: "2px solid #fff", padding: "14px", display: "flex", flexDirection: "column", gap: "10px" }}>
+          <div className="system-frame" style={{ padding: "14px", marginBottom: 0, display: "flex", flexDirection: "column", gap: "10px" }}>
             {/* Row 1: text + priority + add */}
             <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
               <input
@@ -264,7 +272,7 @@ export default function TasksTab() {
           <div>
             <SubHeader count={timedTasks.length}>[ TIMED TASKS ]</SubHeader>
             {timedTasks.length === 0 ? (
-              <div style={{ fontFamily: mono, fontSize: "13px", color: "#fff", padding: "16px", border: "1px dashed #fff", textAlign: "center", opacity: 0.55 }}>
+              <div style={{ fontFamily: mono, fontSize: "13px", color: "#fff", padding: "16px", border: "1px solid #fff", textAlign: "center" }}>
                 No timed tasks — add a due date when creating a task.
               </div>
             ) : (
@@ -278,7 +286,7 @@ export default function TasksTab() {
           <div>
             <SubHeader count={untimedTasks.length}>[ OPEN TASKS ]</SubHeader>
             {untimedTasks.length === 0 ? (
-              <div style={{ fontFamily: mono, fontSize: "13px", color: "#fff", padding: "16px", border: "1px dashed #fff", textAlign: "center", opacity: 0.55 }}>
+              <div style={{ fontFamily: mono, fontSize: "13px", color: "#fff", padding: "16px", border: "1px solid #fff", textAlign: "center" }}>
                 No open tasks. RITMOL will assign missions.
               </div>
             ) : (

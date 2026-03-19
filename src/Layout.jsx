@@ -20,7 +20,7 @@ export function TopBar({ xp, xpPerLevel, level, rank, profile, syncStatus, lastS
     <div style={{
       flexShrink: 0,
       background: theme === "light" ? "#f0f0f0" : "#000",
-      borderBottom: `3px solid ${fg}`,
+      borderBottom: `4px double ${fg}`,
       paddingTop: "env(safe-area-inset-top, 0px)",
       paddingLeft: "10px", paddingRight: "10px", paddingBottom: "0px",
       height: "calc(56px + env(safe-area-inset-top, 0px))",
@@ -49,13 +49,13 @@ export function TopBar({ xp, xpPerLevel, level, rank, profile, syncStatus, lastS
 
       {/* XP bar — fills remaining space */}
       <div style={{ flex: 1, minWidth: 0, paddingBottom: "8px" }}>
-        <div style={{ display: "flex", alignItems: "baseline", gap: "6px", fontSize: "11px", color: fg, marginBottom: "2px", fontFamily: "'Share Tech Mono', monospace", fontWeight: "bold", letterSpacing: "0.5px" }}>
+        <div style={{ display: "flex", alignItems: "baseline", gap: "6px", fontSize: "11px", color: fg, marginBottom: "2px", fontFamily: "'Share Tech Mono', monospace", fontWeight: 900, letterSpacing: "-0.02em", textTransform: "uppercase" }}>
           <span style={{ flexShrink: 0 }}>LV.{level}</span>
           <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", textAlign: "center" }}>{rank.title}</span>
           <span style={{ flexShrink: 0 }} data-testid="xp">{xp} XP</span>
           <span style={{ flexShrink: 0 }}>{Math.round(pct)}%</span>
         </div>
-        <div style={{ height: "4px", background: theme === "light" ? "#ccc" : "#333", position: "relative" }}>
+        <div style={{ height: "2px", background: theme === "light" ? "#bbb" : "#444", position: "relative" }}>
           <div style={{ width: `${pct}%`, height: "100%", background: fg }} />
         </div>
       </div>
@@ -120,7 +120,7 @@ export function BottomNav({ tab, setTab }) {
   return (
     <div data-bottom-nav="" style={{
       position: "fixed", bottom: 0, left: 0, right: 0,
-      background: "#000", borderTop: "3px solid #fff",
+      background: "#000", borderTop: "2px solid #fff",
       display: "flex",
       height: "calc(60px + env(safe-area-inset-bottom, 0px))",
       paddingBottom: "env(safe-area-inset-bottom, 0px)",
@@ -136,14 +136,14 @@ export function BottomNav({ tab, setTab }) {
             flex: 1, display: "flex", flexDirection: "column", alignItems: "center",
             justifyContent: "center", gap: "2px",
             background: tab === t.id ? "#fff" : "#000", border: "none",
-            borderTop: "3px solid #fff",
+            borderTop: "2px solid #fff",
             color: tab === t.id ? "#000" : "#fff",
             fontFamily: "'Share Tech Mono', monospace",
             padding: "4px 0",
           }}
         >
           <span style={{ fontSize: "22px", lineHeight: 1 }}>{t.icon}</span>
-          <span style={{ fontSize: "10px", letterSpacing: "1px", fontWeight: "bold" }}>{t.label}</span>
+          <span style={{ fontSize: "10px", letterSpacing: "2px", fontWeight: 900, textTransform: "uppercase" }}>{t.label}</span>
         </button>
       ))}
     </div>
