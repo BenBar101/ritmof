@@ -74,6 +74,7 @@ function persistState(s) {
     idbSet(storageKey("jv_dynamic_costs"), s.dynamicCosts ?? null);
     idbSet(storageKey("jv_last_shield_use_date"), s.lastShieldUseDate ?? null);
     idbSet(storageKey("jv_last_shield_buy_date"), s.lastShieldBuyDate ?? null);
+    idbSet(storageKey("jv_tutorial_done"), s.tutorialDone ?? false);
     _persistErrorCount = 0;
   } catch (e) {
     _persistErrorCount += 1;

@@ -16,7 +16,6 @@ import { LS, storageKey, IS_DEV, getGeminiApiKey, setGeminiApiKey, todayUTC, loc
 import { getLevel, getRank, getXpPerLevel, getGachaCost, getStreakShieldCost, calcSessionXP } from "./utils/xp";
 import { THEME_KEY, SESSION_TYPES, DEFAULT_XP_PER_LEVEL, DEFAULT_GACHA_COST, DEFAULT_STREAK_SHIELD_COST, DAILY_TOKEN_LIMIT } from "./constants";
 import { buildSystemPrompt } from "./api/systemPrompt";
-import { fetchDailyQuote } from "./api/quotes";
 import { fetchGCalEvents, loadGoogleGIS } from "./api/gcal";
 import { callGemini, RateLimitedError, clearRateLimitWindow } from "./api/gemini";
 import { FSAPI_SUPPORTED } from "./sync/SyncManager";
@@ -137,6 +136,7 @@ import TasksTab   from "./TasksTab";
 import ChatTab    from "./ChatTab";
 import ProfileTab from "./ProfileTab";
 import SettingsTab from "./SettingsTab";
+import TutorialOverlay from "./TutorialOverlay";
 
 // ─────────────────────────────────────────────────────────────
 // KEYS CONFIG GATE
@@ -423,7 +423,6 @@ export default function App() {
   const { state, setState, latestStateRef, rehydrate, idbReady, rehydrateCount } = useAppState();
   const [tab, setTab]               = useState("home");
   const [theme, setThemeState]      = useState(() => LS.get(storageKey(THEME_KEY), "dark"));
-  const [dailyQuote, setDailyQuote] = useState(null);
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [showGeminiKeySetup, setShowGeminiKeySetup] = useState(false);
   const setTheme = useCallback((t) => { LS.set(storageKey(THEME_KEY), t); setThemeState(t); }, []);
@@ -646,9 +645,9 @@ export default function App() {
     }
 
     tryGenerate("weekly");
-    // Stagger monthly by 20 s — gives the weekly call, quote, and dynamic-costs calls
+    // Stagger monthly by 20 s — gives the weekly call and dynamic-costs calls
     // time to clear the queue before monthly fires. The previous 8 s gap was too tight
-    // when all three other background calls were also starting up simultaneously,
+    // when multiple other background calls were also starting up simultaneously,
     // causing back-to-back requests that triggered 429s on free-tier keys.
     const monthlyTimer = setTimeout(() => tryGenerate("monthly"), 20000);
     return () => {
@@ -726,39 +725,6 @@ export default function App() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [!!profile, !!state?.gCalConnected]);
 
-  // Quote is cached in localStorage by quotes.js itself (per-day + per-profile hash),
-  // so a rapid hot-reload in dev doesn't fire two simultaneous Gemini calls.
-  const quoteFetchedRef = useRef(false);
-  const quoteInputRef = useRef("");
-  const quoteInput = `${profile?.books ?? ""}|${profile?.interests ?? ""}|${profile?.major ?? ""}`;
-  useEffect(() => {
-    if (!profile) return;
-    if (quoteInputRef.current !== quoteInput) {
-      quoteFetchedRef.current = false;
-      quoteInputRef.current = quoteInput;
-    }
-    if (quoteFetchedRef.current) return;
-    quoteFetchedRef.current = true;
-    // Delay by 5 s on cold load so the quote doesn't race with the weekly-mission
-    // background call that fires immediately on startup. Both are background=true,
-    // but staggering them avoids hitting Gemini's burst quota simultaneously.
-    const quoteTimer = setTimeout(() => {
-      fetchDailyQuote(apiKey || null, profile, trackTokens || null)
-        .then((result) => {
-          if (result === null) {
-            quoteFetchedRef.current = false;
-            return;
-          }
-          setDailyQuote(result);
-        })
-        .catch(() => {
-          quoteFetchedRef.current = false;
-        });
-    }, 5000);
-    return () => clearTimeout(quoteTimer);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [!!profile, !!apiKey, quoteInput]);
-
   useEffect(() => {
     const handler = () => showBanner("SYSTEM ALERT: Storage full! (~5MB). Clear old chat history or sessions.", "alert");
     window.addEventListener("ls-quota-exceeded", handler);
@@ -797,7 +763,7 @@ export default function App() {
             setState((s) => ({ ...s, profile }));
             setShowOnboarding(false);
             // Clear the sliding rate-limit window so any background calls that fired
-            // during onboarding (habit init, quote, costs) don't eat into the new
+            // during onboarding (habit init, costs) don't eat into the new
             // user's first interactive session slots.
             clearRateLimitWindow();
             // Push immediately so the Gemini key (in sessionStorage) and the
@@ -891,7 +857,7 @@ export default function App() {
     syncStatus, lastSynced, syncFileConnected, dropboxConnected, confirmForgetSync,
     syncPush, syncPull, pickSyncFile, forgetSyncFile,
     connectDropbox, handleDropboxCallback, disconnectDropbox,
-    dailyQuote, buildSystemPrompt, setTab,
+    buildSystemPrompt, setTab,
     rehydrateCount,
   };
 
@@ -947,6 +913,11 @@ export default function App() {
           {tab === "settings" && <ErrorBoundary key="settings"><SettingsTab /></ErrorBoundary>}
         </div>
         <BottomNav tab={tab} setTab={setTab} />
+        {state.tutorialDone === false && !showOnboarding && (
+          <TutorialOverlay
+            onDone={() => setState((s) => ({ ...s, tutorialDone: true }))}
+          />
+        )}
 
         {modal?.type === "daily_login"  && (
           <ErrorBoundary>

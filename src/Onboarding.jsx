@@ -485,7 +485,7 @@ export default function Onboarding({ onComplete, onGeminiKeySaved, connectDropbo
       {
         key: "books",
         title: "KNOWLEDGE BASE",
-        subtitle: "Books and authors you read. This shapes your quotes and lore cards.",
+        subtitle: "Books and authors you read. This shapes your lore cards.",
         field: "books", label: "FAVORITE BOOKS / AUTHORS", placeholder: "e.g. Richard Feynman, Brandon Sanderson, Dune...", type: "textarea",
         style: "dots",
         maxLen: 200,

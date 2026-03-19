@@ -63,6 +63,7 @@ export function initState() {
     lastShieldUseDate: idbGet(storageKey("jv_last_shield_use_date"), null),
     lastShieldBuyDate: idbGet(storageKey("jv_last_shield_buy_date"), null),
     syncFileConnected: false, // updated async after mount by SyncManager.getHandle()
+    tutorialDone: idbGet(storageKey("jv_tutorial_done"), false),
   };
 }
 

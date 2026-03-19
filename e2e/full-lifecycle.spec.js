@@ -65,7 +65,6 @@ test('FULL LIFECYCLE (real persistence + sync + attack)', async ({ page }) => {
 
       // Identify call intent by prompt fragments.
       // - Missions: contains "Reply JSON array only"
-      // - Quote: contains "Generate ONE real"
       // - Dynamic costs: contains "adjusting economy parameters"
       // - Chat: expects JSON { message, commands: [] }
       let text;
@@ -81,15 +80,6 @@ test('FULL LIFECYCLE (real persistence + sync + attack)', async ({ page }) => {
           xp: [25, 50, 75, 100][i % 4],
         }));
         text = JSON.stringify(items);
-      } else if (
-        userText.includes('Generate ONE real') ||
-        systemInstruction.includes('Generate ONE real')
-      ) {
-        text = JSON.stringify({
-          quote: 'Mock quote for E2E. Focus, execute, repeat.',
-          author: 'E2E Test Bot',
-          source: '',
-        });
       } else if (
         userText.includes('adjusting economy parameters') ||
         systemInstruction.includes('adjusting economy parameters')

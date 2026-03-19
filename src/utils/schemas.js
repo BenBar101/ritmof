@@ -237,6 +237,7 @@ export const SyncPayloadSchema = z.object({
     xp:      z.number().min(0).max(500).optional(),
   }).strip()).max(500).optional(),
   jv_gcal_connected:        z.boolean().optional(),
+  jv_tutorial_done:         z.boolean().optional(),
   jv_gcal_selected_ids:     z.array(z.string().max(300)).max(50).nullable().optional(),
   jv_gcal_last_sync:        z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
   jv_token_usage:           TokenUsageSchema.optional(),

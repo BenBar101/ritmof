@@ -70,7 +70,7 @@ export const SYNC_KEYS = [
   "jv_achievements", "jv_gacha", "jv_cal_events", "jv_chat",
   "jv_daily_goal", "jv_timers", "jv_sleep_log", "jv_screen_log",
   "jv_missions", "jv_mission_date",
-  "jv_chronicles", "jv_gcal_connected", "jv_gcal_selected_ids", "jv_gcal_last_sync", "jv_token_usage", "jv_dynamic_costs", "jv_last_shield_use_date",
+  "jv_chronicles", "jv_gcal_connected", "jv_gcal_selected_ids", "jv_gcal_last_sync", "jv_token_usage", "jv_dynamic_costs", "jv_last_shield_use_date", "jv_tutorial_done",
   // jv_max_date_seen is intentionally excluded — it is a device-local
   // anti-cheat watermark that must not be overwritten by sync.
   "jv_last_shield_buy_date",

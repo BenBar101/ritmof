@@ -17,8 +17,8 @@
 //
 // Cap is 12 (Google free-tier Gemini 2.5 Flash allows 15 RPM; we stay 3 under
 // to leave headroom for multi-tab usage). The previous cap of 3 was far too
-// tight: on a new-user cold load, 5 background calls fire within ~20 s
-// (weekly missions, quote, dynamic costs, monthly missions, habit init) —
+// tight: on a new-user cold load, several background calls fire within ~20 s
+// (weekly missions, dynamic costs, monthly missions, habit init) —
 // all within the same 60-second window — causing RateLimitedError for every
 // new user before they could interact with the app at all.
 // Timestamps are persisted to sessionStorage so a hard-reload within the same
@@ -109,7 +109,7 @@ if (import.meta.hot) {
 // Retryable HTTP status codes — transient server errors only, NOT 429.
 // 429 (rate limit) is thrown immediately so callers decide whether to retry;
 // auto-retrying 429 inside callGemini causes request storms when the app
-// fires multiple parallel calls (missions, quotes, gacha) on first load.
+// fires multiple parallel calls (missions, gacha) on first load.
 const RETRYABLE_STATUSES = new Set([500, 502, 503, 504]);
 // Only 2 attempts (1 retry) — enough for a transient 5xx without hammering the API.
 const MAX_ATTEMPTS = 2;
@@ -118,7 +118,7 @@ const BASE_DELAY_MS = 1500;
 
 // ── Two-lane request queue ────────────────────────────────────
 //
-// INTERACTIVE lane (chat, gacha, habits, quote):
+// INTERACTIVE lane (chat, gacha, habits):
 //   Calls queue immediately and fire with MIN_GAP_MS between them.
 //
 // BACKGROUND lane (mission generation):

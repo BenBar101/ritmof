@@ -12,9 +12,9 @@ let _dcLastCalledAt = 0;
 const DC_COOLDOWN_MS = 60 * 60 * 1000; // 1 hour
 
 // Startup grace period: do not fire updateDynamicCosts within the first 30 s of
-// the page loading. The startup burst (weekly missions, quote, dynamic costs) all
+// the page loading. The startup burst (weekly missions, dynamic costs) all
 // fire in this window. A daily-login level-up that arrives here during that window
-// would add a 4th Gemini call on top of the 3 already queued, reliably hitting the
+// would add another Gemini call on top of the startup burst, reliably hitting the
 // Gemini free-tier burst limit. The 30 s grace lets the queue drain first.
 const _moduleLoadTime = Date.now();
 const DC_STARTUP_GRACE_MS = 30_000;
@@ -25,7 +25,7 @@ export async function updateDynamicCosts(apiKey, state, event, onTokensUsed) {
   if (_dcInFlight) return {};
   const now = Date.now();
   if (now - _dcLastCalledAt < DC_COOLDOWN_MS) return {};
-  // Startup grace: defer until the initial background burst (missions + quote) has
+  // Startup grace: defer until the initial background burst (missions) has
   // had time to clear the queue. Returns {} silently — the next event (gacha pull,
   // next day's level-up) will fire normally once the grace period has elapsed.
   if (now - _moduleLoadTime < DC_STARTUP_GRACE_MS) return {};

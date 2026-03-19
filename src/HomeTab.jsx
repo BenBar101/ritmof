@@ -150,7 +150,7 @@ function MissionsPanel({ state, setState, textPrimary, textDim, borderMid, borde
 }
 
 export default function HomeTab() {
-  const { state, setState, rank, dailyQuote, showBanner, setTab, profile, theme, setModal } = useAppContext();
+  const { state, setState, rank, showBanner, setTab, profile, theme, setModal } = useAppContext();
   const activeTimers = useMemo(
     () => (state.activeTimers || []).filter(
       (t) => typeof t.endsAt === "number" && t.endsAt > Date.now() + 1000
@@ -209,22 +209,6 @@ export default function HomeTab() {
         <div style={{ fontSize: "14px", fontWeight: "bold", letterSpacing: "2px", color: textPrimary, marginTop: "2px" }}>
           {rank.badge} {rank.decor} {rank.title}
         </div>
-
-        {/* Quote inline under rank — no separate panel */}
-        {dailyQuote && (
-          <div style={{ marginTop: "10px", paddingTop: "10px", borderTop: `1px solid ${borderMid}` }}>
-            <div style={{
-              fontFamily: "'IM Fell English', serif",
-              fontSize: "14px", fontStyle: "italic",
-              color: textDim, lineHeight: "1.6",
-            }}>
-              &ldquo;{sanitizeForDisplay(dailyQuote.quote ?? "", 300)}&rdquo;
-              <span style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: "11px", marginLeft: "8px", fontStyle: "normal" }}>
-                — {sanitizeForDisplay(dailyQuote.author ?? "", 60)}
-              </span>
-            </div>
-          </div>
-        )}
       </div>
 
       {/* ── EXAM WARNING ────────────────────────────────────── */}
