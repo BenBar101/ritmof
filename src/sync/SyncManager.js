@@ -23,6 +23,7 @@ import {
   uploadFile as dropboxUpload,
   downloadFile as dropboxDownload,
 } from "../api/dropbox";
+import { isIdbReadyForSync } from "./idbReadiness.js";
 
 // Local dev/prod flags to avoid importing them from utils/db (which would
 // introduce a circular dependency via db.js → SyncManager → db.js.
@@ -31,12 +32,6 @@ const DEV_PREFIX = "ritmol_dev_";
 
 // Re-export for consumers that need the current schema version
 export { SYNC_SCHEMA_VERSION };
-
-// ── IDB readiness (set by db.bootDb after persister load completes) ──
-let _idbReady = false;
-export function markIdbReady() {
-  _idbReady = true;
-}
 const MAX_PAYLOAD_BYTES = 10 * 1024 * 1024; // 10 MB
 
 // ── Storage key for the persisted file handle ────────────────────
@@ -222,7 +217,7 @@ async function clearHandleFromDB() {
 
 // ── Build sync payload from IDB cache ───────────────────────────
 function buildPayload(includeGeminiKey = false) {
-  if (!_idbReady) throw new Error("IDB_NOT_READY");
+  if (!isIdbReadyForSync()) throw new Error("IDB_NOT_READY");
   if (!store) throw new Error("IDB_NOT_READY");
   const payload = { _schemaVersion: SYNC_SCHEMA_VERSION };
   if (includeGeminiKey) {

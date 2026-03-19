@@ -6,7 +6,7 @@ import { DATA_DISCLOSURE_SEEN_KEY, THEME_KEY } from "./constants";
 import { getLevelProgress } from "./utils/xp";
 import { callGemini, RateLimitedError, clearRateLimitWindow } from "./api/gemini";
 import { fetchGCalEvents, fetchCalendarList, loadGoogleGIS } from "./api/gcal";
-import { SyncManager, FSAPI_SUPPORTED } from "./sync/SyncManager";
+import { SyncManager, FSAPI_SUPPORTED, isSafeSyncValue } from "./sync/SyncManager";
 import GeometricCorners from "./GeometricCorners";
 import { primaryBtn } from "./Onboarding";
 import { idbClearAll, idbSet } from "./utils/db";
@@ -852,7 +852,6 @@ Reply with ONLY this JSON:
         throw new Error("Failed to parse Gacha JSON");
       }
       // Prototype-pollution guard before any property access.
-      const { isSafeSyncValue } = await import("./sync/SyncManager.js");
       if (!isSafeSyncValue(card)) {
         console.error("[Gacha] isSafeSyncValue rejected card:", Object.keys(card));
         throw new Error("Failed to parse Gacha JSON");

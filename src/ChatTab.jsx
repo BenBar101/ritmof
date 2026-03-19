@@ -3,6 +3,7 @@ import { useAppContext } from "./context/AppContext";
 import { todayUTC, localDateFromUTC, LS, storageKey } from "./utils/db";
 import { DAILY_TOKEN_LIMIT, DATA_DISCLOSURE_SEEN_KEY } from "./constants";
 import { callGemini, RateLimitedError, RATE_LIMIT_WINDOW_MS, RATE_LIMIT_CAP } from "./api/gemini";
+import { isSafeSyncValue } from "./sync/SyncManager";
 
 function NeuralEnergyBar({ usage, theme }) {
   if (!usage || typeof usage.date !== "string") return null;
@@ -200,7 +201,6 @@ export default function ChatTab() {
 
       // Prototype-pollution guard: reject parsed objects with __proto__ / constructor / prototype keys.
       if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-        const { isSafeSyncValue } = await import("./sync/SyncManager.js");
         if (!isSafeSyncValue(parsed)) {
           parsed = { message: String(parsed), commands: [] };
         }

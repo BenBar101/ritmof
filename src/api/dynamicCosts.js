@@ -3,6 +3,7 @@ import { storageKey, todayUTC } from "../utils/db";
 import { idbGet } from "../utils/db";
 import { DAILY_TOKEN_LIMIT, DEFAULT_XP_PER_LEVEL, DEFAULT_GACHA_COST, DEFAULT_STREAK_SHIELD_COST } from "../constants";
 import { getLevel } from "../utils/xp";
+import { isSafeSyncValue } from "../sync/SyncManager.js";
 
 let _dcInFlight = false;
 // Cooldown: at most one updateDynamicCosts call per hour across the whole session.
@@ -113,7 +114,6 @@ Respond ONLY with a JSON object with any of: xpPerLevel, gachaCost, streakShield
     } catch {
       rawParsed = {};
     }
-    const { isSafeSyncValue } = await import("../sync/SyncManager.js");
     const data = (rawParsed && typeof rawParsed === "object" && !Array.isArray(rawParsed) && isSafeSyncValue(rawParsed)) ? rawParsed : {};
     const out = {};
     if (typeof data.xpPerLevel === "number" && data.xpPerLevel >= 200 && data.xpPerLevel <= 10000) {

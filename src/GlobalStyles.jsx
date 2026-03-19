@@ -189,6 +189,10 @@ const GLOBAL_CSS = `
     background-color: transparent !important;
     color: #000 !important;
   }
+  /* Nested divs still matched by html[data-theme="light"] div { background #f0f0f0 } — strip it so text sits on the black CTA. */
+  html[data-theme="light"] button.inverted-cta > div:last-child div {
+    background-color: transparent !important;
+  }
   html[data-theme="light"] button.inverted-cta > div:last-child > div:first-child {
     color: #fff !important;
   }

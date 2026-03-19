@@ -51,6 +51,8 @@ export default defineConfig({
     },
   ],
   build: {
+    // Monolithic main chunk is intentional (offline / file://); default 500 kB warning is noise.
+    chunkSizeWarningLimit: 600,
     outDir: 'dist',
     // Never ship sourcemaps to production. Sourcemaps expose the full
     // original source including security comments, sessionStorage key names,

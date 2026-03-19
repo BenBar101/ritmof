@@ -18,7 +18,7 @@ import { THEME_KEY, SESSION_TYPES, DEFAULT_XP_PER_LEVEL, DEFAULT_GACHA_COST, DEF
 import { buildSystemPrompt } from "./api/systemPrompt";
 import { fetchGCalEvents, loadGoogleGIS } from "./api/gcal";
 import { callGemini, RateLimitedError, clearRateLimitWindow } from "./api/gemini";
-import { FSAPI_SUPPORTED } from "./sync/SyncManager";
+import { FSAPI_SUPPORTED, isSafeSyncValue } from "./sync/SyncManager";
 import { verifyOAuthState } from "./api/dropbox";
 
 const MISSION_DEFS = [
@@ -96,7 +96,6 @@ async function generateAiMissions(apiKey, profile, period, trackTokens, signal) 
     }
     if (!Array.isArray(parsed) || !parsed.length) return [];
     // Prototype-pollution guard — mirrors every other JSON parse site in the codebase.
-    const { isSafeSyncValue } = await import("./sync/SyncManager.js");
     if (!isSafeSyncValue(parsed)) return [];
 
     return parsed.slice(0, count).map((m, i) => ({

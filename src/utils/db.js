@@ -2,6 +2,7 @@ import { createStore } from 'tinybase'
 import { createIndexedDbPersister } from 'tinybase/persisters/persister-indexed-db'
 import { useValues as _useValues, useValue as _useValue } from 'tinybase/ui-react'
 import { DATA_DISCLOSURE_SEEN_KEY, THEME_KEY } from '../constants'
+import { markIdbReady } from '../sync/idbReadiness.js'
 
 // Local copy of isSafeSyncValue to avoid a circular import with SyncManager.
 // Mirrors the implementation in ../sync/SyncManager for migration safety checks.
@@ -246,7 +247,7 @@ export async function bootDb() {
   await _persister.startAutoSave()
   // Run one-shot migration from old localStorage data if needed.
   await _migrateFromLocalStorage()
-  import("../sync/SyncManager").then((m) => m.markIdbReady())
+  markIdbReady()
 }
 
 // ── One-shot migration from old localStorage/IDB ──────────────
