@@ -51,7 +51,6 @@ export function initState() {
     lastWeeklyMissionDate: idbGet(storageKey("jv_weekly_mission_date"), null),
     monthlyMissions: idbGet(storageKey("jv_monthly_missions"), null),
     lastMonthlyMissionDate: idbGet(storageKey("jv_monthly_mission_date"), null),
-    pendingHabitSuggestions: idbGet(storageKey("jv_habit_suggestions"), []),
     chronicles: idbGet(storageKey("jv_chronicles"), []),
     gCalConnected: idbGet(storageKey("jv_gcal_connected"), false),
     gCalSelectedIds: idbGet(storageKey("jv_gcal_selected_ids"), null),
@@ -60,7 +59,6 @@ export function initState() {
     // consuming code (consumeAiXpBudget, trackTokens) always sees a fully-formed
     // object and never reads undefined.aiXpToday.
     tokenUsage: idbGet(storageKey("jv_token_usage"), { date: todayUTC(), tokens: 0, aiXpToday: 0, warnedAt: [] }),
-    habitsInitialized: idbGet(storageKey("jv_habits_init"), false),
     dynamicCosts: idbGet(storageKey("jv_dynamic_costs"), null) || { xpPerLevel: DEFAULT_XP_PER_LEVEL, gachaCost: DEFAULT_GACHA_COST, streakShieldCost: DEFAULT_STREAK_SHIELD_COST },
     lastShieldUseDate: idbGet(storageKey("jv_last_shield_use_date"), null),
     lastShieldBuyDate: idbGet(storageKey("jv_last_shield_buy_date"), null),

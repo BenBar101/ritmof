@@ -227,7 +227,6 @@ export const SyncPayloadSchema = z.object({
   jv_weekly_mission_date: z.string().regex(/^\d{4}-W\d{2}$/).nullable().optional(),
   jv_monthly_missions:    z.array(MissionSchema).max(20).nullable().optional(),
   jv_monthly_mission_date: z.string().regex(/^\d{4}-\d{2}$/).nullable().optional(),
-  jv_habit_suggestions:   z.array(z.string().max(200)).max(200).optional(),
   jv_chronicles:          z.array(z.object({
     id:      z.string().max(80),
     content: z.string().max(2000).optional(),
@@ -240,7 +239,6 @@ export const SyncPayloadSchema = z.object({
   jv_gcal_selected_ids:     z.array(z.string().max(300)).max(50).nullable().optional(),
   jv_gcal_last_sync:        z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
   jv_token_usage:           TokenUsageSchema.optional(),
-  jv_habits_init:           z.boolean().optional(),
   jv_dynamic_costs:         DynamicCostsSchema.optional(),
   jv_last_shield_use_date:  nullOrDate.optional(),
   jv_last_shield_buy_date:  nullOrDate.optional(),

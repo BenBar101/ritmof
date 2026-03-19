@@ -68,11 +68,9 @@ function persistState(s) {
           t.endsAt <= Date.now() + 28_800_000  // 8 h max — mirrors TimerSchema ceiling
         )
       : []);
-    idbSet(storageKey("jv_habit_suggestions"),  Array.isArray(s.pendingHabitSuggestions) ? s.pendingHabitSuggestions : []);
     idbSet(storageKey("jv_gcal_connected"),     s.gCalConnected);
     idbSet(storageKey("jv_gcal_selected_ids"),  s.gCalSelectedIds);
     idbSet(storageKey("jv_gcal_last_sync"),     s.gCalLastSync ?? null);
-    idbSet(storageKey("jv_habits_init"),        s.habitsInitialized);
     idbSet(storageKey("jv_dynamic_costs"), s.dynamicCosts ?? null);
     idbSet(storageKey("jv_last_shield_use_date"), s.lastShieldUseDate ?? null);
     idbSet(storageKey("jv_last_shield_buy_date"), s.lastShieldBuyDate ?? null);
@@ -133,10 +131,8 @@ export function useAppState() {
             chronicles: [],
             tokenUsage: null,
             activeTimers: [],
-            pendingHabitSuggestions: [],
             gCalConnected: false,
             gCalSelectedIds: null,
-            habitsInitialized: false,
             dynamicCosts: {
               xpPerLevel: DEFAULT_XP_PER_LEVEL,
               gachaCost: DEFAULT_GACHA_COST,
