@@ -660,6 +660,21 @@ export const SyncManager = {
     if (_opInProgress) throw new Error("SYNC_BUSY");
     _opInProgress = true;
     try {
+      // Dev-only: E2E test hook to inject sync payload without file picker.
+      if (import.meta.env.DEV && typeof window !== "undefined") {
+        const inject = window.__RITMOL_TEST__?.injectSync;
+        if (typeof inject === "function") {
+          const raw = inject();
+          if (raw != null) {
+            const text = typeof raw === "string" ? raw : JSON.stringify(raw);
+            const payload = parseAndValidate(text);
+            extractSecretsFromPayload(payload);
+            applyPayload(payload);
+            return Date.now();
+          }
+        }
+      }
+
       if (_transport === "dropbox") {
         if (typeof navigator !== "undefined" && navigator.onLine === false) {
           throw new Error("DROPBOX_OFFLINE");

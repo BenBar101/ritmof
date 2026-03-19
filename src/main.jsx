@@ -1,7 +1,15 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App, { GlobalStyles, ErrorBoundary } from "./App";
-import { bootDb } from "./utils/db";
+import { bootDb, store } from "./utils/db";
+
+// Dev-only test hooks for E2E: inject sync payload, inspect store state.
+if (import.meta.env.DEV && typeof window !== "undefined") {
+  window.__RITMOL_TEST__ = {
+    injectSync: null,
+    getState: () => (store ? store.getValues() : {}),
+  };
+}
 
 // Single entry point for mounting. Keeping this separate from App.jsx means
 // importing App in tests (or alternative entry points) does not trigger

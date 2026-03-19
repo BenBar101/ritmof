@@ -154,6 +154,7 @@ export default function TasksTab() {
               onKeyDown={(e) => e.key === "Enter" && addTask()}
               placeholder="New task..."
               maxLength={500}
+              data-testid="add-task-input"
               style={{ flex: "1 1 160px", minWidth: 0, background: "#000", border: "2px solid #fff", color: "#fff", padding: "12px", fontFamily: "'Share Tech Mono', monospace", fontSize: "16px", outline: "none" }}
             />
             <div style={{ display: "flex", gap: "6px", flexShrink: 0 }}>
@@ -166,7 +167,7 @@ export default function TasksTab() {
                 <option value="medium">MED</option>
                 <option value="high">HIGH</option>
               </select>
-              <button type="button" onClick={addTask} style={{ padding: "12px 18px", background: "#fff", color: "#000", fontFamily: "'Share Tech Mono', monospace", fontSize: "18px", border: "none", minHeight: "48px", minWidth: "48px", fontWeight: "bold" }}>+</button>
+              <button type="button" onClick={addTask} data-testid="add-task" style={{ padding: "12px 18px", background: "#fff", color: "#000", fontFamily: "'Share Tech Mono', monospace", fontSize: "18px", border: "none", minHeight: "48px", minWidth: "48px", fontWeight: "bold" }}>+</button>
             </div>
           </div>
 
@@ -184,7 +185,7 @@ export default function TasksTab() {
                 display: "flex", alignItems: "center", gap: "12px",
                 background: "#000",
               }}>
-                <button type="button" onClick={(e) => completeTask(task.id, e)} style={{ color: "#fff", fontSize: "20px", background: "none", border: "2px solid #fff", width: "48px", height: "48px", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                <button type="button" onClick={(e) => completeTask(task.id, e)} data-testid="complete-task" style={{ color: "#fff", fontSize: "20px", background: "none", border: "2px solid #fff", width: "48px", height: "48px", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
                   ○
                 </button>
                 <div style={{ flex: 1 }}>

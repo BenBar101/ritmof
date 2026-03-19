@@ -942,7 +942,7 @@ export default function App() {
             DEV MODE — separate localStorage (ritmol_dev_*)
           </div>
         )}
-        <TopBar xp={state.xp} xpPerLevel={xpPerLevel} level={level} rank={rank} profile={profile} syncStatus={syncStatus} lastSynced={lastSynced} onPush={syncPush} onPull={syncPull} syncFileConnected={syncFileConnected} isReloading={isReloading} theme={theme} onOpenSettings={() => setTab("settings")} />
+        <TopBar xp={state.xp} xpPerLevel={xpPerLevel} level={level} rank={rank} profile={profile} syncStatus={syncStatus} lastSynced={lastSynced} onPush={syncPush} onPull={syncPull} syncFileConnected={syncFileConnected || (IS_DEV && typeof window !== "undefined" && window.__RITMOL_TEST__)} isReloading={isReloading} theme={theme} onOpenSettings={() => setTab("settings")} />
         <div data-scroll="" style={{ flex: 1, overflowY: "auto", overflowX: "hidden", paddingBottom: "calc(60px + env(safe-area-inset-bottom, 0px))" }}>
           {tab === "home"     && <ErrorBoundary key="home"><HomeTab /></ErrorBoundary>}
           {tab === "habits"   && <ErrorBoundary key="habits"><HabitsTab /></ErrorBoundary>}

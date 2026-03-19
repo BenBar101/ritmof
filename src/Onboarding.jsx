@@ -125,6 +125,7 @@ function DropboxOnboardingStep({ connectDropbox, onSkip, onAdvance }) {
       <button
         type="button"
         onClick={onSkip}
+        data-testid="skip-dropbox"
         style={{
           width: "100%", padding: "12px", border: "2px solid #fff", background: "transparent", color: "#fff",
           fontFamily: "'Share Tech Mono', monospace", fontSize: "16px", letterSpacing: "1px", cursor: "pointer",
@@ -255,6 +256,7 @@ function GCalOnboardingStep({ onSkip, onAdvance, profile, onClientIdChange }) {
       <button
         type="button"
         onClick={onSkip}
+        data-testid="skip-calendar"
         style={{
           width: "100%", padding: "12px", border: "2px solid #fff", background: "transparent", color: "#fff",
           fontFamily: "'Share Tech Mono', monospace", fontSize: "16px", letterSpacing: "1px", cursor: "pointer",
@@ -345,6 +347,7 @@ export function GeminiKeySetupScreen({ onSave }) {
             maxLength={64}
             autoComplete="off"
             spellCheck={false}
+            data-testid="api-key"
             style={{
               flex: 1, padding: "12px", background: "#000",
               color: "#fff", fontSize: "15px", ...mono,
@@ -384,6 +387,7 @@ export function GeminiKeySetupScreen({ onSave }) {
         type="button"
         onClick={handleSave}
         disabled={!formatOk}
+        data-testid="save-gemini"
         style={{
           ...mono, width: "100%", padding: "14px",
           border: "2px solid #fff",
@@ -655,6 +659,7 @@ export default function Onboarding({ onComplete, onGeminiKeySaved, connectDropbo
                 rows={3}
                 maxLength={current.maxLen}
                 style={inputStyle(s)}
+                data-testid={current.field === "semesterGoal" ? "goal" : current.field}
               />
             ) : (
               <input
@@ -664,6 +669,7 @@ export default function Onboarding({ onComplete, onGeminiKeySaved, connectDropbo
                 placeholder={current.placeholder}
                 maxLength={current.maxLen}
                 style={inputStyle(s)}
+                data-testid={current.field === "semesterGoal" ? "goal" : current.field}
               />
             )}
 
@@ -674,7 +680,7 @@ export default function Onboarding({ onComplete, onGeminiKeySaved, connectDropbo
               {" "}(UTC{-(new Date().getTimezoneOffset()) >= 0 ? "+" : ""}{(-(new Date().getTimezoneOffset()) / 60).toFixed(0)})
             </div>
 
-            <button type="button" onClick={handleNext} style={{ ...primaryBtn, marginTop: "16px" }}>
+            <button type="button" onClick={handleNext} data-testid="start" style={{ ...primaryBtn, marginTop: "16px" }}>
               {isLastStep ? "INITIALIZE RITMOL" : "NEXT ›"}
             </button>
           </>

@@ -51,6 +51,7 @@ export function TopBar({ xp, xpPerLevel, level, rank, profile, syncStatus, lastS
         <div style={{ display: "flex", justifyContent: "space-between", fontSize: "11px", color: fg, marginBottom: "2px", fontFamily: "'Share Tech Mono', monospace", fontWeight: "bold", letterSpacing: "0.5px" }}>
           <span>LV.{level}</span>
           <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "50%" }}>{rank.title}</span>
+          <span data-testid="xp">{xp}</span>
           <span>{Math.round(pct)}%</span>
         </div>
         <div style={{ height: "4px", background: theme === "light" ? "#ccc" : "#333", position: "relative" }}>
@@ -66,6 +67,7 @@ export function TopBar({ xp, xpPerLevel, level, rank, profile, syncStatus, lastS
               type="button"
               onClick={onPull}
               disabled={syncDisabled}
+              data-testid="pull"
               title={`Pull ↓ · ${syncTitle}`}
               style={{
                 fontFamily: "'Share Tech Mono', monospace", fontSize: "15px",
@@ -82,6 +84,7 @@ export function TopBar({ xp, xpPerLevel, level, rank, profile, syncStatus, lastS
               type="button"
               onClick={onPush}
               disabled={syncDisabled}
+              data-testid="push"
               title={`Push ↑ · ${syncTitle}`}
               style={{
                 fontFamily: "'Share Tech Mono', monospace", fontSize: "15px",
@@ -126,6 +129,7 @@ export function BottomNav({ tab, setTab }) {
         <button
           key={t.id}
           onClick={() => setTab(t.id)}
+          data-testid={`nav-${t.id}`}
           data-active={tab === t.id ? "true" : undefined}
           style={{
             flex: 1, display: "flex", flexDirection: "column", alignItems: "center",

@@ -21,3 +21,6 @@ data/
 *.swp
 .cache/
 src.zip
+
+# Playwright local artifacts (do not commit)
+test-results/.last-run.json
