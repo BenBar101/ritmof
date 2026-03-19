@@ -17,7 +17,10 @@ jobs:
         with:
           node-version: 20
 
-      - run: npm install
+      - run: npm ci --no-audit --no-fund
+
+      - name: Verify react-dom CJS files
+        run: node -e "const fs=require('fs'); const p='node_modules/react-dom/cjs/react-dom-client.development.js'; if(!fs.existsSync(p)){ console.error('Missing '+p); process.exit(1); }"
 
       - run: npx playwright install --with-deps
 
