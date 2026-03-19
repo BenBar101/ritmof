@@ -4,21 +4,23 @@ import { getLevelProgress } from "./utils/xp";
 // TOP BAR
 // ═══════════════════════════════════════════════════════════════
 // eslint-disable-next-line no-unused-vars
-export function TopBar({ xp, xpPerLevel, level, rank, profile, syncStatus, lastSynced, onPush, onPull, syncFileConnected, isReloading = false, onOpenSettings }) {
+export function TopBar({ xp, xpPerLevel, level, rank, profile, syncStatus, lastSynced, onPush, onPull, syncFileConnected, isReloading = false, onOpenSettings, theme = "dark" }) {
   const progress = getLevelProgress(xp, xpPerLevel);
   const pct = xpPerLevel > 0
     ? Math.min(100, Math.max(0, (progress / xpPerLevel) * 100))
     : 0;
 
+  const fg = theme === "light" ? "#000" : "#fff";
   const syncTitle = lastSynced ? `Last synced: ${new Date(lastSynced).toLocaleTimeString()}` : "Not synced yet";
   const syncDisabled = syncStatus === "syncing" || (typeof navigator !== "undefined" && navigator.onLine === false) || isReloading;
-  const syncBorder = syncDisabled ? "2px solid #444" : "2px solid #fff";
-  const syncColor = syncDisabled ? "#444" : "#fff";
+  const syncBorder = syncDisabled ? `2px solid ${theme === "light" ? "#bbb" : "#444"}` : `2px solid ${fg}`;
+  const syncColor = syncDisabled ? (theme === "light" ? "#bbb" : "#444") : fg;
 
   return (
     <div style={{
       flexShrink: 0,
-      background: "#000", borderBottom: "3px solid #fff",
+      background: theme === "light" ? "#f0f0f0" : "#000",
+      borderBottom: `3px solid ${fg}`,
       paddingTop: "env(safe-area-inset-top, 0px)",
       paddingLeft: "10px", paddingRight: "10px", paddingBottom: "0px",
       height: "calc(56px + env(safe-area-inset-top, 0px))",
@@ -32,13 +34,13 @@ export function TopBar({ xp, xpPerLevel, level, rank, profile, syncStatus, lastS
         title="Settings"
         style={{
           display: "flex", alignItems: "center", justifyContent: "center",
-          flexShrink: 0, paddingBottom: "8px",
+          flexShrink: 0,
           background: "none", border: "none", cursor: "pointer",
           padding: "0 4px 8px 0",
           minHeight: "40px", minWidth: "40px",
         }}
       >
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={fg} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
           <circle cx="12" cy="12" r="3" />
           <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
         </svg>
@@ -46,13 +48,13 @@ export function TopBar({ xp, xpPerLevel, level, rank, profile, syncStatus, lastS
 
       {/* XP bar — fills remaining space */}
       <div style={{ flex: 1, minWidth: 0, paddingBottom: "8px" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", fontSize: "11px", color: "#fff", marginBottom: "2px", fontFamily: "'Share Tech Mono', monospace", fontWeight: "bold", letterSpacing: "0.5px" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", fontSize: "11px", color: fg, marginBottom: "2px", fontFamily: "'Share Tech Mono', monospace", fontWeight: "bold", letterSpacing: "0.5px" }}>
           <span>LV.{level}</span>
           <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "50%" }}>{rank.title}</span>
           <span>{Math.round(pct)}%</span>
         </div>
-        <div style={{ height: "4px", background: "#333", position: "relative" }}>
-          <div style={{ width: `${pct}%`, height: "100%", background: "#fff" }} />
+        <div style={{ height: "4px", background: theme === "light" ? "#ccc" : "#333", position: "relative" }}>
+          <div style={{ width: `${pct}%`, height: "100%", background: fg }} />
         </div>
       </div>
 
