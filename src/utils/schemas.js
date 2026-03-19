@@ -63,6 +63,7 @@ export const TaskSchema = z.object({
   due:      z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
   doneDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   addedBy:  z.string().optional(),
+  goalId:   z.string().max(64).nullable().optional(),
 })
 
 export const GoalSchema = z.object({

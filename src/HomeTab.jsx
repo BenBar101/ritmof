@@ -183,7 +183,16 @@ export default function HomeTab() {
   const hour = nowHour();
   const greeting = hour < 12 ? "GOOD MORNING" : hour < 17 ? "GOOD AFTERNOON" : "GOOD EVENING";
 
-  const pendingTasks = (state.tasks || []).filter((t) => !t.done);
+  const pendingTasks = (state.tasks || [])
+    .filter((t) => !t.done)
+    .sort((a, b) => {
+      // Timed tasks (with due date) come first, sorted closest → furthest.
+      // Undated tasks follow in original order.
+      if (a.due && b.due) return a.due < b.due ? -1 : a.due > b.due ? 1 : 0;
+      if (a.due) return -1;
+      if (b.due) return 1;
+      return 0;
+    });
   const totalAchievements = (state.achievements || []).length;
 
   const isLight = theme === "light";
@@ -332,6 +341,16 @@ export default function HomeTab() {
                 <div style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: "13px", color: textPrimary, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                   {sanitizeForDisplay(t.title ?? t.text ?? "", 80)}
                 </div>
+                {t.due && (() => {
+                  const dl = Math.ceil((new Date(t.due) - Date.now()) / 86400000);
+                  const label = dl < 0 ? "OVERDUE" : dl === 0 ? "TODAY" : dl === 1 ? "TMRW" : dl + "d";
+                  const urgent = dl <= 0;
+                  return (
+                    <div style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: "10px", color: urgent ? textPrimary : textDim, flexShrink: 0, border: urgent ? `1px solid ${borderAccent}` : "none", padding: "1px 4px", background: urgent ? borderAccent : "transparent" }}>
+                      {label}
+                    </div>
+                  );
+                })()}
                 <div style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: "10px", color: textDim, flexShrink: 0 }}>›</div>
               </button>
             ))}
