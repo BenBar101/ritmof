@@ -180,7 +180,8 @@ test('FULL LIFECYCLE (real persistence + sync + attack)', async ({ page }) => {
   });
 
   await page.click('[data-testid="pull"]');
-  await expect(page.locator('[data-testid="xp"]')).toHaveText('999', { timeout: 15000 });
+  // XP is rendered with a unit suffix (e.g. "999 XP"); match the numeric portion.
+  await expect(page.locator('[data-testid="xp"]')).toHaveText(/999/, { timeout: 15000 });
 
   // ---------- 8. MALICIOUS SYNC ----------
   await page.evaluate(() => {
