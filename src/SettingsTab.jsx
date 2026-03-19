@@ -5,16 +5,15 @@ import { DATA_DISCLOSURE_SEEN_KEY, THEME_KEY } from "./constants";
 import { clearRateLimitWindow } from "./api/gemini";
 import { SyncManager, FSAPI_SUPPORTED } from "./sync/SyncManager";
 import { idbClearAll, idbSet } from "./utils/db";
-import { sanitizeForPrompt } from "./api/systemPrompt";
 
 // Keys belonging to this app but not starting with "jv_" — must be wiped on full reset.
 const APP_CONSTANT_KEYS = new Set([DATA_DISCLOSURE_SEEN_KEY, THEME_KEY, "jv_last_synced"]);
 
 export default function SettingsTab() {
   const {
-    profile, setState, latestStateRef, rehydrate,
+    rehydrate,
     showBanner,
-    syncStatus, lastSynced, syncFileConnected, dropboxConnected,
+    syncStatus, lastSynced, dropboxConnected,
     syncPush: onPush, syncPull: onPull,
     pickSyncFile: onPickSyncFile, forgetSyncFile: onForgetSyncFile, confirmForgetSync,
     connectDropbox, disconnectDropbox,

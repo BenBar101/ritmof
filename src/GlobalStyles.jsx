@@ -278,7 +278,7 @@ function setVhVariable() {
     }
     const computed = getComputedStyle(sentinel);
     safeAreaBottom = parseFloat(computed.paddingBottom) || 0;
-  } catch (_) { /* ignore */ }
+  } catch { /* ignore */ }
 
   const pwa = isPWAMode();
   // In PWA mode, subtract the home indicator height so --vh * 100 = usable height.
