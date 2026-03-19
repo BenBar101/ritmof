@@ -425,7 +425,7 @@ export default function Onboarding({ onComplete, onGeminiKeySaved, connectDropbo
   const [needsGemini, setNeedsGemini] = useState(() => !getGeminiApiKey());
 
   const [step, setStep] = useState(0);
-  const [form, setForm] = useState({ name: "", major: "", books: "", interests: "", semesterGoal: "", gcalClientId: "" });
+  const [form, setForm] = useState({ name: "", major: "", interests: "", semesterGoal: "", gcalClientId: "" });
   const [error, setError] = useState("");
 
   // ── Build step list dynamically ──────────────────────────────
@@ -483,14 +483,6 @@ export default function Onboarding({ onComplete, onGeminiKeySaved, connectDropbo
         maxLen: 80,
       },
       {
-        key: "books",
-        title: "KNOWLEDGE BASE",
-        subtitle: "Books and authors you read. This shapes your lore cards.",
-        field: "books", label: "FAVORITE BOOKS / AUTHORS", placeholder: "e.g. Richard Feynman, Brandon Sanderson, Dune...", type: "textarea",
-        style: "dots",
-        maxLen: 200,
-      },
-      {
         key: "interests",
         title: "INTEREST MAPPING",
         subtitle: "Hobbies and subjects outside study. Used to personalize observations.",
@@ -530,7 +522,7 @@ export default function Onboarding({ onComplete, onGeminiKeySaved, connectDropbo
     return {
       name: sanitizeField(f.name, 60),
       major: sanitizeField(f.major, 80),
-      books: sanitizeMultilineField(f.books, 200),
+      books: "",
       interests: sanitizeMultilineField(f.interests, 200),
       semesterGoal: sanitizeMultilineField(f.semesterGoal, 300),
       // Persist the Client ID entered during onboarding so the profile has it immediately.

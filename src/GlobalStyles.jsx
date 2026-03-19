@@ -170,6 +170,34 @@ const GLOBAL_CSS = `
     color: #fff !important;
     border-color: #000 !important;
   }
+  /* Home “Log study session” — true inversion under light theme (globals force gray buttons/divs). */
+  html[data-theme="light"] button.inverted-cta {
+    background-color: #000 !important;
+    color: #fff !important;
+    border-color: #fff !important;
+  }
+  html[data-theme="light"] button.inverted-cta > div {
+    background-color: transparent !important;
+    border-color: #fff !important;
+    color: inherit !important;
+  }
+  html[data-theme="light"] button.inverted-cta > div:first-child {
+    background-color: #fff !important;
+    border-color: #fff !important;
+  }
+  html[data-theme="light"] button.inverted-cta > div:first-child span {
+    background-color: transparent !important;
+    color: #000 !important;
+  }
+  html[data-theme="light"] button.inverted-cta > div:last-child > div:first-child {
+    color: #fff !important;
+  }
+  html[data-theme="light"] button.inverted-cta > div:last-child > div:last-child {
+    color: #c9c9c9 !important;
+  }
+  html[data-theme="light"] button.inverted-cta:focus-visible {
+    outline-color: #fff !important;
+  }
   html[data-theme="light"] [style*="color: rgb(170"],
   html[data-theme="light"] [style*="color: #aaa"],
   html[data-theme="light"] [style*="color: #888"],
@@ -314,17 +342,20 @@ const GLOBAL_CSS = `
     color: #fff;
     background: transparent;
   }
+  /* Inverted pill: dark theme = white fill / black frame / black text; light = opposite. */
   .status-badge[data-urgent="true"] {
-    background: #fff;
-    color: #000;
+    background: #fff !important;
+    color: #000 !important;
+    border: 2px solid #000 !important;
   }
   html[data-theme="light"] .status-badge {
     border-color: #000;
     color: #000;
   }
   html[data-theme="light"] .status-badge[data-urgent="true"] {
-    background: #000;
-    color: #fff;
+    background-color: #000 !important;
+    color: #fff !important;
+    border: 2px solid #fff !important;
   }
 
   /* ── RPG Task Row ───────────────────────────────────────────── */

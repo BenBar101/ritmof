@@ -129,9 +129,6 @@ test('FULL LIFECYCLE (real persistence + sync + attack)', async ({ page }) => {
   await page.fill('[data-testid="major"]', 'Physics');
   await page.click('[data-testid="start"]');
 
-  await page.fill('[data-testid="books"]', 'Feynman');
-  await page.click('[data-testid="start"]');
-
   await page.fill('[data-testid="interests"]', 'Chess');
   await page.click('[data-testid="start"]');
 

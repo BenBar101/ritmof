@@ -75,7 +75,7 @@ You don't need to clone the repo to use RITMOL. You can use any hosted static bu
     *   Open the app. The **Initialization Protocol** will start.
     *   Choose to connect **Dropbox** (recommended for cross-device sync).
     *   Enter your **Gemini API Key** (see below).
-    *   Input your "Hunter" profile (Name, Major, Favorite Books, Semester Goal).
+    *   Input your "Hunter" profile (Name, Major, Interests, Semester Goal). Optional details like favorite books can be added later in Profile.
 2.  **Returning on a New Device:**
     *   Open the app. You will hit the **Missing Key Gate / Lock Screen**.
     *   Click **Connect Dropbox** (or "Load from Syncthing file").

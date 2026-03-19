@@ -1,4 +1,6 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+
+const NAV_TAB_ORDER = ["home", "habits", "tasks", "chat", "profile"];
 
 const STEPS = [
   {
@@ -49,6 +51,7 @@ const panelBase = {
   position: "absolute",
   background: "rgba(0,0,0,0.82)",
   borderRadius: 0,
+  pointerEvents: "none",
 };
 
 const primaryBtn = {
@@ -116,10 +119,27 @@ function SpotlightMasks({ spotlight }) {
   );
 }
 
-export default function TutorialOverlay({ onDone }) {
+export default function TutorialOverlay({ onDone, tab, setTab }) {
   const [step, setStep] = useState(0);
   const current = STEPS[step];
   const isLast = step === STEPS.length - 1;
+
+  useEffect(() => {
+    if (step === 5) return;
+    const idx = NAV_TAB_ORDER.indexOf(tab);
+    if (idx === -1) return;
+    if (idx !== step) setStep(idx);
+  }, [tab, step]);
+
+  function handleNext() {
+    if (isLast) {
+      onDone();
+      return;
+    }
+    const next = step + 1;
+    setStep(next);
+    if (next < 5) setTab(STEPS[next].id);
+  }
 
   const tooltipStyle =
     current.tooltipPosition === "above-nav"
@@ -142,7 +162,7 @@ export default function TutorialOverlay({ onDone }) {
         position: "fixed",
         inset: 0,
         zIndex: 8000,
-        pointerEvents: "all",
+        pointerEvents: "none",
         borderRadius: 0,
       }}
     >
@@ -160,6 +180,7 @@ export default function TutorialOverlay({ onDone }) {
           zIndex: 8001,
           borderRadius: 0,
           boxSizing: "border-box",
+          pointerEvents: "auto",
         }}
       >
         <div
@@ -216,11 +237,7 @@ export default function TutorialOverlay({ onDone }) {
               SKIP
             </button>
           )}
-          <button
-            type="button"
-            style={primaryBtn}
-            onClick={() => (isLast ? onDone() : setStep((s) => s + 1))}
-          >
+          <button type="button" style={primaryBtn} onClick={handleNext}>
             {isLast ? "LET'S GO →" : "NEXT →"}
           </button>
         </div>

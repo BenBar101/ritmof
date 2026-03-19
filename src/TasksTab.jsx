@@ -353,7 +353,11 @@ export default function TasksTab() {
                       <div style={{ fontSize: "17px", marginBottom: "4px", fontWeight: "bold" }}>{goal.title}</div>
                       <div style={{ fontSize: "13px", color: "#fff" }}>
                         {goal.course && goal.course + " · "}
-                        {daysLeft !== null && (daysLeft <= 0 ? "OVERDUE" : daysLeft + "d left")}
+                        {daysLeft !== null && (daysLeft <= 0 ? (
+                          <span className="status-badge" data-urgent="true">OVERDUE</span>
+                        ) : (
+                          daysLeft + "d left"
+                        ))}
                       </div>
                       {linkedCount > 0 && (
                         <div style={{ fontSize: "11px", color: "#fff", marginTop: "4px", opacity: 0.7, letterSpacing: "1px" }}>

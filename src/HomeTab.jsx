@@ -191,6 +191,15 @@ export default function HomeTab() {
   const borderAccent = isLight ? "#000" : "#fff";
   const borderMid = isLight ? "#555" : "#888";
 
+  // Inverted CTA: light theme → black fill / white frame / white text; dark → opposite.
+  const logCtaBg = isLight ? "#000" : "#fff";
+  const logCtaFrame = isLight ? "#fff" : "#000";
+  const logCtaText = logCtaFrame;
+  // Avoid #aaa/#555 in inline color (GlobalStyles light theme remaps those for contrast on gray UIs).
+  const logCtaDim = isLight ? "#c9c9c9" : "#575757";
+  const logCtaIconBg = isLight ? "#fff" : "#000";
+  const logCtaIconFg = isLight ? "#000" : "#fff";
+
   return (
     <div style={{ padding: "14px", display: "flex", flexDirection: "column", gap: "12px" }}>
 
@@ -253,11 +262,12 @@ export default function HomeTab() {
       {/* ── LOG STUDY SESSION CTA ───────────────────────────── */}
       <button
         type="button"
+        className="inverted-cta"
         onClick={() => setModal({ type: "session_log" })}
         style={{
           display: "flex", alignItems: "center", gap: "12px",
-          border: `2px solid ${borderAccent}`,
-          background: isLight ? "#f0f0f0" : "#000",
+          border: `2px solid ${logCtaFrame}`,
+          background: logCtaBg,
           padding: "12px 16px",
           cursor: "pointer",
           clipPath: "polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 0 100%)",
@@ -266,19 +276,19 @@ export default function HomeTab() {
       >
         <div style={{
           width: "36px", height: "36px", flexShrink: 0,
-          border: `2px solid ${borderAccent}`,
+          border: `2px solid ${logCtaFrame}`,
           display: "flex", alignItems: "center", justifyContent: "center",
           fontFamily: "'Share Tech Mono', monospace", fontSize: "18px",
-          color: textPrimary, background: isLight ? "#000" : "#fff",
+          background: logCtaIconBg,
           clipPath: "polygon(0 0, calc(100% - 6px) 0, 100% 6px, 100% 100%, 0 100%)",
         }}>
-          <span style={{ color: isLight ? "#fff" : "#000" }}>▶</span>
+          <span style={{ color: logCtaIconFg }}>▶</span>
         </div>
         <div>
-          <div style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: "13px", fontWeight: "bold", letterSpacing: "1.5px", color: textPrimary }}>
+          <div style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: "13px", fontWeight: "bold", letterSpacing: "1.5px", color: logCtaText }}>
             LOG STUDY SESSION
           </div>
-          <div style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: "11px", color: textDim, marginTop: "2px" }}>
+          <div style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: "11px", color: logCtaDim, marginTop: "2px" }}>
             Lecture · Tirgul · Homework · Prep → earn XP
           </div>
         </div>

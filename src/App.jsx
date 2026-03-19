@@ -915,6 +915,8 @@ export default function App() {
         <BottomNav tab={tab} setTab={setTab} />
         {state.tutorialDone === false && !showOnboarding && (
           <TutorialOverlay
+            tab={tab}
+            setTab={setTab}
             onDone={() => setState((s) => ({ ...s, tutorialDone: true }))}
           />
         )}
