@@ -823,7 +823,7 @@ Reply with ONLY this JSON:
       // Final guard: ensure no stray backticks remain anywhere in the prompt.
       prompt = prompt.replace(/`/g, "");
 
-      const { text: raw, tokensUsed } = await callGemini(apiKey, [{ role: "user", content: prompt }], "You are a creative RPG loremaster. Respond only in JSON.", true, controller.signal, 2048, false);
+      const { text: raw, tokensUsed } = await callGemini(apiKey, [{ role: "user", content: prompt }], "You are a creative RPG loremaster. Respond only in JSON.", true, controller.signal, 4096, false);
       if (mountedRef.current) {
         trackTokens(tokensUsed);
       }

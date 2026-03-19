@@ -390,13 +390,22 @@ export async function callGemini(apiKey, messages, systemPrompt, jsonMode = fals
         if (!text) throw new Error("Empty response from Gemini");
 
         // Detect genuine mid-response truncation from hitting the token limit.
-        // Only throw if the text is visibly incomplete — Gemini 2.5 Flash with
-        // responseMimeType set sometimes returns finishReason MAX_TOKENS even for
-        // fully-formed JSON responses, so we check the content itself first.
+        // Gemini 2.5 Flash with responseMimeType set often returns finishReason
+        // MAX_TOKENS even for fully-formed JSON responses. Only throw if the text
+        // is provably incomplete: first try to JSON-parse it (most reliable signal),
+        // then fall back to bracket/quote tail checks.
         const finishReason = candidate?.finishReason ?? "";
         if (finishReason === "MAX_TOKENS") {
           const trimmed = text.trimEnd();
-          const looksComplete = trimmed.endsWith("}") || trimmed.endsWith("]") || trimmed.endsWith("\"");
+          let looksComplete = false;
+          // 1. If it parses as JSON it's definitely complete.
+          if (!looksComplete) {
+            try { JSON.parse(trimmed); looksComplete = true; } catch { /* not JSON or truncated */ }
+          }
+          // 2. Structural tail check for non-JSON modes.
+          if (!looksComplete) {
+            looksComplete = trimmed.endsWith("}") || trimmed.endsWith("]") || trimmed.endsWith("\"");
+          }
           if (!looksComplete) {
             throw new Error("Gemini response truncated (MAX_TOKENS) — increase maxOutputTokens or shorten the prompt.");
           }

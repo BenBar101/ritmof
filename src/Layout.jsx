@@ -26,6 +26,7 @@ export function TopBar({ xp, xpPerLevel, level, rank, profile, syncStatus, lastS
       height: "calc(56px + env(safe-area-inset-top, 0px))",
       display: "flex", alignItems: "flex-end", gap: "6px",
       zIndex: 200,
+      boxSizing: "border-box",
     }}>
       {/* Gear icon — opens Settings */}
       <button
@@ -48,11 +49,11 @@ export function TopBar({ xp, xpPerLevel, level, rank, profile, syncStatus, lastS
 
       {/* XP bar — fills remaining space */}
       <div style={{ flex: 1, minWidth: 0, paddingBottom: "8px" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", fontSize: "11px", color: fg, marginBottom: "2px", fontFamily: "'Share Tech Mono', monospace", fontWeight: "bold", letterSpacing: "0.5px" }}>
-          <span>LV.{level}</span>
-          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "50%" }}>{rank.title}</span>
-          <span data-testid="xp">{xp}</span>
-          <span>{Math.round(pct)}%</span>
+        <div style={{ display: "flex", alignItems: "baseline", gap: "6px", fontSize: "11px", color: fg, marginBottom: "2px", fontFamily: "'Share Tech Mono', monospace", fontWeight: "bold", letterSpacing: "0.5px" }}>
+          <span style={{ flexShrink: 0 }}>LV.{level}</span>
+          <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", textAlign: "center" }}>{rank.title}</span>
+          <span style={{ flexShrink: 0 }} data-testid="xp">{xp} XP</span>
+          <span style={{ flexShrink: 0 }}>{Math.round(pct)}%</span>
         </div>
         <div style={{ height: "4px", background: theme === "light" ? "#ccc" : "#333", position: "relative" }}>
           <div style={{ width: `${pct}%`, height: "100%", background: fg }} />
