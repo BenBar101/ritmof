@@ -273,7 +273,7 @@ export default function HomeTab() {
         style={{
           display: "flex", alignItems: "center", gap: "12px",
           border: `2px solid ${borderAccent}`,
-          background: isLight ? "#fff" : "#000",
+          background: isLight ? "#f0f0f0" : "#000",
           padding: "12px 16px",
           cursor: "pointer",
           clipPath: "polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 0 100%)",
@@ -313,7 +313,7 @@ export default function HomeTab() {
                 style={{
                   display: "flex", alignItems: "center", gap: "10px",
                   border: `2px solid ${borderAccent}`,
-                  background: isLight ? "#fff" : "#000", padding: "10px 12px",
+                  background: isLight ? "#f0f0f0" : "#000", padding: "10px 12px",
                   cursor: "pointer", textAlign: "left", width: "100%",
                   clipPath: "polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 0 100%)",
                 }}
