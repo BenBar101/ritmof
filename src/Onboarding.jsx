@@ -271,54 +271,22 @@ function GCalOnboardingStep({ onSkip, onAdvance, profile, onClientIdChange }) {
 export function GeminiKeySetupScreen({ onSave }) {
   const [key, setKey]           = useState("");
   const [showKey, setShowKey]   = useState(false);
-  const [status, setStatus]     = useState("idle"); // "idle" | "verifying" | "ok" | "error"
   const [error, setError]       = useState("");
 
   const mono = { fontFamily: "'Share Tech Mono', monospace" };
 
-  // Validate format only — no network call until the user hits Verify
+  // Format-only validation — no network ping needed.
+  // The key will be tested naturally on first real AI use.
   const formatOk = /^AIza[A-Za-z0-9_-]{20,60}$/.test(key.trim());
 
-  async function handleVerify() {
+  function handleSave() {
     const trimmed = key.trim();
     if (!formatOk) {
       setError("Key must start with AIza and be 24–64 characters.");
       return;
     }
     setError("");
-    setStatus("verifying");
-    try {
-      // Minimal probe: 1-token ping to confirm the key is live.
-      // We send this directly to Google — RITMOL itself never sees the response
-      // server-side because there is no server.
-      const res = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent?key=${trimmed}`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            contents: [{ parts: [{ text: "." }] }],
-            generationConfig: { maxOutputTokens: 1 },
-          }),
-        }
-      );
-      if (res.ok) {
-        setStatus("ok");
-      } else {
-        const body = await res.json().catch(() => ({}));
-        const msg = body?.error?.message || `HTTP ${res.status}`;
-        setError(`Google returned: ${msg}`);
-        setStatus("error");
-      }
-    } catch {
-      setError("Network error — check your connection and try again.");
-      setStatus("error");
-    }
-  }
-
-  function handleSave() {
-    if (status !== "ok") return;
-    onSave(key.trim());
+    onSave(trimmed);
   }
 
   // Row helper for the "where it goes" disclosure table
@@ -372,7 +340,7 @@ export function GeminiKeySetupScreen({ onSave }) {
           <input
             type={showKey ? "text" : "password"}
             value={key}
-            onChange={(e) => { setKey(e.target.value); setStatus("idle"); setError(""); }}
+            onChange={(e) => { setKey(e.target.value); setError(""); }}
             placeholder="AIza..."
             maxLength={64}
             autoComplete="off"
@@ -411,24 +379,23 @@ export function GeminiKeySetupScreen({ onSave }) {
         <InfoRow icon="▸" text="Never logged, never sent to analytics, never embedded in bug reports." />
       </div>
 
-      {/* ── Verify button ── */}
-      {status !== "ok" && (
-        <button
-          type="button"
-          onClick={handleVerify}
-          disabled={!formatOk || status === "verifying"}
-          style={{
-            ...mono, width: "100%", padding: "14px",
-            border: "2px solid #fff",
-            background: (!formatOk || status === "verifying") ? "transparent" : "#fff",
-            color: (!formatOk || status === "verifying") ? "#555" : "#000",
-            fontSize: "15px", letterSpacing: "2px",
-            cursor: (!formatOk || status === "verifying") ? "not-allowed" : "pointer",
-          }}
-        >
-          {status === "verifying" ? "VERIFYING WITH GOOGLE…" : "VERIFY KEY"}
-        </button>
-      )}
+      {/* ── Save button ── */}
+      <button
+        type="button"
+        onClick={handleSave}
+        disabled={!formatOk}
+        style={{
+          ...mono, width: "100%", padding: "14px",
+          border: "2px solid #fff",
+          background: !formatOk ? "transparent" : "#fff",
+          color: !formatOk ? "#555" : "#000",
+          fontSize: "15px", letterSpacing: "2px",
+          cursor: !formatOk ? "not-allowed" : "pointer",
+          fontWeight: "bold",
+        }}
+      >
+        SAVE &amp; CONTINUE ›
+      </button>
 
       {/* ── Error ── */}
       {error && (
@@ -437,27 +404,6 @@ export function GeminiKeySetupScreen({ onSave }) {
         </div>
       )}
 
-      {/* ── Success + confirm ── */}
-      {status === "ok" && (
-        <>
-          <div style={{ ...mono, color: "#fff", fontSize: "14px", border: "2px solid #fff", padding: "10px", display: "flex", alignItems: "center", gap: "10px" }}>
-            <span style={{ fontSize: "20px" }}>✓</span>
-            <span>KEY VERIFIED — Google confirmed this key is active.</span>
-          </div>
-          <button
-            type="button"
-            onClick={handleSave}
-            style={{
-              ...mono, width: "100%", padding: "14px",
-              border: "2px solid #fff", background: "#fff", color: "#000",
-              fontSize: "15px", letterSpacing: "2px", cursor: "pointer",
-              fontWeight: "bold",
-            }}
-          >
-            SAVE &amp; CONTINUE ›
-          </button>
-        </>
-      )}
     </div>
   );
 }
