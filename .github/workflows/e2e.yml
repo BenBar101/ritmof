@@ -7,8 +7,6 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
-    env:
-      GEMINI_TEST_API_KEY: ${{ secrets.GEMINI_TEST_API_KEY }}
 
     steps:
       - uses: actions/checkout@v4
@@ -24,4 +22,7 @@ jobs:
 
       - run: npx playwright install --with-deps
 
-      - run: npm run test:e2e
+      - name: Run e2e tests
+        env:
+          GEMINI_TEST_API_KEY: ${{ secrets.GEMINI_TEST_API_KEY || '' }}
+        run: npm run test:e2e
