@@ -149,25 +149,28 @@ Respond ONLY with JSON array:
 
   // ── Custom habit form state ──────────────────────────────────
   const [showAddForm, setShowAddForm] = useState(false);
-  const [newHabit, setNewHabit] = useState({ label: "", category: "mind", xp: 25, icon: "◈", style: "ascii" });
+  const [newHabit, setNewHabit] = useState({ label: "", category: "mind", xp: 25, icon: "◈" });
 
   function addCustomHabit() {
     const label = newHabit.label.trim();
     if (!label) { showBanner("Enter a habit name.", "alert"); return; }
     if (state.habits.length >= 100) { showBanner("Max 100 habits reached.", "alert"); return; }
+    const safeCategory = ["body","mind","work"].includes(newHabit.category) ? newHabit.category : "mind";
+    // Auto-assign style based on category so users don't need to think about it
+    const categoryStyleMap = { body: "geometric", mind: "dots", work: "ascii" };
     const safe = {
       id: `habit_custom_${crypto.randomUUID()}`,
       // eslint-disable-next-line no-control-regex
       label: label.replace(/[\u0000-\u001F\u007F-\u009F\u200B-\u200D\uFEFF]/g, "").replace(/[<>"'`&]/g, "").slice(0, 80),
-      category: ["body","mind","work"].includes(newHabit.category) ? newHabit.category : "mind",
+      category: safeCategory,
       xp: Math.min(Math.max(5, Math.round(Number(newHabit.xp) || 25)), 200),
       icon: typeof newHabit.icon === "string" ? [...newHabit.icon].slice(0, 2).join("") || "◈" : "◈",
-      style: ["ascii","dots","geometric","typewriter"].includes(newHabit.style) ? newHabit.style : "ascii",
+      style: categoryStyleMap[safeCategory] || "ascii",
       desc: "",
       addedBy: "user",
     };
     setState((s) => ({ ...s, habits: [...s.habits, safe] }));
-    setNewHabit({ label: "", category: "mind", xp: 25, icon: "◈", style: "ascii" });
+    setNewHabit({ label: "", category: "mind", xp: 25, icon: "◈" });
     setShowAddForm(false);
     showBanner(`Habit "${safe.label}" added. +${safe.xp} XP per completion.`, "success");
   }
@@ -254,16 +257,15 @@ Respond ONLY with JSON array:
               />
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
-              <label style={{ fontSize: "12px", color: "#aaa", letterSpacing: "1px" }}>STYLE</label>
+              <label style={{ fontSize: "12px", color: "#aaa", letterSpacing: "1px" }}>TYPE</label>
               <select
-                value={newHabit.style}
-                onChange={(e) => setNewHabit((h) => ({ ...h, style: e.target.value }))}
+                value={newHabit.category}
+                onChange={(e) => setNewHabit((h) => ({ ...h, category: e.target.value }))}
                 style={{ background: "#000", border: "2px solid #fff", color: "#fff", padding: "10px", fontFamily: "'Share Tech Mono', monospace", fontSize: "14px", outline: "none" }}
               >
-                <option value="ascii">ASCII</option>
-                <option value="dots">DOTS</option>
-                <option value="geometric">GEOMETRIC</option>
-                <option value="typewriter">TYPEWRITER</option>
+                <option value="body">BODY</option>
+                <option value="mind">MIND</option>
+                <option value="work">WORK</option>
               </select>
             </div>
           </div>

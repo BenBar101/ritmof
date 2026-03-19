@@ -421,6 +421,7 @@ function SyncingScreen({ theme = "dark" }) {
 export default function App() {
   const { state, setState, latestStateRef, rehydrate, idbReady, rehydrateCount } = useAppState();
   const [tab, setTab]               = useState("home");
+  const [openProfileToSettings, setOpenProfileToSettings] = useState(false);
   const [theme, setThemeState]      = useState(() => LS.get(storageKey(THEME_KEY), "dark"));
   const [dailyQuote, setDailyQuote] = useState(null);
   const [showOnboarding, setShowOnboarding] = useState(false);
@@ -941,13 +942,13 @@ export default function App() {
             DEV MODE — separate localStorage (ritmol_dev_*)
           </div>
         )}
-        <TopBar xp={state.xp} xpPerLevel={xpPerLevel} level={level} rank={rank} profile={profile} syncStatus={syncStatus} lastSynced={lastSynced} onPush={syncPush} onPull={syncPull} syncFileConnected={syncFileConnected} isReloading={isReloading} />
+        <TopBar xp={state.xp} xpPerLevel={xpPerLevel} level={level} rank={rank} profile={profile} syncStatus={syncStatus} lastSynced={lastSynced} onPush={syncPush} onPull={syncPull} syncFileConnected={syncFileConnected} isReloading={isReloading} onOpenSettings={() => { setOpenProfileToSettings(true); setTab("profile"); }} />
         <div data-scroll="" style={{ flex: 1, overflowY: "auto", overflowX: "hidden", paddingBottom: "calc(60px + env(safe-area-inset-bottom, 0px))" }}>
           {tab === "home"    && <ErrorBoundary key="home"><HomeTab /></ErrorBoundary>}
           {tab === "habits"  && <ErrorBoundary key="habits"><HabitsTab /></ErrorBoundary>}
           {tab === "tasks"   && <ErrorBoundary key="tasks"><TasksTab /></ErrorBoundary>}
           {tab === "chat"    && <ErrorBoundary key="chat"><ChatTab /></ErrorBoundary>}
-          {tab === "profile" && <ErrorBoundary key="profile"><ProfileTab /></ErrorBoundary>}
+          {tab === "profile" && <ErrorBoundary key="profile"><ProfileTab openToSettings={openProfileToSettings} onSettingsOpened={() => setOpenProfileToSettings(false)} /></ErrorBoundary>}
         </div>
         <BottomNav tab={tab} setTab={setTab} />
 

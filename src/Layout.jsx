@@ -1,11 +1,10 @@
-import { APP_ICON_URL } from "./utils/db";
 import { getLevelProgress } from "./utils/xp";
 
 // ═══════════════════════════════════════════════════════════════
 // TOP BAR
 // ═══════════════════════════════════════════════════════════════
 // eslint-disable-next-line no-unused-vars
-export function TopBar({ xp, xpPerLevel, level, rank, profile, syncStatus, lastSynced, onPush, onPull, syncFileConnected, isReloading = false }) {
+export function TopBar({ xp, xpPerLevel, level, rank, profile, syncStatus, lastSynced, onPush, onPull, syncFileConnected, isReloading = false, onOpenSettings }) {
   const progress = getLevelProgress(xp, xpPerLevel);
   const pct = xpPerLevel > 0
     ? Math.min(100, Math.max(0, (progress / xpPerLevel) * 100))
@@ -26,13 +25,24 @@ export function TopBar({ xp, xpPerLevel, level, rank, profile, syncStatus, lastS
       display: "flex", alignItems: "flex-end", gap: "6px",
       zIndex: 200,
     }}>
-      {/* Logo — shrinks on very small screens */}
-      <div style={{ display: "flex", alignItems: "center", gap: "6px", flexShrink: 0, paddingBottom: "8px" }}>
-        <img src={APP_ICON_URL} alt="" style={{ width: 24, height: 24, display: "block" }} onError={(e) => { e.currentTarget.style.display = "none"; }} />
-        <span style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: "14px", letterSpacing: "2px", color: "#fff", whiteSpace: "nowrap" }}>
-          RITMOL
-        </span>
-      </div>
+      {/* Gear icon — opens Settings */}
+      <button
+        type="button"
+        onClick={onOpenSettings}
+        title="Settings"
+        style={{
+          display: "flex", alignItems: "center", justifyContent: "center",
+          flexShrink: 0, paddingBottom: "8px",
+          background: "none", border: "none", cursor: "pointer",
+          padding: "0 4px 8px 0",
+          minHeight: "40px", minWidth: "40px",
+        }}
+      >
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <circle cx="12" cy="12" r="3" />
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+        </svg>
+      </button>
 
       {/* XP bar — fills remaining space */}
       <div style={{ flex: 1, minWidth: 0, paddingBottom: "8px" }}>

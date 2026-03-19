@@ -21,14 +21,22 @@ const APP_CONSTANT_KEYS = new Set([DATA_DISCLOSURE_SEEN_KEY, THEME_KEY, "jv_last
 // eslint-disable-next-line no-control-regex
 const SAFE_GACHA_RENDER_REGEX = /[\u0000-\u0009\u000B-\u001F\u007F-\u009F\u200B-\u200D\uFEFF\u202A-\u202E\u2066-\u2069]/g;
 
-export default function ProfileTab() {
+export default function ProfileTab({ openToSettings, onSettingsOpened }) {
   const { state, setState, latestStateRef, rehydrate, profile, level, rank, xpPerLevel, showBanner, showToast, executeCommands, apiKey, buildSystemPrompt, syncStatus, lastSynced, syncFileConnected, dropboxConnected, confirmForgetSync, syncPush: onPush, syncPull: onPull, pickSyncFile: onPickSyncFile, forgetSyncFile: onForgetSyncFile, connectDropbox, disconnectDropbox, theme, setTheme, streakShieldCost, gachaCost, trackTokens } = useAppContext();
   const [section, setSection] = useState("overview");
   // showGacha state is reserved for future gacha modal implementation
   // eslint-disable-next-line no-unused-vars
   const [showGacha, setShowGacha] = useState(false);
 
-  const sections = ["overview", "achievements", "calendar", "gacha", "settings"];
+  // When gear icon is clicked, jump directly to settings section
+  React.useEffect(() => {
+    if (openToSettings) {
+      setSection("settings");
+      onSettingsOpened?.();
+    }
+  }, [openToSettings, onSettingsOpened]);
+
+  const sections = ["overview", "achievements", "calendar", "gacha"];
 
   return (
     <div style={{ padding: "16px", display: "flex", flexDirection: "column", gap: "16px" }}>
