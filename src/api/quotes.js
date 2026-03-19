@@ -17,6 +17,22 @@ const EMERGENCY_FALLBACKS = [
 // In-flight guard
 let _quoteInFlight = false;
 
+// Session seed: a short random token stored in sessionStorage so every new
+// browser session (new tab / page open) generates a fresh quote even if the
+// profile and date haven't changed.
+function getSessionSeed() {
+  try {
+    let seed = sessionStorage.getItem("ritmol_quote_session_seed");
+    if (!seed) {
+      seed = Math.random().toString(36).slice(2, 8);
+      sessionStorage.setItem("ritmol_quote_session_seed", seed);
+    }
+    return seed;
+  } catch {
+    return "nostorage";
+  }
+}
+
 const stripCtrl = (s) => {
   const cleaned = Array.from(String(s))
     .filter((ch) => {
@@ -44,8 +60,10 @@ async function _generateQuoteWithGemini(apiKey, profile, onTokens) {
   const name      = (profile?.name      || "Hunter").trim();
   const combined  = [books, interests, major].filter(Boolean).join(", ");
 
-  // Simple numeric hash of the profile context for a stable cache key (no btoa/unicode issues)
-  const cacheInput = combined || "default";
+  // Include session seed so each new session generates a fresh quote even when
+  // the profile and date are unchanged.
+  const sessionSeed = getSessionSeed();
+  const cacheInput = (combined || "default") + "|" + sessionSeed;
   let h = 0;
   for (let i = 0; i < cacheInput.length; i++) { h = (Math.imul(31, h) + cacheInput.charCodeAt(i)) | 0; }
   const resolvedKey = storageKey(`jv_quote_gem_${localToday()}_${Math.abs(h).toString(36)}`);
@@ -60,11 +78,14 @@ async function _generateQuoteWithGemini(apiKey, profile, onTokens) {
 
   const prompt =
     `${contextLine}\n` +
-    `Generate ONE real, verbatim quote that would resonate deeply with someone who studies ${major || "science"} and loves ${combined || "knowledge"}.\n` +
+    `Generate ONE real, verbatim quote that would deeply resonate with ${name}.\n` +
     `Rules:\n` +
     `- Must be a REAL quote by a REAL, verifiable author (not invented).\n` +
-    `- Prefer authors, scientists, philosophers or characters from the hunter's stated books and interests when possible.\n` +
-    `- The quote should feel personally relevant to ${name}, not generic.\n` +
+    (combined
+      ? `- STRONGLY PREFER quotes by authors, scientists, philosophers, or characters from the hunter's stated books and interests: ${combined}. Draw directly from these when possible.\n`
+      : `- Pick a quote from a renowned thinker relevant to knowledge and growth.\n`) +
+    `- Do NOT default to generic figures like Benjamin Franklin or Mark Twain unless they appear in the hunter's stated interests.\n` +
+    `- The quote must feel personally relevant to ${name}'s specific interests, not generic.\n` +
     `- 15 to 80 words maximum.\n` +
     `Respond ONLY with valid JSON: {"quote":"...","author":"First Last","source":"book title or context if applicable, empty string if none"}`;
 
@@ -103,7 +124,9 @@ async function _generateQuoteWithGemini(apiKey, profile, onTokens) {
 }
 
 export async function fetchDailyQuote(apiKey, profile, onTokens) {
-  const key = storageKey(`jv_quote_v2_${localToday()}`);
+  // Session-scoped key: a new session (new tab/reload) always fetches a fresh quote.
+  const sessionSeed = getSessionSeed();
+  const key = storageKey(`jv_quote_v2_${localToday()}_${sessionSeed}`);
 
   try {
     const quotePrefix = IS_DEV ? `${DEV_PREFIX}jv_quote_` : "jv_quote_";
@@ -112,7 +135,8 @@ export async function fetchDailyQuote(apiKey, profile, onTokens) {
     for (let i = 0; i < localStorage.length; i++) {
       const k = localStorage.key(i);
       if (!k) continue;
-      if ((k.startsWith(quotePrefix) || k.startsWith(gemPrefix)) && k !== key) staleKeys.push(k);
+      // Remove any quote keys that are NOT for today (old dates) to keep storage clean.
+      if ((k.startsWith(quotePrefix) || k.startsWith(gemPrefix)) && !k.includes(localToday())) staleKeys.push(k);
     }
     staleKeys.forEach((k) => localStorage.removeItem(k));
   } catch { /* localStorage may be unavailable */ }

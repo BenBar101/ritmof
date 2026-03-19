@@ -727,8 +727,7 @@ export default function App() {
   }, [!!profile, !!state?.gCalConnected]);
 
   // Quote is cached in localStorage by quotes.js itself (per-day + per-profile hash),
-  // so sessionStorage just prevents re-firing the Gemini call on rapid reloads within
-  // the same session when the LS cache hasn't been written yet.
+  // so a rapid hot-reload in dev doesn't fire two simultaneous Gemini calls.
   const quoteFetchedRef = useRef(false);
   const quoteInputRef = useRef("");
   const quoteInput = `${profile?.books ?? ""}|${profile?.interests ?? ""}|${profile?.major ?? ""}`;
@@ -737,13 +736,9 @@ export default function App() {
     if (quoteInputRef.current !== quoteInput) {
       quoteFetchedRef.current = false;
       quoteInputRef.current = quoteInput;
-      try { sessionStorage.removeItem("ritmol_quote_fetched"); } catch { /* ignore */ }
     }
     if (quoteFetchedRef.current) return;
-    // Also check sessionStorage so a page reload doesn't re-fire the call.
-    try { if (sessionStorage.getItem("ritmol_quote_fetched") === "1") { quoteFetchedRef.current = true; return; } } catch { /* ignore */ }
     quoteFetchedRef.current = true;
-    try { sessionStorage.setItem("ritmol_quote_fetched", "1"); } catch { /* ignore */ }
     // Delay by 5 s on cold load so the quote doesn't race with the weekly-mission
     // background call that fires immediately on startup. Both are background=true,
     // but staggering them avoids hitting Gemini's burst quota simultaneously.
