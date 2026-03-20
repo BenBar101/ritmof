@@ -72,15 +72,19 @@ export default function ProfileTab() {
         ))}
       </div>
 
-      {section === "overview" && <ProfileOverview state={state} setState={setState} profile={profile} level={level} rank={rank} streakShieldCost={streakShieldCost} apiKey={apiKey} showBanner={showBanner} latestStateRef={latestStateRef} trackTokens={trackTokens} />}
-      {section === "achievements" && <AchievementsSection state={state} />}
-      {section === "calendar" && <CalendarSection state={state} setState={setState} profile={profile} apiKey={apiKey} buildSystemPrompt={buildSystemPrompt} showBanner={showBanner} executeCommands={executeCommands} />}
-      {section === "gacha" && <GachaSection state={state} setState={setState} profile={profile} apiKey={apiKey} gachaCost={gachaCost} showBanner={showBanner} showToast={showToast} trackTokens={trackTokens} latestStateRef={latestStateRef} />}
+      {section === "overview" && <ProfileOverview theme={theme} state={state} setState={setState} profile={profile} level={level} rank={rank} streakShieldCost={streakShieldCost} apiKey={apiKey} showBanner={showBanner} latestStateRef={latestStateRef} trackTokens={trackTokens} />}
+      {section === "achievements" && <AchievementsSection state={state} theme={theme} />}
+      {section === "calendar" && <CalendarSection state={state} theme={theme} setState={setState} profile={profile} apiKey={apiKey} buildSystemPrompt={buildSystemPrompt} showBanner={showBanner} executeCommands={executeCommands} />}
+      {section === "gacha" && <GachaSection theme={theme} state={state} setState={setState} profile={profile} apiKey={apiKey} gachaCost={gachaCost} showBanner={showBanner} showToast={showToast} trackTokens={trackTokens} latestStateRef={latestStateRef} />}
     </div>
   );
 }
 
-function ProfileOverview({ state, setState, profile, level, streakShieldCost, apiKey, showBanner, trackTokens }) {
+function ProfileOverview({ state, setState, profile, level, streakShieldCost, apiKey, showBanner, trackTokens, theme }) {
+  const fg  = theme === "light" ? "#000" : "#fff";
+  const bg  = theme === "light" ? "#f0f0f0" : "#000";
+  const dim = theme === "light" ? "#555" : "#aaa";
+
   const totalSessions = (state.sessions || []).length;
   const totalHabitsLogged = Object.values(state.habitLog || {}).reduce((acc, arr) => acc + arr.length, 0);
   const totalTasksDone = (state.tasks || []).filter((t) => t.done).length;
@@ -250,7 +254,11 @@ function ProfileOverview({ state, setState, profile, level, streakShieldCost, ap
   );
 }
 
-function AchievementsSection({ state }) {
+function AchievementsSection({ state, theme }) {
+  const fg  = theme === "light" ? "#000" : "#fff";
+  const bg  = theme === "light" ? "#f0f0f0" : "#000";
+  const dim = theme === "light" ? "#555" : "#aaa";
+
   const achievements = state.achievements || [];
   const rarityOrder = { legendary: 0, epic: 1, rare: 2, common: 3 };
 
@@ -301,7 +309,11 @@ function AchievementsSection({ state }) {
 }
 
 // eslint-disable-next-line no-unused-vars
-function CalendarSection({ state, setState, profile, apiKey, buildSystemPrompt, showBanner, executeCommands }) {
+function CalendarSection({ state, setState, profile, apiKey, buildSystemPrompt, showBanner, executeCommands, theme }) {
+  const fg  = theme === "light" ? "#000" : "#fff";
+  const bg  = theme === "light" ? "#f0f0f0" : "#000";
+  const dim = theme === "light" ? "#555" : "#aaa";
+
   const [form, setForm] = useState({ title: "", type: "exam", start: "", end: "" });
   const [gCalLoading, setGCalLoading] = useState(false);
   // Discovered calendars from the user's Google account (populated after OAuth).
@@ -473,6 +485,7 @@ function CalendarSection({ state, setState, profile, apiKey, buildSystemPrompt, 
       {/* Calendar picker — shown after OAuth until the user confirms */}
       {showPicker && (
         <CalendarPicker
+          theme={theme}
           calendars={calendarList}
           initialSelected={state.gCalSelectedIds || calendarList.map((c) => c.id)}
           onConfirm={(chosenIds) => {
@@ -568,7 +581,11 @@ function CalendarSection({ state, setState, profile, apiKey, buildSystemPrompt, 
 }
 
 // Displays the user's Google Calendar subscriptions and lets them toggle which ones to sync.
-function CalendarPicker({ calendars, initialSelected, onConfirm, onCancel }) {
+function CalendarPicker({ calendars, initialSelected, onConfirm, onCancel, theme }) {
+  const fg  = theme === "light" ? "#000" : "#fff";
+  const bg  = theme === "light" ? "#f0f0f0" : "#000";
+  const dim = theme === "light" ? "#555" : "#aaa";
+
   const [selected, setSelected] = useState(() => new Set(initialSelected));
 
   function toggle(id) {
@@ -645,7 +662,11 @@ function CalendarPicker({ calendars, initialSelected, onConfirm, onCancel }) {
   );
 }
 
-function GachaSection({ state, setState, profile, apiKey, gachaCost, showBanner, showToast, trackTokens, latestStateRef }) {
+function GachaSection({ state, setState, profile, apiKey, gachaCost, showBanner, showToast, trackTokens, latestStateRef, theme }) {
+  const fg  = theme === "light" ? "#000" : "#fff";
+  const bg  = theme === "light" ? "#f0f0f0" : "#000";
+  const dim = theme === "light" ? "#555" : "#aaa";
+
   const [pulling, setPulling] = useState(false);
   const [lastPull, setLastPull] = useState(null);
   const [showCollection, setShowCollection] = useState(false);
@@ -1094,7 +1115,7 @@ Reply with ONLY this JSON:
             return (
               <>
                 {pageItems.map((card) => (
-                  <GachaCard key={card.id} card={card} compact />
+                  <GachaCard key={card.id} card={card} theme={theme} compact />
                 ))}
                 {pageCount > 1 && (
                   <div style={{ display: "flex", gap: "8px", justifyContent: "center", alignItems: "center", marginTop: "4px" }}>
@@ -1146,7 +1167,11 @@ Reply with ONLY this JSON:
   );
 }
 
-function GachaCard({ card, compact }) {
+function GachaCard({ card, compact, theme }) {
+  const fg  = theme === "light" ? "#000" : "#fff";
+  const bg  = theme === "light" ? "#f0f0f0" : "#000";
+  const dim = theme === "light" ? "#555" : "#aaa";
+
   const [expanded, setExpanded] = useState(!compact);
   const styleMap = STYLE_CSS;
   const s = styleMap[card.style] || styleMap.ascii;
@@ -1406,7 +1431,7 @@ function SettingsSection({ profile, setState, showBanner, syncStatus, lastSynced
         </button>
       </div>
 
-      <div style={{ height: "1px", background: "#333", margin: "8px 0" }} />
+      <div style={{ height: "1px", background: dim, margin: "8px 0" }} />
 
       {/* ── INSTALL APP ── */}
       {!isStandalone && (
@@ -1453,7 +1478,7 @@ function SettingsSection({ profile, setState, showBanner, syncStatus, lastSynced
               On iPhone, use Safari → Share → Add to Home Screen.
             </div>
           )}
-          <div style={{ height: "1px", background: "#333", margin: "8px 0" }} />
+          <div style={{ height: "1px", background: dim, margin: "8px 0" }} />
         </>
       )}
 
@@ -1642,7 +1667,7 @@ function SettingsSection({ profile, setState, showBanner, syncStatus, lastSynced
       )}
 
       {/* ── AI CONFIG ── */}
-      <div style={{ height: "1px", background: "#333", margin: "8px 0" }} />
+      <div style={{ height: "1px", background: dim, margin: "8px 0" }} />
       <div style={{ fontSize: "16px", color: fg, letterSpacing: "2px", fontWeight: "bold" }}>[ AI CONFIG ]</div>
       <button
         type="button"
