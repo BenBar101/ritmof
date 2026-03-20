@@ -4,6 +4,13 @@ on:
   push:
     branches: [main]
 
+# Force all actions to run on Node.js 24.
+# actions/configure-pages and actions/upload-pages-artifact do not yet have
+# a Node-24-native release; this env var is the official GitHub workaround
+# until those actions ship updated versions.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 permissions:
   contents: read
   pages: write
@@ -20,7 +27,7 @@ jobs:
       - uses: actions/checkout@v5
 
       - name: Setup Node
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@v6
         with:
           node-version: "24"
           cache: "npm"
@@ -39,10 +46,10 @@ jobs:
         run: npm run build
 
       - name: Setup Pages
-        uses: actions/configure-pages@v5
+        uses: actions/configure-pages@v4
 
       - name: Upload artifact
-        uses: actions/upload-pages-artifact@v4
+        uses: actions/upload-pages-artifact@v3
         with:
           path: dist
 

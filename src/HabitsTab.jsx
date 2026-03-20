@@ -5,7 +5,12 @@ import { STYLE_CSS } from "./constants";
 import GeometricCorners from "./GeometricCorners";
 
 export default function HabitsTab() {
-  const { state, setState, logHabit, showBanner } = useAppContext();
+  const { state, setState, logHabit, showBanner, theme } = useAppContext();
+
+  const fg  = theme === "light" ? "#000"    : "#fff";
+  const bg  = theme === "light" ? "#f0f0f0" : "#000";
+  const dim = theme === "light" ? "#555"    : "#aaa";
+
   const todayLog = state.habitLog[localDateFromUTC()] || [];
   const categories = ["body", "mind", "work"];
 
@@ -14,7 +19,6 @@ export default function HabitsTab() {
     showBanner("Habit removed.", "info");
   }
 
-  // ── Custom habit form state ──────────────────────────────────
   const [showAddForm, setShowAddForm] = useState(false);
   const [newHabit, setNewHabit] = useState({ label: "", category: "mind", xp: 25, icon: "◈" });
 
@@ -23,7 +27,6 @@ export default function HabitsTab() {
     if (!label) { showBanner("Enter a habit name.", "alert"); return; }
     if (state.habits.length >= 100) { showBanner("Max 100 habits reached.", "alert"); return; }
     const safeCategory = ["body","mind","work"].includes(newHabit.category) ? newHabit.category : "mind";
-    // Auto-assign style based on category so users don't need to think about it
     const categoryStyleMap = { body: "geometric", mind: "dots", work: "ascii" };
     const safe = {
       id: `habit_custom_${crypto.randomUUID()}`,
@@ -42,24 +45,33 @@ export default function HabitsTab() {
     showBanner(`Habit "${safe.label}" added. +${safe.xp} XP per completion.`, "success");
   }
 
+  // Shared input style — derived from theme
+  const inputStyle = {
+    background: bg, border: `2px solid ${fg}`, color: fg, padding: "10px",
+    fontFamily: "'Share Tech Mono', monospace", fontSize: "15px", outline: "none", width: "100%",
+  };
+
   return (
     <div style={{ padding: "16px", display: "flex", flexDirection: "column", gap: "20px" }}>
-      <div style={{ fontFamily: "'Share Tech Mono', monospace", borderBottom: "4px double #fff", paddingBottom: "16px" }}>
+
+      {/* ── Header ─────────────────────────────────────────── */}
+      <div style={{ fontFamily: "'Share Tech Mono', monospace", borderBottom: `4px double ${fg}`, paddingBottom: "16px" }}>
         <div className="system-header" style={{ fontSize: "13px", marginBottom: "4px" }}>
           <span>[ HABIT LOG ]</span>
           <div className="system-divider" />
         </div>
         <div style={{ fontSize: "28px", fontWeight: "bold", marginTop: "4px" }}>HABITS</div>
-        <div style={{ fontSize: "15px", color: "#fff", marginTop: "4px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <div style={{ fontSize: "15px", color: fg, marginTop: "4px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <span>{todayLog.length}/{state.habits.length} completed today</span>
           <button
             type="button"
             onClick={() => setShowAddForm((v) => !v)}
             style={{
               fontFamily: "'Share Tech Mono', monospace", fontSize: "13px", letterSpacing: "1px",
-              border: "2px solid #fff", background: showAddForm ? "#fff" : "#000",
-              color: showAddForm ? "#000" : "#fff", padding: "6px 14px",
-              cursor: "pointer", minHeight: "36px",
+              border: `2px solid ${fg}`,
+              background: showAddForm ? fg : bg,
+              color:      showAddForm ? bg : fg,
+              padding: "6px 14px", cursor: "pointer", minHeight: "36px",
             }}
           >
             {showAddForm ? "CANCEL" : "+ ADD HABIT"}
@@ -79,27 +91,24 @@ export default function HabitsTab() {
           </div>
 
           <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
-            <label style={{ fontSize: "12px", color: "#aaa", letterSpacing: "1px" }}>HABIT NAME *</label>
+            <label style={{ fontSize: "12px", color: dim, letterSpacing: "1px" }}>HABIT NAME *</label>
             <input
               type="text"
               value={newHabit.label}
               onChange={(e) => setNewHabit((h) => ({ ...h, label: e.target.value.slice(0, 80) }))}
               placeholder="e.g. Morning run"
               maxLength={80}
-              style={{
-                background: "#000", border: "2px solid #fff", color: "#fff", padding: "10px",
-                fontFamily: "'Share Tech Mono', monospace", fontSize: "15px", outline: "none", width: "100%",
-              }}
+              style={inputStyle}
             />
           </div>
 
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
             <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
-              <label style={{ fontSize: "12px", color: "#aaa", letterSpacing: "1px" }}>CATEGORY</label>
+              <label style={{ fontSize: "12px", color: dim, letterSpacing: "1px" }}>CATEGORY</label>
               <select
                 value={newHabit.category}
                 onChange={(e) => setNewHabit((h) => ({ ...h, category: e.target.value }))}
-                style={{ background: "#000", border: "2px solid #fff", color: "#fff", padding: "10px", fontFamily: "'Share Tech Mono', monospace", fontSize: "14px", outline: "none" }}
+                style={{ ...inputStyle, fontSize: "14px", width: undefined }}
               >
                 <option value="body">BODY</option>
                 <option value="mind">MIND</option>
@@ -107,34 +116,34 @@ export default function HabitsTab() {
               </select>
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
-              <label style={{ fontSize: "12px", color: "#aaa", letterSpacing: "1px" }}>XP REWARD</label>
+              <label style={{ fontSize: "12px", color: dim, letterSpacing: "1px" }}>XP REWARD</label>
               <input
                 type="number"
                 value={newHabit.xp}
                 min={5} max={200}
                 onChange={(e) => setNewHabit((h) => ({ ...h, xp: Number(e.target.value) }))}
-                style={{ background: "#000", border: "2px solid #fff", color: "#fff", padding: "10px", fontFamily: "'Share Tech Mono', monospace", fontSize: "14px", outline: "none", width: "100%" }}
+                style={{ ...inputStyle, fontSize: "14px" }}
               />
             </div>
           </div>
 
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
             <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
-              <label style={{ fontSize: "12px", color: "#aaa", letterSpacing: "1px" }}>ICON (1 char)</label>
+              <label style={{ fontSize: "12px", color: dim, letterSpacing: "1px" }}>ICON (1 char)</label>
               <input
                 type="text"
                 value={newHabit.icon}
                 maxLength={2}
                 onChange={(e) => setNewHabit((h) => ({ ...h, icon: e.target.value }))}
-                style={{ background: "#000", border: "2px solid #fff", color: "#fff", padding: "10px", fontFamily: "'Share Tech Mono', monospace", fontSize: "18px", outline: "none", width: "100%", textAlign: "center" }}
+                style={{ ...inputStyle, fontSize: "18px", textAlign: "center" }}
               />
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
-              <label style={{ fontSize: "12px", color: "#aaa", letterSpacing: "1px" }}>TYPE</label>
+              <label style={{ fontSize: "12px", color: dim, letterSpacing: "1px" }}>TYPE</label>
               <select
                 value={newHabit.category}
                 onChange={(e) => setNewHabit((h) => ({ ...h, category: e.target.value }))}
-                style={{ background: "#000", border: "2px solid #fff", color: "#fff", padding: "10px", fontFamily: "'Share Tech Mono', monospace", fontSize: "14px", outline: "none" }}
+                style={{ ...inputStyle, fontSize: "14px", width: undefined }}
               >
                 <option value="body">BODY</option>
                 <option value="mind">MIND</option>
@@ -147,7 +156,8 @@ export default function HabitsTab() {
             type="button"
             onClick={addCustomHabit}
             style={{
-              width: "100%", padding: "14px", border: "none", background: "#fff", color: "#000",
+              width: "100%", padding: "14px", border: "none",
+              background: fg, color: bg,
               fontFamily: "'Share Tech Mono', monospace", fontSize: "15px", letterSpacing: "2px",
               cursor: "pointer", fontWeight: "bold", minHeight: "48px",
             }}
@@ -157,35 +167,45 @@ export default function HabitsTab() {
         </div>
       )}
 
-      {/* Streak bonus indicator */}
+      {/* ── Streak bonus ────────────────────────────────────── */}
       {state.streak >= 3 && (
         <div style={{
-          border: "3px solid #fff", padding: "14px 16px",
+          border: `3px solid ${fg}`, padding: "14px 16px",
           fontFamily: "'Share Tech Mono', monospace", fontSize: "16px",
           display: "flex", justifyContent: "space-between", fontWeight: "bold",
-          background: "#000",
+          background: bg,
         }}>
           <span>STREAK BONUS ACTIVE</span>
           <span>{state.streak >= 7 ? "+50% XP" : "+25% XP"}</span>
         </div>
       )}
 
+      {/* ── Habit cards by category ──────────────────────────── */}
       {categories.map((cat) => {
         const catHabits = state.habits.filter((h) => h.category === cat);
         if (!catHabits.length) return null;
         return (
           <div key={cat}>
-            <div style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: "14px", color: "#fff", letterSpacing: "3px", marginBottom: "12px", textTransform: "uppercase", borderBottom: "2px solid #fff", paddingBottom: "6px", fontWeight: "bold" }}>
+            {/* Category heading underline */}
+            <div style={{
+              fontFamily: "'Share Tech Mono', monospace", fontSize: "14px", color: fg,
+              letterSpacing: "3px", marginBottom: "12px", textTransform: "uppercase",
+              borderBottom: `2px solid ${fg}`, paddingBottom: "6px", fontWeight: "bold",
+            }}>
               {cat.toUpperCase()}
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
               {catHabits.map((habit) => {
                 const done = todayLog.includes(habit.id);
                 const s = STYLE_CSS[habit.style] || STYLE_CSS.ascii;
+                // Done state: invert card (fg bg, fg text). Undone: normal.
+                const cardBg   = done ? fg  : bg;
+                const cardFg   = done ? bg  : fg;
+                const cardText = done ? bg  : "#e8e8e8";
                 return (
                   <div key={habit.id} style={{
-                    border: "2px solid #fff",
-                    background: done ? "#fff" : "#000",
+                    border: `2px solid ${fg}`,
+                    background: cardBg,
                     padding: "16px",
                     display: "flex", alignItems: "center", justifyContent: "space-between",
                     position: "relative", overflow: "hidden",
@@ -197,17 +217,17 @@ export default function HabitsTab() {
                       style={{
                         display: "flex", alignItems: "center", gap: "12px",
                         flex: 1, background: "none", border: "none",
-                        color: done ? "#000" : "#e8e8e8",
+                        color: cardText,
                         fontFamily: s.fontFamily, cursor: done ? "default" : "pointer",
                         textAlign: "left",
                       }}
                     >
                       <span style={{ fontSize: "20px", width: "24px", textAlign: "center" }}>{done ? "✓" : habit.icon}</span>
                       <div>
-                        <div style={{ fontSize: "17px", fontWeight: "bold", textDecoration: done ? "line-through" : "none", color: done ? "#000" : "#fff" }}>
+                        <div style={{ fontSize: "17px", fontWeight: "bold", textDecoration: done ? "line-through" : "none", color: cardFg }}>
                           {habit.label}
                         </div>
-                        <div style={{ fontSize: "16px", color: "#fff", marginTop: "4px", lineHeight: "1.6", textDecoration: done ? "line-through" : "none" }}>
+                        <div style={{ fontSize: "16px", color: cardFg, marginTop: "4px", lineHeight: "1.6", textDecoration: done ? "line-through" : "none", opacity: done ? 0.7 : 1 }}>
                           +{habit.xp} XP {habit.addedBy === "ritmol" ? "· RITMOL" : ""}
                           {habit.desc && !done ? ` · ${habit.desc}` : ""}
                         </div>
@@ -216,7 +236,11 @@ export default function HabitsTab() {
                     <button
                       type="button"
                       onClick={() => deleteHabit(habit.id)}
-                      style={{ color: done ? "#000" : "#fff", fontSize: "22px", padding: "8px", background: done ? "#fff" : "none", border: done ? "2px solid #fff" : "none", minHeight: "48px", minWidth: "48px" }}
+                      style={{
+                        color: cardFg, fontSize: "22px", padding: "8px",
+                        background: "none", border: "none",
+                        minHeight: "48px", minWidth: "48px",
+                      }}
                     >
                       ×
                     </button>
@@ -230,7 +254,3 @@ export default function HabitsTab() {
     </div>
   );
 }
-
-// ═══════════════════════════════════════════════════════════════
-// TASKS TAB
-// ═══════════════════════════════════════════════════════════════

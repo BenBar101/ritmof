@@ -289,6 +289,18 @@ async function start() {
   ReactDOM.createRoot(root).render(<Root />);
 }
 
+// ── Service-worker update handler ─────────────────────────────────────────────
+// When a new SW activates it sends SW_UPDATED to all open clients.
+// We reload so the page fetches the new HTML + JS rather than mixing
+// stale cached chunks with the freshly deployed assets.
+if (typeof navigator !== "undefined" && navigator.serviceWorker) {
+  navigator.serviceWorker.addEventListener("message", (e) => {
+    if (e.data?.type === "SW_UPDATED") {
+      window.location.reload();
+    }
+  });
+}
+
 if (document.readyState === "loading") {
   document.addEventListener("DOMContentLoaded", start);
 } else {

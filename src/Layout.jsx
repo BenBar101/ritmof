@@ -108,7 +108,7 @@ export function TopBar({ xp, xpPerLevel, level, rank, profile, syncStatus, lastS
 // ═══════════════════════════════════════════════════════════════
 // BOTTOM NAV
 // ═══════════════════════════════════════════════════════════════
-export function BottomNav({ tab, setTab }) {
+export function BottomNav({ tab, setTab, theme = "dark" }) {
   const tabs = [
     { id: "home", icon: "⌂", label: "HOME" },
     { id: "habits", icon: "◉", label: "HABITS" },
@@ -117,10 +117,14 @@ export function BottomNav({ tab, setTab }) {
     { id: "profile", icon: "§", label: "PROFILE" },
   ];
 
+  const bg     = theme === "light" ? "#f0f0f0" : "#000";
+  const fg     = theme === "light" ? "#000"    : "#fff";
+  const border = `2px solid ${fg}`;
+
   return (
     <div data-bottom-nav="" style={{
       position: "fixed", bottom: 0, left: 0, right: 0,
-      background: "#000", borderTop: "2px solid #fff",
+      background: bg, borderTop: border,
       display: "flex",
       height: "calc(60px + env(safe-area-inset-bottom, 0px))",
       paddingBottom: "env(safe-area-inset-bottom, 0px)",
@@ -135,9 +139,10 @@ export function BottomNav({ tab, setTab }) {
           style={{
             flex: 1, display: "flex", flexDirection: "column", alignItems: "center",
             justifyContent: "center", gap: "2px",
-            background: tab === t.id ? "#fff" : "#000", border: "none",
-            borderTop: "2px solid #fff",
-            color: tab === t.id ? "#000" : "#fff",
+            background: tab === t.id ? fg : bg,
+            border: "none",
+            borderTop: border,
+            color: tab === t.id ? bg : fg,
             fontFamily: "'Share Tech Mono', monospace",
             padding: "4px 0",
           }}
@@ -153,8 +158,9 @@ export function BottomNav({ tab, setTab }) {
 // ═══════════════════════════════════════════════════════════════
 // BANNER
 // ═══════════════════════════════════════════════════════════════
-export function Banner({ banner, onClose }) {
-  const bgColors = { info: "#000", warning: "#000", success: "#000", alert: "#000" };
+export function Banner({ banner, onClose, theme = "dark" }) {
+  const fg = theme === "light" ? "#000" : "#fff";
+  const bg = theme === "light" ? "#f0f0f0" : "#000";
   const safeBannerText = (typeof banner.text === "string")
     // eslint-disable-next-line no-control-regex
     ? banner.text.replace(/[\u0000-\u001F\u007F-\u009F\u200B-\u200D\uFEFF\u202A-\u202E\u2066-\u2069]/g, "").slice(0, 300)
@@ -162,12 +168,12 @@ export function Banner({ banner, onClose }) {
   return (
     <div style={{
       position: "fixed", top: "calc(56px + env(safe-area-inset-top, 0px))", left: 0, right: 0, zIndex: 500,
-      background: bgColors[banner.type] || "#000", borderBottom: "3px solid #fff", borderTop: "3px solid #fff",
+      background: bg, borderBottom: `3px solid ${fg}`, borderTop: `3px solid ${fg}`,
       padding: "14px 16px", display: "flex", justifyContent: "space-between",
       alignItems: "center", fontFamily: "'Share Tech Mono', monospace", fontSize: "16px", fontWeight: "bold",
     }}>
-      <span style={{ color: "#fff", flex: 1 }}>{safeBannerText}</span>
-      <button onClick={onClose} style={{ color: "#fff", fontSize: "24px", minHeight: "48px", minWidth: "48px", background: "none", border: "none" }}>×</button>
+      <span style={{ color: fg, flex: 1 }}>{safeBannerText}</span>
+      <button onClick={onClose} style={{ color: fg, fontSize: "24px", minHeight: "48px", minWidth: "48px", background: "none", border: "none" }}>×</button>
     </div>
   );
 }

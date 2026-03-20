@@ -14,12 +14,110 @@ import { AppContext } from "./context/AppContext";
 // Utils
 import { LS, storageKey, IS_DEV, getGeminiApiKey, setGeminiApiKey, todayUTC, localDateFromUTC, APP_ICON_URL } from "./utils/db";
 import { getLevel, getRank, getXpPerLevel, getGachaCost, getStreakShieldCost, calcSessionXP } from "./utils/xp";
-import { THEME_KEY, SESSION_TYPES, DEFAULT_XP_PER_LEVEL, DEFAULT_GACHA_COST, DEFAULT_STREAK_SHIELD_COST } from "./constants";
+import { THEME_KEY, SESSION_TYPES, DEFAULT_XP_PER_LEVEL, DEFAULT_GACHA_COST, DEFAULT_STREAK_SHIELD_COST, DAILY_TOKEN_LIMIT } from "./constants";
 import { buildSystemPrompt } from "./api/systemPrompt";
 import { fetchGCalEvents, loadGoogleGIS } from "./api/gcal";
-import { clearRateLimitWindow } from "./api/gemini";
-import { FSAPI_SUPPORTED } from "./sync/SyncManager";
+import { callGemini, RateLimitedError, clearRateLimitWindow } from "./api/gemini";
+import { FSAPI_SUPPORTED, isSafeSyncValue } from "./sync/SyncManager";
 import { verifyOAuthState } from "./api/dropbox";
+
+const MISSION_DEFS = [
+  { id: "m1", desc: "Complete 3 habits",  target: 3,  type: "habits",  xp: 100, done: false },
+  { id: "m2", desc: "Complete 6 habits",  target: 6,  type: "habits",  xp: 200, done: false },
+  { id: "m3", desc: "Complete 10 habits", target: 10, type: "habits",  xp: 500, done: false },
+  { id: "m4", desc: "Log a study session",target: 1,  type: "session", xp: 75,  done: false },
+  { id: "m5", desc: "Complete a task",    target: 1,  type: "task",    xp: 50,  done: false },
+  { id: "m6", desc: "Open RITMOL chat",   target: 1,  type: "chat",    xp: 25,  done: false },
+];
+
+// ── ISO week key: "YYYY-Www" using local date ──────────────────
+function localWeekKey() {
+  const d = new Date();
+  const jan4 = new Date(d.getFullYear(), 0, 4);
+  const dayOfYear = Math.floor((d - new Date(d.getFullYear(), 0, 0)) / 86400000);
+  const week = Math.ceil((dayOfYear + jan4.getDay()) / 7);
+  return `${d.getFullYear()}-W${String(week).padStart(2, "0")}`;
+}
+
+// ── Month key: "YYYY-MM" using local date ──────────────────────
+function localMonthKey() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
+// ── Ask Gemini to generate weekly or monthly missions ──────────
+async function generateAiMissions(apiKey, profile, period, trackTokens, signal) {
+  const isWeekly = period === "weekly";
+  const count    = isWeekly ? 5 : 3;
+  const xpRange  = isWeekly ? "150-400" : "500-1500";
+  const major     = (profile?.major     || "").replace(/[<>"'`]/g, "").slice(0, 40);
+  const interests = (profile?.interests || "").replace(/[<>"'`]/g, "").slice(0, 50);
+  const context   = [major, interests].filter(Boolean).join(", ") || "STEM";
+
+  // Compact prompt — every token in the request is billed, so keep it tight.
+  // The system instruction is short and purely structural; all context goes in
+  // the user turn so the model has one focused input to parse.
+  const prompt =
+    `${context}. ` +
+    `${count} ${isWeekly ? "weekly" : "monthly"} RPG missions XP ${xpRange}. ` +
+    `Reply JSON array only: [{"id":"1","desc":"short text","type":"habits","target":5,"xp":200}]`;
+
+  // Hard 20-second race so the promise always resolves.
+  // Mission responses are tiny JSON arrays — 256 output tokens is more than enough
+  // for 5 missions and eliminates ~768 tokens of unnecessary output budget per call.
+  const hardTimeout = new Promise((_, rej) =>
+    setTimeout(() => rej(new Error("mission_timeout")), 20000)
+  );
+
+  try {
+    const { text, tokensUsed } = await Promise.race([
+      callGemini(
+        apiKey,
+        [{ role: "user", content: prompt }],
+        "JSON array only. No markdown. No explanation.",
+        false,
+        signal,
+        256,  // missions are small — cap output tokens to save budget
+        true, // background = true: yields to interactive calls (chat, gacha)
+      ),
+      hardTimeout,
+    ]);
+    if (trackTokens && tokensUsed) trackTokens(tokensUsed);
+
+    const stripped = text.replace(/```[\w]*\n?/g, "").trim();
+    const match = stripped.match(/\[[\s\S]*\]/);
+    if (!match) return [];
+    let parsed;
+    try {
+      parsed = JSON.parse(match[0]);
+    } catch {
+      // Return null to signal parse failure (distinct from "empty result").
+      return null;
+    }
+    if (!Array.isArray(parsed) || !parsed.length) return [];
+    // Prototype-pollution guard — mirrors every other JSON parse site in the codebase.
+    if (!isSafeSyncValue(parsed)) return [];
+
+    return parsed.slice(0, count).map((m, i) => ({
+      id: `${period}_ai_${i}_${Date.now()}`,
+      // eslint-disable-next-line no-control-regex
+      desc: typeof m.desc === "string" ? m.desc.replace(/[\u0000-\u001F\u007F-\u009F]/g, "").replace(/[<>"'`&]/g, "").slice(0, 200) : "Complete the mission",
+      type: ["habits","session","task","streak","custom"].includes(m.type) ? m.type : "custom",
+      target: typeof m.target === "number" ? Math.min(Math.max(1, Math.round(m.target)), 100) : 1,
+      xp: typeof m.xp === "number" ? Math.min(Math.max(50, Math.round(m.xp)), 2000) : 200,
+      done: false,
+      ai: true,
+    }));
+  } catch (err) {
+    // Re-throw abort and rate-limit errors so tryGenerate can handle them
+    // correctly — abort should not advance the date key, and 429 should not
+    // either (so the next session retries rather than showing empty missions forever).
+    if (err?.name === "AbortError") throw err;
+    if (err?.message?.includes("429")) throw err;
+    if (err instanceof RateLimitedError) throw err;  // treat same as 429 — back off and retry next session
+    return [];
+  }
+}
 
 // Components
 import Onboarding, { GeminiKeySetupScreen } from "./Onboarding";
@@ -442,6 +540,126 @@ export default function App() {
     });
   }, [profile?.geminiKey, setState]);
 
+  useEffect(() => {
+    if (!profile) return;
+    const resetMissions = () => setState((s) => {
+      const t = localDateFromUTC();
+      if (s.lastMissionDate === t) return s;
+      return { ...s, dailyMissions: [...MISSION_DEFS], lastMissionDate: t };
+    });
+    resetMissions();
+    const id = setInterval(resetMissions, 30_000);
+    return () => clearInterval(id);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [!!profile, setState]);
+
+  // ── Weekly & Monthly AI missions ───────────────────────────
+  // Session-persistent guards — survive page reload within the same browser session.
+  // Using sessionStorage means a refresh won't re-fire all background AI calls and
+  // blow the free-tier RPM limit. Keys are namespaced by period so a new week/month
+  // automatically gets a fresh attempt.
+  const missionAttemptedRef = useRef({ weekly: false, monthly: false, _seeded: false });
+  const missionGenRef = useRef({ weekly: false, monthly: false });
+  if (!missionAttemptedRef.current._seeded) {
+    try {
+      missionAttemptedRef.current.weekly  = sessionStorage.getItem(`ritmol_mission_attempted_weekly_${localWeekKey()}`)  === "1";
+      missionAttemptedRef.current.monthly = sessionStorage.getItem(`ritmol_mission_attempted_monthly_${localMonthKey()}`) === "1";
+    } catch { /* sessionStorage unavailable */ }
+    missionAttemptedRef.current._seeded = true;
+  }
+
+  useEffect(() => {
+    if (!profile || !apiKey) return;
+
+    const wk = localWeekKey();
+    const mo = localMonthKey();
+    const abortControllers = { weekly: new AbortController(), monthly: new AbortController() };
+
+    function tryGenerate(period) {
+      const key     = period === "weekly" ? "weeklyMissions"         : "monthlyMissions";
+      const dateKey = period === "weekly" ? "lastWeeklyMissionDate"  : "lastMonthlyMissionDate";
+      const currentPeriodKey = period === "weekly" ? wk : mo;
+
+      // Already in-flight or already attempted this session — never retry on 429
+      if (missionGenRef.current[period] || missionAttemptedRef.current[period]) return;
+
+      // Read current values directly from state (closure is fresh on each effect run)
+      const currentMissions = period === "weekly" ? state?.weeklyMissions : state?.monthlyMissions;
+      const currentDateKey  = period === "weekly" ? state?.lastWeeklyMissionDate : state?.lastMonthlyMissionDate;
+
+      // Already have valid missions for this period — skip
+      if (currentDateKey === currentPeriodKey && Array.isArray(currentMissions) && currentMissions.length > 0) return;
+
+      // Skip if token budget exhausted
+      const usage = state?.tokenUsage;
+      if (usage && usage.date === todayUTC() && usage.tokens >= DAILY_TOKEN_LIMIT) return;
+
+      // Mark attempted immediately — before the async call — so no re-render can sneak in a second call.
+      // Also persist to sessionStorage so a page reload within the same session doesn't re-fire.
+      missionAttemptedRef.current[period] = true;
+      missionGenRef.current[period] = true;
+      try {
+        sessionStorage.setItem(`ritmol_mission_attempted_${period}_${currentPeriodKey}`, "1");
+      } catch { /* sessionStorage unavailable */ }
+
+      if (typeof navigator !== "undefined" && navigator.onLine === false) {
+        missionAttemptedRef.current[period] = false;
+        missionGenRef.current[period] = false;
+        try { sessionStorage.removeItem(`ritmol_mission_attempted_${period}_${currentPeriodKey}`); } catch { /* ignore */ }
+        return;
+      }
+
+      generateAiMissions(apiKey, profile, period, trackTokens, abortControllers[period].signal)
+        .then((missions) => {
+          if (missions === null) {
+            // Parse failure — write empty array but do NOT advance the date key
+            // so the next app load retries generation.
+            setState((s) => ({ ...s, [key]: [] }));
+            return;
+          }
+          setState((s) => ({
+            ...s,
+            [key]: Array.isArray(missions) && missions.length ? missions : [],
+            [dateKey]: currentPeriodKey,
+          }));
+        })
+        .catch((err) => {
+          // On abort (effect cleanup) or 429 (rate limit): clear the attempted flag
+          // so the next session can retry, and do NOT advance the date key.
+          const isAbort = err?.name === "AbortError";
+          const isRateLimit = err?.message?.includes("429") || err instanceof RateLimitedError;
+          if (isAbort || isRateLimit) {
+            missionAttemptedRef.current[period] = false;
+            try { sessionStorage.removeItem(`ritmol_mission_attempted_${period}_${currentPeriodKey}`); } catch { /* ignore */ }
+            // On 429 specifically, write [] so the UI shows "no missions" this session
+            // rather than a permanent spinner, but leave dateKey unset so next load retries.
+            if (isRateLimit) setState((s) => ({ ...s, [key]: [] }));
+            return;
+          }
+          // Other errors: write [] so the UI shows "no missions" instead of spinning forever.
+          // Do NOT change the date key on failure — next app load can retry.
+          setState((s) => ({ ...s, [key]: [] }));
+        })
+        .finally(() => { missionGenRef.current[period] = false; });
+    }
+
+    tryGenerate("weekly");
+    // Stagger monthly by 20 s — gives the weekly call and dynamic-costs calls
+    // time to clear the queue before monthly fires. The previous 8 s gap was too tight
+    // when multiple other background calls were also starting up simultaneously,
+    // causing back-to-back requests that triggered 429s on free-tier keys.
+    const monthlyTimer = setTimeout(() => tryGenerate("monthly"), 20000);
+    return () => {
+      clearTimeout(monthlyTimer);
+      abortControllers.weekly.abort();
+      abortControllers.monthly.abort();
+    };
+  // Only re-run when profile or apiKey first becomes available — never on state changes.
+  // profile.name is intentionally omitted: a name change does not warrant new missions,
+  // and including it caused spurious re-runs that fired duplicate API calls.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [!!profile, !!apiKey]);
+
   // ── Daily Google Calendar auto-sync ──────────────────────────
   // Fires once per day when the user has already connected GCal.
   // Uses a silent token request (prompt: "") so no popup appears —
@@ -678,7 +896,7 @@ export default function App() {
             </div>
           </div>
         )}
-        {banner && <Banner banner={banner} onClose={() => setBanner(null)} />}
+        {banner && <Banner banner={banner} onClose={() => setBanner(null)} theme={theme} />}
         {IS_DEV && (
           <div style={{ background: "#000", color: "#fff", fontSize: "16px", letterSpacing: "2px", padding: "8px 12px", textAlign: "center", borderBottom: "2px solid #fff", fontFamily: "'Share Tech Mono', monospace", fontWeight: "bold" }}>
             DEV MODE — separate localStorage (ritmol_dev_*)
@@ -693,7 +911,7 @@ export default function App() {
           {tab === "profile"  && <ErrorBoundary key="profile"><ProfileTab /></ErrorBoundary>}
           {tab === "settings" && <ErrorBoundary key="settings"><SettingsTab /></ErrorBoundary>}
         </div>
-        <BottomNav tab={tab} setTab={setTab} />
+        <BottomNav tab={tab} setTab={setTab} theme={theme} />
         {state.tutorialDone === false && !showOnboarding && (
           <TutorialOverlay
             tab={tab}
