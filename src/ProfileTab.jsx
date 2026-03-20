@@ -598,9 +598,9 @@ function CalendarPicker({ calendars, initialSelected, onConfirm, onCancel }) {
                 padding: "10px", border: `2px solid ${checked ? "#fff" : "#444"}`,
                 cursor: "pointer", background: checked ? "rgba(255,255,255,0.05)" : "transparent",
               }}>
-              {/* Colour dot from Google Calendar */}
+              {/* Calendar colour square indicator */}
               <span style={{
-                width: "12px", height: "12px", borderRadius: "50%", flexShrink: 0,
+                width: "12px", height: "12px", flexShrink: 0,
                 background: cal.color || "#fff",
                 border: "1px solid rgba(255,255,255,0.3)",
               }} />

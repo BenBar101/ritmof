@@ -4,36 +4,65 @@ import { localDateFromUTC } from "./utils/db";
 import { primaryBtn } from "./Onboarding";
 import { sanitizeForPrompt } from "./api/systemPrompt";
 
+// ── Repeat period helpers ─────────────────────────────────────
+export function repeatPeriodKey(repeat) {
+  const d = new Date();
+  if (repeat === "daily") {
+    return localDateFromUTC();
+  }
+  if (repeat === "weekly") {
+    const jan4 = new Date(d.getFullYear(), 0, 4);
+    const dayOfYear = Math.floor((d - new Date(d.getFullYear(), 0, 0)) / 86400000);
+    const week = Math.ceil((dayOfYear + jan4.getDay()) / 7);
+    return `${d.getFullYear()}-W${String(week).padStart(2, "0")}`;
+  }
+  if (repeat === "monthly") {
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+  }
+  return null;
+}
+
+const REPEAT_LABELS = {
+  none:    null,
+  daily:   "↻ DAILY",
+  weekly:  "↻ WEEKLY",
+  monthly: "↻ MONTHLY",
+};
+
 export default function TasksTab() {
   const { state, setState, awardXP, showBanner, checkMissions, actionLocksRef } = useAppContext();
 
-  // ── Add-task form state ──────────────────────────────────────
   const [newTask, setNewTask]         = useState("");
   const [newPriority, setNewPriority] = useState("medium");
   const [newDue, setNewDue]           = useState("");
   const [newGoalId, setNewGoalId]     = useState("");
+  const [newRepeat, setNewRepeat]     = useState("none");
 
-  // ── Goals tab state ─────────────────────────────────────────
   const [showGoalForm, setShowGoalForm] = useState(false);
   const [goalForm, setGoalForm]         = useState({ title: "", course: "", due: "" });
   const [activeSection, setActiveSection] = useState("tasks");
 
-  // ── Derived lists ────────────────────────────────────────────
   const allTasks    = state.tasks  || [];
   const allGoals    = state.goals  || [];
   const activeGoals = allGoals.filter((g) => !g.done);
-  const activeTasks = allTasks.filter((t) => !t.done);
 
-  // Timed = has a due date, sorted closest first
+  // A repeating task appears active if: not done, OR done in a prior period
+  const activeTasks = allTasks.filter((t) => {
+    if (!t.done) return true;
+    if (t.repeat && t.repeat !== "none") {
+      return t.lastDonePeriod !== repeatPeriodKey(t.repeat);
+    }
+    return false;
+  });
+
   const timedTasks = activeTasks
     .filter((t) => t.due)
     .sort((a, b) => (a.due < b.due ? -1 : a.due > b.due ? 1 : 0));
 
-  // Untimed = no due date
-  const untimedTasks = activeTasks.filter((t) => !t.due);
-  const doneTasks    = allTasks.filter((t) => t.done);
+  const repeatingTasks = activeTasks.filter((t) => !t.due && t.repeat && t.repeat !== "none");
+  const untimedTasks   = activeTasks.filter((t) => !t.due && (!t.repeat || t.repeat === "none"));
+  const doneTasks      = allTasks.filter((t) => t.done && (!t.repeat || t.repeat === "none"));
 
-  // ── Helpers ──────────────────────────────────────────────────
   function sanitizeText(str, maxLen = 300) {
     return sanitizeForPrompt(str ?? "", maxLen);
   }
@@ -52,7 +81,6 @@ export default function TasksTab() {
     return { label: daysLeft + "d left", urgent: false };
   }
 
-  // ── Task actions ─────────────────────────────────────────────
   function addTask() {
     if (!newTask.trim()) return;
     const safeText = sanitizeText(newTask, 500);
@@ -61,35 +89,69 @@ export default function TasksTab() {
     if (total >= 480 && total < 500) showBanner("Approaching task capacity (500). Consider clearing completed tasks.", "warning");
     if (total >= 500) { showBanner("Task limit reached (500). Clear completed tasks first.", "alert"); return; }
 
-    const safeDue    = typeof newDue === "string" && /^\d{4}-\d{2}-\d{2}$/.test(newDue) ? newDue : null;
-    const safeGoalId = newGoalId && allGoals.some((g) => g.id === newGoalId) ? newGoalId : null;
+    const safeDue    = newRepeat === "none" && typeof newDue === "string" && /^\d{4}-\d{2}-\d{2}$/.test(newDue) ? newDue : null;
+    const safeGoalId = newRepeat === "none" && newGoalId && allGoals.some((g) => g.id === newGoalId) ? newGoalId : null;
+    const safeRepeat = ["none", "daily", "weekly", "monthly"].includes(newRepeat) ? newRepeat : "none";
 
     setState((s) => ({
       ...s,
       tasks: [
         ...(s.tasks || []),
-        { id: "t_" + crypto.randomUUID(), text: safeText, priority: newPriority, done: false, addedBy: "user", due: safeDue, goalId: safeGoalId },
+        {
+          id: "t_" + crypto.randomUUID(),
+          text: safeText,
+          priority: newPriority,
+          done: false,
+          addedBy: "user",
+          due: safeDue,
+          goalId: safeGoalId,
+          repeat: safeRepeat,
+          lastDonePeriod: null,
+        },
       ],
     }));
     setNewTask("");
     setNewDue("");
     setNewGoalId("");
+    setNewRepeat("none");
   }
 
   function completeTask(id, event) {
     if (actionLocksRef.current.has(id)) return;
     actionLocksRef.current.add(id);
     setTimeout(() => actionLocksRef.current.delete(id), 500);
-    const alreadyDone = allTasks.find((t) => t.id === id)?.done ?? true;
-    if (alreadyDone) return;
+
+    const task = allTasks.find((t) => t.id === id);
+    if (!task) return;
+
+    const isRepeating    = task.repeat && task.repeat !== "none";
+    const currentPeriod  = isRepeating ? repeatPeriodKey(task.repeat) : null;
+
+    // Guard: already completed this period
+    if (task.done && isRepeating && task.lastDonePeriod === currentPeriod) return;
+    if (task.done && !isRepeating) return;
+
     setState((s) => {
       const doneDate = localDateFromUTC();
-      return { ...s, tasks: s.tasks.map((t) => (t.id === id ? { ...t, done: true, doneDate } : t)) };
+      return {
+        ...s,
+        tasks: s.tasks.map((t) => {
+          if (t.id !== id) return t;
+          return {
+            ...t,
+            done: true,
+            doneDate,
+            ...(isRepeating ? { lastDonePeriod: currentPeriod } : {}),
+          };
+        }),
+      };
     });
+
     queueMicrotask(() => {
       awardXP(25, event);
       checkMissions("task");
-      showBanner("Task complete. +25 XP", "success");
+      const repeatSuffix = isRepeating ? ` · Resets ${task.repeat}` : "";
+      showBanner(`Task complete. +25 XP${repeatSuffix}`, "success");
     });
   }
 
@@ -97,7 +159,6 @@ export default function TasksTab() {
     setState((s) => ({ ...s, tasks: s.tasks.filter((t) => t.id !== id) }));
   }
 
-  // ── Goal actions ─────────────────────────────────────────────
   function addGoal() {
     if (!goalForm.title) return;
     const safeTitle  = sanitizeText(goalForm.title, 200);
@@ -138,7 +199,6 @@ export default function TasksTab() {
     });
   }
 
-  // ── Shared styles ────────────────────────────────────────────
   const mono = "'Share Tech Mono', monospace";
   const inputStyle = { background: "#000", border: "2px solid #fff", color: "#fff", padding: "12px", fontFamily: mono, fontSize: "16px", outline: "none" };
   const priorityLabel = { low: "▁", medium: "▃", high: "█" };
@@ -158,21 +218,45 @@ export default function TasksTab() {
   }
 
   function TaskCard({ task }) {
-    const badge  = dueBadge(task.due);
-    const linked = task.goalId ? goalTitle(task.goalId) : null;
+    const badge       = dueBadge(task.due);
+    const linked      = task.goalId ? goalTitle(task.goalId) : null;
+    const repeatLabel = REPEAT_LABELS[task.repeat];
+    const doneThisPeriod = task.done && task.repeat && task.repeat !== "none" &&
+      task.lastDonePeriod === repeatPeriodKey(task.repeat);
+
     return (
-      <div className="system-frame" style={{ padding: "14px 16px", marginBottom: "6px", display: "flex", alignItems: "center", gap: "12px" }}>
-        <button type="button" onClick={(e) => completeTask(task.id, e)} data-testid="complete-task"
-          style={{ color: "#fff", fontSize: "20px", background: "none", border: "2px solid #fff", width: "48px", height: "48px", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-          ○
+      <div className="system-frame" style={{
+        padding: "14px 16px", marginBottom: "6px", display: "flex", alignItems: "center", gap: "12px",
+        opacity: doneThisPeriod ? 0.55 : 1,
+      }}>
+        <button
+          type="button"
+          onClick={(e) => !doneThisPeriod && completeTask(task.id, e)}
+          data-testid="complete-task"
+          style={{
+            color: "#fff", fontSize: "20px",
+            background: doneThisPeriod ? "#fff" : "none",
+            border: "2px solid #fff", width: "48px", height: "48px",
+            display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
+            cursor: doneThisPeriod ? "default" : "pointer",
+          }}
+        >
+          {doneThisPeriod ? <span style={{ color: "#000" }}>✓</span> : "○"}
         </button>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: "17px", color: "#fff", lineHeight: "1.5" }}>{task.text}</div>
+          <div style={{ fontSize: "17px", color: "#fff", lineHeight: "1.5", textDecoration: doneThisPeriod ? "line-through" : "none" }}>
+            {task.text}
+          </div>
           <div style={{ fontSize: "13px", color: "#fff", marginTop: "4px", display: "flex", flexWrap: "wrap", gap: "8px", alignItems: "center" }}>
             <span>{priorityLabel[task.priority]} {task.priority?.toUpperCase()}</span>
             {badge && (
               <span className="status-badge" data-urgent={badge.urgent ? "true" : undefined}>
                 {badge.label}
+              </span>
+            )}
+            {repeatLabel && (
+              <span style={{ fontSize: "11px", letterSpacing: "1px", opacity: doneThisPeriod ? 0.5 : 0.8 }}>
+                {repeatLabel}{doneThisPeriod ? " · DONE" : ""}
               </span>
             )}
             {linked && (
@@ -188,14 +272,13 @@ export default function TasksTab() {
     );
   }
 
-  // ── Render ───────────────────────────────────────────────────
   return (
     <div style={{ padding: "16px", display: "flex", flexDirection: "column", gap: "16px" }}>
 
       {/* Header */}
       <div style={{ fontFamily: mono, borderBottom: "4px double #fff", paddingBottom: "16px" }}>
         <div className="system-header" style={{ fontSize: "13px", marginBottom: "4px" }}>
-          <span>[ MISSION CONTROL ]</span>
+          <span>[ TASK CONTROL ]</span>
           <div className="system-divider" />
         </div>
         <div style={{ fontSize: "28px", fontWeight: "bold", marginTop: "4px" }}>TASKS & GOALS</div>
@@ -221,6 +304,7 @@ export default function TasksTab() {
         <>
           {/* Add task form */}
           <div className="system-frame" style={{ padding: "14px", marginBottom: 0, display: "flex", flexDirection: "column", gap: "10px" }}>
+
             {/* Row 1: text + priority + add */}
             <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
               <input
@@ -242,31 +326,69 @@ export default function TasksTab() {
               </div>
             </div>
 
-            {/* Row 2: due date + goal link */}
-            <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
-              <div style={{ display: "flex", flexDirection: "column", gap: "3px", flex: "1 1 150px" }}>
-                <label style={{ fontFamily: mono, fontSize: "11px", color: "#fff", letterSpacing: "1px", opacity: 0.6 }}>
-                  DUE DATE — optional (makes it timed)
-                </label>
-                <input type="date" value={newDue} onChange={(e) => setNewDue(e.target.value)}
-                  style={{ ...inputStyle, fontSize: "14px" }} />
+            {/* Row 2: repeat selector */}
+            <div style={{ display: "flex", flexDirection: "column", gap: "3px" }}>
+              <label style={{ fontFamily: mono, fontSize: "11px", color: "#fff", letterSpacing: "1px", opacity: 0.6 }}>
+                REPEAT — optional
+              </label>
+              <div style={{ display: "flex", gap: "6px" }}>
+                {["none", "daily", "weekly", "monthly"].map((r) => (
+                  <button
+                    key={r}
+                    type="button"
+                    onClick={() => setNewRepeat(r)}
+                    style={{
+                      flex: 1, padding: "8px 4px",
+                      background: newRepeat === r ? "#fff" : "transparent",
+                      color: newRepeat === r ? "#000" : "#fff",
+                      border: "2px solid #fff", fontFamily: mono,
+                      fontSize: "12px", letterSpacing: "1px", cursor: "pointer",
+                      minHeight: "40px", fontWeight: newRepeat === r ? "bold" : "normal",
+                    }}
+                  >
+                    {r === "none" ? "—" : r.toUpperCase()}
+                  </button>
+                ))}
               </div>
+            </div>
 
-              {activeGoals.length > 0 && (
+            {/* Row 3: due date + goal link — only shown for non-repeating tasks */}
+            {newRepeat === "none" && (
+              <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
                 <div style={{ display: "flex", flexDirection: "column", gap: "3px", flex: "1 1 150px" }}>
                   <label style={{ fontFamily: mono, fontSize: "11px", color: "#fff", letterSpacing: "1px", opacity: 0.6 }}>
-                    LINK TO GOAL — optional
+                    DUE DATE — optional (makes it timed)
                   </label>
-                  <select value={newGoalId} onChange={(e) => setNewGoalId(e.target.value)} style={{ ...inputStyle, fontSize: "14px" }}>
-                    <option value="">— none —</option>
-                    {activeGoals.map((g) => (
-                      <option key={g.id} value={g.id}>{g.title.length > 38 ? g.title.slice(0, 36) + "…" : g.title}</option>
-                    ))}
-                  </select>
+                  <input type="date" value={newDue} onChange={(e) => setNewDue(e.target.value)}
+                    style={{ ...inputStyle, fontSize: "14px" }} />
                 </div>
-              )}
-            </div>
+
+                {activeGoals.length > 0 && (
+                  <div style={{ display: "flex", flexDirection: "column", gap: "3px", flex: "1 1 150px" }}>
+                    <label style={{ fontFamily: mono, fontSize: "11px", color: "#fff", letterSpacing: "1px", opacity: 0.6 }}>
+                      LINK TO GOAL — optional
+                    </label>
+                    <select value={newGoalId} onChange={(e) => setNewGoalId(e.target.value)} style={{ ...inputStyle, fontSize: "14px" }}>
+                      <option value="">— none —</option>
+                      {activeGoals.map((g) => (
+                        <option key={g.id} value={g.id}>{g.title.length > 38 ? g.title.slice(0, 36) + "…" : g.title}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
+
+          {/* Repeating tasks */}
+          {repeatingTasks.length > 0 && (
+            <div>
+              <SubHeader count={repeatingTasks.length}>[ REPEATING ]</SubHeader>
+              <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                {repeatingTasks.map((task) => <TaskCard key={task.id} task={task} />)}
+              </div>
+            </div>
+          )}
 
           {/* Timed tasks */}
           <div>
@@ -282,12 +404,12 @@ export default function TasksTab() {
             )}
           </div>
 
-          {/* Untimed / open tasks */}
+          {/* Open tasks */}
           <div>
             <SubHeader count={untimedTasks.length}>[ OPEN TASKS ]</SubHeader>
             {untimedTasks.length === 0 ? (
               <div style={{ fontFamily: mono, fontSize: "13px", color: "#fff", padding: "16px", border: "1px solid #fff", textAlign: "center" }}>
-                No open tasks. RITMOL will assign missions.
+                No open tasks.
               </div>
             ) : (
               <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
@@ -296,16 +418,19 @@ export default function TasksTab() {
             )}
           </div>
 
-          {/* Completed */}
+          {/* Completed (non-repeating only) */}
           {doneTasks.length > 0 && (
             <div>
               <div style={{ fontFamily: mono, fontSize: "13px", color: "#fff", letterSpacing: "2px", marginBottom: "10px", borderTop: "2px solid #fff", paddingTop: "12px", fontWeight: "bold" }}>
                 [ COMPLETED ]
               </div>
               <button type="button"
-                onClick={() => setState((s) => ({ ...s, tasks: (s.tasks || []).filter((t) => !t.done) }))}
+                onClick={() => setState((s) => ({
+                  ...s,
+                  tasks: (s.tasks || []).filter((t) => !t.done || (t.repeat && t.repeat !== "none")),
+                }))}
                 style={{ marginBottom: "12px", padding: "12px 16px", border: "2px solid #fff", background: "transparent", color: "#fff", fontFamily: mono, fontSize: "14px", letterSpacing: "1px", cursor: "pointer", minHeight: "48px" }}>
-                CLEAR ALL COMPLETED ({doneTasks.length})
+                CLEAR COMPLETED ({doneTasks.length})
               </button>
               {doneTasks.slice(-5).map((task) => (
                 <div key={task.id} style={{ padding: "12px 0", borderBottom: "2px solid #fff", fontFamily: mono, fontSize: "16px", color: "#fff", textDecoration: "line-through", display: "flex", justifyContent: "space-between", alignItems: "center" }}>

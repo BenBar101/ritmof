@@ -380,7 +380,56 @@ const GLOBAL_CSS = `
     border-bottom: none;
   }
 
-  @media (max-width: 380px) {
+  /* ── Light theme — hardcoded inline border colour fixes ──────
+     Many components use inline style={{ border: "Xpx solid #fff" }} or
+     borderBottom/borderTop with #fff. The selectors below override those
+     so all lines invert correctly in light mode.
+     We target the attribute-value substrings Vite/React renders verbatim. ── */
+
+  /* Section header double-rule (4px double #fff) */
+  html[data-theme="light"] [style*="4px double #fff"],
+  html[data-theme="light"] [style*="4px double rgb(255, 255, 255)"] {
+    border-color: #000 !important;
+  }
+
+  /* Generic solid white borders (2px, 1px, 3px) */
+  html[data-theme="light"] [style*="border: 2px solid #fff"],
+  html[data-theme="light"] [style*="border: 1px solid #fff"],
+  html[data-theme="light"] [style*="border: 3px solid #fff"],
+  html[data-theme="light"] [style*="border:2px solid #fff"],
+  html[data-theme="light"] [style*="border:1px solid #fff"],
+  html[data-theme="light"] [style*="border:3px solid #fff"] {
+    border-color: #000 !important;
+  }
+
+  /* borderBottom / borderTop inline */
+  html[data-theme="light"] [style*="borderBottom: 2px solid #fff"],
+  html[data-theme="light"] [style*="border-bottom: 2px solid #fff"],
+  html[data-theme="light"] [style*="borderBottom: 1px solid #fff"],
+  html[data-theme="light"] [style*="border-bottom: 1px solid #fff"],
+  html[data-theme="light"] [style*="borderTop: 2px solid #fff"],
+  html[data-theme="light"] [style*="border-top: 2px solid #fff"] {
+    border-color: #000 !important;
+  }
+
+  /* Habit category heading underline and habit card border */
+  html[data-theme="light"] [style*="borderBottom: 2px solid rgb(255"],
+  html[data-theme="light"] [style*="border: 2px solid rgb(255, 255, 255)"],
+  html[data-theme="light"] [style*="border: 3px solid rgb(255, 255, 255)"] {
+    border-color: #000 !important;
+  }
+
+  /* Completed task list separator */
+  html[data-theme="light"] [style*="borderBottom: 2px solid #fff"] {
+    border-color: #000 !important;
+  }
+
+  /* Goals section card backgrounds */
+  html[data-theme="light"] [style*="background: #000"][style*="border: 2px solid #fff"],
+  html[data-theme="light"] [style*="background:#000"][style*="border: 2px solid #fff"] {
+    background: #fff !important;
+    border-color: #000 !important;
+  }
     * { letter-spacing: 0 !important; }
     [data-card] { padding: 10px !important; }
   }

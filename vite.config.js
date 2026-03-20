@@ -26,6 +26,17 @@ const CACHE_VERSION = `v${Date.now()}`;
 
 export default defineConfig({
   base,
+  // ── Dev-server security headers ───────────────────────────────────────────
+  // frame-ancestors is a CSP directive that MUST be delivered as an HTTP
+  // response header — browsers ignore it when set via <meta http-equiv>.
+  // These headers apply during `vite dev`. For production (GitHub Pages) the
+  // equivalent lives in public/_headers (Netlify/GH Pages CDN header file).
+  server: {
+    headers: {
+      "Content-Security-Policy": "frame-ancestors 'none'",
+      "X-Frame-Options": "DENY",
+    },
+  },
   define: {
     "self.__RITMOL_CACHE_VERSION__": JSON.stringify(CACHE_VERSION),
   },
