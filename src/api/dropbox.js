@@ -527,25 +527,17 @@ export async function ensureFolderExists() {
   });
 
   if (res.ok) return;
-  // 409: Dropbox returns this for create_folder_v2 when the folder already exists.
-  // All 409 variants (path/conflict/folder, path/conflict/file, path/conflict/other,
-  // or bare path/.tag=path) mean the destination exists — safe to continue.
-  // We also fall through for any unexpected 409 body rather than hard-failing the
-  // push, because the upload step will produce a clearer error if truly needed.
-  if (res.status === 409) {
-    // Consume the body to avoid browser warnings; ignore the content.
-    await res.json().catch(() => ({}));
-    return;
-  }
-  // 400: can be a bad-auth error OR a path problem on some Dropbox plan types.
+  // 409 always means the folder already exists in create_folder_v2 — not an error.
+  // Consume and discard the body to avoid browser warnings, then continue.
+  if (res.status === 409) { await res.json().catch(() => {}); return; }
+  // 400 can be a path issue (folder exists under different case) or bad auth.
   if (res.status === 400) {
     const err = await res.json().catch(() => ({}));
-    const tag = err?.error?.[".tag"];
-    if (tag === "path" || tag === "path_write") return;
+    if (err?.error?.[".tag"] === "path" || err?.error?.[".tag"] === "path_write") return;
     throw new Error("DROPBOX_TOKEN_EXPIRED");
   }
   if (res.status === 401) throw new Error("DROPBOX_TOKEN_EXPIRED");
-  // Any other non-OK status: don't hard-fail — let the upload step surface the error.
+  // Any other status: don't hard-fail — let the upload step surface a clearer error.
   return;
   } catch (e) {
     if (e?.name === "AbortError" || e?.name === "TimeoutError") {

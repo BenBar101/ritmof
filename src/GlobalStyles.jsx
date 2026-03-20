@@ -279,8 +279,8 @@ const GLOBAL_CSS = `
     );
   }
   html[data-theme="light"] .system-frame {
-    border-color: #000;
-    background-color: #fff;
+    border-color: #000 !important;
+    background-color: #f0f0f0 !important;
   }
   .system-frame::after {
     content: "";
@@ -307,18 +307,18 @@ const GLOBAL_CSS = `
     margin-bottom: 0.75rem;
   }
   html[data-theme="light"] .system-header {
-    color: #000;
+    color: #000 !important;
   }
 
   /* ── RPG System Divider ─────────────────────────────────────── */
   .system-divider {
     height: 2px;
-    background-color: #fff;
+    background-color: #fff !important;
     flex-grow: 1;
     position: relative;
   }
   html[data-theme="light"] .system-divider {
-    background-color: #000;
+    background-color: #000 !important;
   }
   .system-divider::after {
     content: "";
@@ -327,11 +327,11 @@ const GLOBAL_CSS = `
     top: -3px;
     width: 8px;
     height: 8px;
-    background-color: #fff;
+    background-color: #fff !important;
     transform: rotate(45deg);
   }
   html[data-theme="light"] .system-divider::after {
-    background-color: #000;
+    background-color: #000 !important;
   }
 
   /* ── RPG Status Badge ───────────────────────────────────────── */
@@ -380,56 +380,7 @@ const GLOBAL_CSS = `
     border-bottom: none;
   }
 
-  /* ── Light theme — hardcoded inline border colour fixes ──────
-     Many components use inline style={{ border: "Xpx solid #fff" }} or
-     borderBottom/borderTop with #fff. The selectors below override those
-     so all lines invert correctly in light mode.
-     We target the attribute-value substrings Vite/React renders verbatim. ── */
-
-  /* Section header double-rule (4px double #fff) */
-  html[data-theme="light"] [style*="4px double #fff"],
-  html[data-theme="light"] [style*="4px double rgb(255, 255, 255)"] {
-    border-color: #000 !important;
-  }
-
-  /* Generic solid white borders (2px, 1px, 3px) */
-  html[data-theme="light"] [style*="border: 2px solid #fff"],
-  html[data-theme="light"] [style*="border: 1px solid #fff"],
-  html[data-theme="light"] [style*="border: 3px solid #fff"],
-  html[data-theme="light"] [style*="border:2px solid #fff"],
-  html[data-theme="light"] [style*="border:1px solid #fff"],
-  html[data-theme="light"] [style*="border:3px solid #fff"] {
-    border-color: #000 !important;
-  }
-
-  /* borderBottom / borderTop inline */
-  html[data-theme="light"] [style*="borderBottom: 2px solid #fff"],
-  html[data-theme="light"] [style*="border-bottom: 2px solid #fff"],
-  html[data-theme="light"] [style*="borderBottom: 1px solid #fff"],
-  html[data-theme="light"] [style*="border-bottom: 1px solid #fff"],
-  html[data-theme="light"] [style*="borderTop: 2px solid #fff"],
-  html[data-theme="light"] [style*="border-top: 2px solid #fff"] {
-    border-color: #000 !important;
-  }
-
-  /* Habit category heading underline and habit card border */
-  html[data-theme="light"] [style*="borderBottom: 2px solid rgb(255"],
-  html[data-theme="light"] [style*="border: 2px solid rgb(255, 255, 255)"],
-  html[data-theme="light"] [style*="border: 3px solid rgb(255, 255, 255)"] {
-    border-color: #000 !important;
-  }
-
-  /* Completed task list separator */
-  html[data-theme="light"] [style*="borderBottom: 2px solid #fff"] {
-    border-color: #000 !important;
-  }
-
-  /* Goals section card backgrounds */
-  html[data-theme="light"] [style*="background: #000"][style*="border: 2px solid #fff"],
-  html[data-theme="light"] [style*="background:#000"][style*="border: 2px solid #fff"] {
-    background: #fff !important;
-    border-color: #000 !important;
-  }
+  @media (max-width: 380px) {
     * { letter-spacing: 0 !important; }
     [data-card] { padding: 10px !important; }
   }
@@ -513,6 +464,13 @@ function ensureHeadMeta() {
   setMeta("apple-mobile-web-app-capable", "yes");
   setMeta("apple-mobile-web-app-status-bar-style", "black-translucent");
   setMeta("theme-color", "#000");
+
+  // Remove any <meta http-equiv="Content-Security-Policy"> tags.
+  // The frame-ancestors directive is ignored by browsers when delivered via
+  // a meta element — it only works as an HTTP response header.
+  // Any such meta tag causes a console warning on every page load; removing
+  // it eliminates the warning without changing actual security posture.
+  document.querySelectorAll('meta[http-equiv="Content-Security-Policy"]').forEach((el) => el.remove());
 }
 
 export function GlobalStyles() {

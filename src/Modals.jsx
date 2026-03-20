@@ -5,11 +5,15 @@ import GeometricCorners from "./GeometricCorners";
 import { primaryBtn, inputStyle } from "./Onboarding";
 import { sanitizeForDisplay } from "./utils/db";
 
-export function Modal({ children, onClose }) {
+export function Modal({ children, onClose, theme = "dark" }) {
+  const fg  = theme === "light" ? "#000" : "#fff";
+  const bg  = theme === "light" ? "#f0f0f0" : "#000";
+  const dim = theme === "light" ? "#555" : "#aaa";
+
   return (
     <div style={{
       position: "fixed", inset: 0, zIndex: 1000,
-      background: "#000", display: "flex",
+      background: bg, display: "flex",
       alignItems: "center", justifyContent: "center", padding: "24px",
     }} onClick={(e) => e.target === e.currentTarget && onClose()}>
       <div className="system-frame" style={{ width: "100%", maxWidth: "400px", marginBottom: 0 }}>
@@ -19,18 +23,22 @@ export function Modal({ children, onClose }) {
   );
 }
 
-export function DailyLoginModal({ data, onClose }) {
+export function DailyLoginModal({ data, onClose, theme = "dark" }) {
+  const fg  = theme === "light" ? "#000" : "#fff";
+  const bg  = theme === "light" ? "#f0f0f0" : "#000";
+  const dim = theme === "light" ? "#555" : "#aaa";
+
   return (
     <Modal onClose={onClose}>
       <div style={{ padding: "32px", textAlign: "center", fontFamily: "'Share Tech Mono', monospace" }}>
-        <div style={{ fontSize: "16px", color: "#fff", letterSpacing: "3px", marginBottom: "12px", fontWeight: "bold" }}>[ DAILY LOGIN ]</div>
+        <div style={{ fontSize: "16px", color: fg, letterSpacing: "3px", marginBottom: "12px", fontWeight: "bold" }}>[ DAILY LOGIN ]</div>
         <div style={{ fontSize: "48px", margin: "20px 0" }}>◈</div>
         <div style={{ fontSize: "28px", fontWeight: "bold", marginBottom: "8px" }}>+{data.xp} XP</div>
-        <div style={{ fontSize: "16px", color: "#fff", marginBottom: "20px", lineHeight: "1.5" }}>
+        <div style={{ fontSize: "16px", color: fg, marginBottom: "20px", lineHeight: "1.5" }}>
           {data.streak > 1 ? `Streak: ${data.streak} days. Pattern recognized.` : "System online. Begin."}
         </div>
         {data.streak >= 7 && (
-          <div style={{ border: "2px solid #fff", borderBottom: "4px double #fff", padding: "14px", marginBottom: "20px", fontSize: "15px", color: "#fff", fontWeight: "bold" }}>
+          <div style={{ border: `2px solid ${fg}`, borderBottom: `4px double ${fg}`, padding: "14px", marginBottom: "20px", fontSize: "15px", color: fg, fontWeight: "bold" }}>
             7-DAY STREAK BONUS ACTIVE · +50% HABIT XP
           </div>
         )}
@@ -40,7 +48,11 @@ export function DailyLoginModal({ data, onClose }) {
   );
 }
 
-export function SleepCheckinModal({ onClose, onSubmit }) {
+export function SleepCheckinModal({ onClose, onSubmit, theme = "dark" }) {
+  const fg  = theme === "light" ? "#000" : "#fff";
+  const bg  = theme === "light" ? "#f0f0f0" : "#000";
+  const dim = theme === "light" ? "#555" : "#aaa";
+
   const [hours, setHours] = useState(7);
   const [quality, setQuality] = useState(3);
   const [rested, setRested] = useState(true);
@@ -48,15 +60,15 @@ export function SleepCheckinModal({ onClose, onSubmit }) {
   return (
     <Modal onClose={onClose}>
       <div style={{ padding: "24px", fontFamily: "'Share Tech Mono', monospace" }}>
-        <div style={{ fontSize: "16px", color: "#fff", letterSpacing: "3px", marginBottom: "20px", fontWeight: "bold" }}>[ SLEEP ANALYSIS ]</div>
+        <div style={{ fontSize: "16px", color: fg, letterSpacing: "3px", marginBottom: "20px", fontWeight: "bold" }}>[ SLEEP ANALYSIS ]</div>
         <div style={{ marginBottom: "20px" }}>
-          <div style={{ fontSize: "15px", color: "#fff", marginBottom: "10px", fontWeight: "bold" }}>HOURS SLEPT</div>
+          <div style={{ fontSize: "15px", color: fg, marginBottom: "10px", fontWeight: "bold" }}>HOURS SLEPT</div>
           <input type="range" min={3} max={12} value={hours} onChange={(e) => setHours(+e.target.value)}
             style={{ width: "100%", accentColor: "#fff" }} />
           <div style={{ textAlign: "center", fontSize: "28px", marginTop: "8px", fontWeight: "bold" }}>{hours}h</div>
         </div>
         <div style={{ marginBottom: "20px" }}>
-          <div style={{ fontSize: "15px", color: "#fff", marginBottom: "10px", fontWeight: "bold" }}>QUALITY (1-5)</div>
+          <div style={{ fontSize: "15px", color: fg, marginBottom: "10px", fontWeight: "bold" }}>QUALITY (1-5)</div>
           <div style={{ display: "flex", gap: "6px" }}>
             {[1,2,3,4,5].map((q) => (
               <button
@@ -76,7 +88,7 @@ export function SleepCheckinModal({ onClose, onSubmit }) {
           </div>
         </div>
         <div style={{ marginBottom: "20px" }}>
-          <div style={{ fontSize: "15px", color: "#fff", marginBottom: "10px", fontWeight: "bold" }}>FELT RESTED?</div>
+          <div style={{ fontSize: "15px", color: fg, marginBottom: "10px", fontWeight: "bold" }}>FELT RESTED?</div>
           <div style={{ display: "flex", gap: "6px" }}>
             {[true, false].map((v) => (
               <button
@@ -101,13 +113,17 @@ export function SleepCheckinModal({ onClose, onSubmit }) {
   );
 }
 
-export function ScreenTimeModal({ period, onClose, onSubmit }) {
+export function ScreenTimeModal({ period, onClose, onSubmit, theme = "dark" }) {
+  const fg  = theme === "light" ? "#000" : "#fff";
+  const bg  = theme === "light" ? "#f0f0f0" : "#000";
+  const dim = theme === "light" ? "#555" : "#aaa";
+
   const [mins, setMins] = useState(90);
   return (
     <Modal onClose={onClose}>
       <div style={{ padding: "24px", fontFamily: "'Share Tech Mono', monospace" }}>
-        <div style={{ fontSize: "16px", color: "#fff", letterSpacing: "3px", marginBottom: "8px", fontWeight: "bold" }}>[ SCREEN TIME LOG ]</div>
-        <div style={{ fontSize: "15px", color: "#fff", marginBottom: "24px", lineHeight: "1.5" }}>
+        <div style={{ fontSize: "16px", color: fg, letterSpacing: "3px", marginBottom: "8px", fontWeight: "bold" }}>[ SCREEN TIME LOG ]</div>
+        <div style={{ fontSize: "15px", color: fg, marginBottom: "24px", lineHeight: "1.5" }}>
           {period === "afternoon" ? "Morning session complete. Report usage." : "Evening check-in. How much time on your phone?"}
         </div>
         <input type="range" min={0} max={480} step={15} value={mins} onChange={(e) => setMins(+e.target.value)}
@@ -115,7 +131,7 @@ export function ScreenTimeModal({ period, onClose, onSubmit }) {
         <div style={{ textAlign: "center", fontSize: "32px", margin: "16px 0", fontWeight: "bold" }}>
           {Math.floor(mins / 60)}h {mins % 60}m
         </div>
-        <div style={{ textAlign: "center", fontSize: "15px", color: "#fff", marginBottom: "24px", lineHeight: "1.5" }}>
+        <div style={{ textAlign: "center", fontSize: "15px", color: fg, marginBottom: "24px", lineHeight: "1.5" }}>
           {mins < 60 ? "Exemplary. Reward incoming." : mins < 120 ? "Acceptable." : mins < 240 ? "Above target. Noted." : "Hunter. This is a problem."}
         </div>
         <button type="button" onClick={() => onSubmit(mins)} style={primaryBtn}>REPORT HONESTLY</button>
@@ -124,7 +140,11 @@ export function ScreenTimeModal({ period, onClose, onSubmit }) {
   );
 }
 
-export function SessionLogModal({ onClose, onSubmit, state }) {
+export function SessionLogModal({ onClose, onSubmit, state, theme = "dark" }) {
+  const fg  = theme === "light" ? "#000" : "#fff";
+  const bg  = theme === "light" ? "#f0f0f0" : "#000";
+  const dim = theme === "light" ? "#555" : "#aaa";
+
   const [type, setType] = useState("lecture");
   const [course, setCourse] = useState("");
   const [duration, setDuration] = useState(60);
@@ -139,7 +159,7 @@ export function SessionLogModal({ onClose, onSubmit, state }) {
     <Modal onClose={onClose}>
       <div style={{ padding: "24px", fontFamily: "'Share Tech Mono', monospace", background: sStyle.background }}>
         <GeometricCorners style={sessionType.style} />
-        <div style={{ fontSize: "16px", color: "#fff", letterSpacing: "3px", marginBottom: "20px", fontWeight: "bold" }}>[ LOG STUDY SESSION ]</div>
+        <div style={{ fontSize: "16px", color: fg, letterSpacing: "3px", marginBottom: "20px", fontWeight: "bold" }}>[ LOG STUDY SESSION ]</div>
 
         {/* Session type */}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "4px", marginBottom: "16px" }}>
@@ -167,7 +187,7 @@ export function SessionLogModal({ onClose, onSubmit, state }) {
 
         {/* Duration */}
         <div style={{ marginBottom: "12px" }}>
-          <div style={{ fontSize: "14px", color: "#fff", marginBottom: "8px", fontWeight: "bold" }}>DURATION</div>
+          <div style={{ fontSize: "14px", color: fg, marginBottom: "8px", fontWeight: "bold" }}>DURATION</div>
           <input type="range" min={15} max={300} step={15} value={duration} onChange={(e) => setDuration(+e.target.value)}
             style={{ width: "100%", accentColor: "#fff" }} />
           <div style={{ textAlign: "center", fontSize: "16px", marginTop: "4px" }}>
@@ -177,7 +197,7 @@ export function SessionLogModal({ onClose, onSubmit, state }) {
 
         {/* Focus */}
         <div style={{ marginBottom: "16px" }}>
-          <div style={{ fontSize: "14px", color: "#fff", marginBottom: "10px", fontWeight: "bold" }}>FOCUS LEVEL</div>
+          <div style={{ fontSize: "14px", color: fg, marginBottom: "10px", fontWeight: "bold" }}>FOCUS LEVEL</div>
           <div style={{ display: "flex", gap: "4px" }}>
             {FOCUS_LEVELS.map((f) => (
               <button type="button" key={f.id} onClick={() => setFocus(f.id)} style={{
@@ -208,20 +228,24 @@ export function SessionLogModal({ onClose, onSubmit, state }) {
   );
 }
 
-export function LevelUpModal({ data, onClose }) {
+export function LevelUpModal({ data, onClose, theme = "dark" }) {
+  const fg  = theme === "light" ? "#000" : "#fff";
+  const bg  = theme === "light" ? "#f0f0f0" : "#000";
+  const dim = theme === "light" ? "#555" : "#aaa";
+
   return (
     <div style={{
       position: "fixed", inset: 0, zIndex: 2000,
-      background: "#000", display: "flex", flexDirection: "column",
+      background: bg, display: "flex", flexDirection: "column",
       alignItems: "center", justifyContent: "center",
       fontFamily: "'Share Tech Mono', monospace",
     }}>
-      <div style={{ fontSize: "16px", color: "#fff", letterSpacing: "4px", marginBottom: "20px", fontWeight: "bold" }}>[ SYSTEM ALERT ]</div>
-      <div style={{ fontSize: "32px", color: "#fff", letterSpacing: "3px", marginBottom: "12px", fontWeight: "bold" }}>[ LEVEL UP ]</div>
+      <div style={{ fontSize: "16px", color: fg, letterSpacing: "4px", marginBottom: "20px", fontWeight: "bold" }}>[ SYSTEM ALERT ]</div>
+      <div style={{ fontSize: "32px", color: fg, letterSpacing: "3px", marginBottom: "12px", fontWeight: "bold" }}>[ LEVEL UP ]</div>
       <div style={{ fontSize: "clamp(40px, 15vw, 64px)", fontWeight: "bold", margin: "16px 0" }}>{data.level}</div>
-      <div style={{ fontSize: "24px", color: "#fff", marginBottom: "8px" }}>{data.rank.decor}</div>
+      <div style={{ fontSize: "24px", color: fg, marginBottom: "8px" }}>{data.rank.decor}</div>
       <div style={{ fontSize: "18px", letterSpacing: "4px", marginBottom: "32px" }}>{data.rank.title.toUpperCase()}</div>
-      <div style={{ fontSize: "clamp(28px, 10vw, 40px)", letterSpacing: "8px", marginBottom: "36px", color: "#fff" }}>
+      <div style={{ fontSize: "clamp(28px, 10vw, 40px)", letterSpacing: "8px", marginBottom: "36px", color: fg }}>
         {data.rank.badge}
       </div>
       <button type="button" onClick={onClose} style={{ ...primaryBtn, width: "200px" }}>CONTINUE</button>
@@ -229,7 +253,11 @@ export function LevelUpModal({ data, onClose }) {
   );
 }
 
-export function AchievementToast({ toast, onClose }) {
+export function AchievementToast({ toast, onClose, theme = "dark" }) {
+  const fg  = theme === "light" ? "#000" : "#fff";
+  const bg  = theme === "light" ? "#f0f0f0" : "#000";
+  const dim = theme === "light" ? "#555" : "#aaa";
+
   const [width, setWidth] = useState(100);
   const r = ACHIEVEMENT_RARITIES[toast.rarity] || ACHIEVEMENT_RARITIES.common;
   // Keep onClose in a ref so the effect never re-runs just because the parent
@@ -250,24 +278,24 @@ export function AchievementToast({ toast, onClose }) {
   return (
     <div style={{
       position: "fixed", bottom: "80px", right: "16px", zIndex: 900,
-      width: "300px", background: "#000", border: "2px solid #fff",
+      width: "300px", background: bg, border: `2px solid ${fg}`,
       padding: "12px", fontFamily: "'Share Tech Mono', monospace",
       overflow: "hidden",
     }}>
       <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
         <span style={{ fontSize: "24px" }}>{sanitizeForDisplay(String(toast.icon ?? ''), 4)}</span>
         <div style={{ flex: 1 }}>
-          <div style={{ fontSize: "14px", color: "#fff", letterSpacing: "2px", fontWeight: "bold", fontFamily: "'Share Tech Mono', monospace" }}>
+          <div style={{ fontSize: "14px", color: fg, letterSpacing: "2px", fontWeight: "bold", fontFamily: "'Share Tech Mono', monospace" }}>
             {toast.isAchievement ? "ACHIEVEMENT UNLOCKED" : "REWARD"} · {r.label}
           </div>
           <div style={{ fontSize: "18px", marginTop: "4px", fontWeight: "bold", fontFamily: "'Share Tech Mono', monospace" }}>{sanitizeForDisplay(String(toast.title ?? ''), 300)}</div>
-          <div style={{ fontSize: "16px", color: "#fff", marginTop: "4px", lineHeight: "1.6", fontFamily: "'Share Tech Mono', monospace" }}>{sanitizeForDisplay(String(toast.desc ?? ''), 300)}</div>
-          {toast.xp && <div style={{ fontSize: "16px", color: "#fff", marginTop: "4px", fontFamily: "'Share Tech Mono', monospace", fontWeight: "bold" }}>+{toast.xp} XP</div>}
+          <div style={{ fontSize: "16px", color: fg, marginTop: "4px", lineHeight: "1.6", fontFamily: "'Share Tech Mono', monospace" }}>{sanitizeForDisplay(String(toast.desc ?? ''), 300)}</div>
+          {toast.xp && <div style={{ fontSize: "16px", color: fg, marginTop: "4px", fontFamily: "'Share Tech Mono', monospace", fontWeight: "bold" }}>+{toast.xp} XP</div>}
         </div>
-        <button type="button" onClick={onClose} style={{ color: "#fff", fontSize: "22px", background: "none", border: "none", minHeight: "48px", minWidth: "48px" }}>×</button>
+        <button type="button" onClick={onClose} style={{ color: fg, fontSize: "22px", background: "none", border: "none", minHeight: "48px", minWidth: "48px" }}>×</button>
       </div>
       <div style={{ marginTop: "8px", height: "6px", background: "#555" }}>
-        <div style={{ width: `${width}%`, height: "100%", background: "#fff" }} />
+        <div style={{ width: `${width}%`, height: "100%", background: fg }} />
       </div>
     </div>
   );

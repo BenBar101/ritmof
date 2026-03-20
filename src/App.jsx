@@ -922,12 +922,12 @@ export default function App() {
 
         {modal?.type === "daily_login"  && (
           <ErrorBoundary>
-            <DailyLoginModal data={modal} onClose={() => setModal(null)} />
+            <DailyLoginModal data={modal} onClose={() => setModal(null)} theme={theme} />
           </ErrorBoundary>
         )}
         {modal?.type === "sleep_checkin" && (
           <ErrorBoundary>
-            <SleepCheckinModal onClose={() => setModal(null)} onSubmit={(data) => {
+            <SleepCheckinModal onClose={() => setModal(null)} theme={theme} onSubmit={(data) => {
               const safeHours   = Math.min(Math.max(0, Number(data.hours)   || 0), 24);
               const safeQuality = Math.min(Math.max(1, Number(data.quality) || 1), 5);
               const safeRested  = typeof data.rested === "boolean" ? data.rested : false;
@@ -941,7 +941,7 @@ export default function App() {
         )}
         {modal?.type === "screen_time" && (
           <ErrorBoundary>
-            <ScreenTimeModal period={modal.period} onClose={() => setModal(null)} onSubmit={(mins) => {
+            <ScreenTimeModal period={modal.period} onClose={() => setModal(null)} theme={theme} onSubmit={(mins) => {
               const safeMins = Math.min(Math.max(0, Number(mins) || 0), 480);
               setState((s) => {
                 const key = localDateFromUTC(); // match scheduler's localDateFromUTC() check
@@ -964,7 +964,7 @@ export default function App() {
         )}
         {modal?.type === "session_log" && (
           <ErrorBoundary>
-            <SessionLogModal onClose={() => setModal(null)} state={state} onSubmit={(session) => {
+            <SessionLogModal onClose={() => setModal(null)} state={state} theme={theme} onSubmit={(session) => {
               const xp = calcSessionXP(session.type, session.duration, session.focus, state.streak);
               // eslint-disable-next-line no-control-regex
               const san = (v, max) => typeof v === "string" ? v.replace(/[\u0000-\u001F\u007F-\u009F]/g, "").replace(/[<>"'`&]/g, "").slice(0, max) : "";
@@ -990,12 +990,12 @@ export default function App() {
         )}
         {levelUpData && (
           <ErrorBoundary>
-            <LevelUpModal data={levelUpData} onClose={() => setLevelUpData(null)} />
+            <LevelUpModal data={levelUpData} onClose={() => setLevelUpData(null)} theme={theme} />
           </ErrorBoundary>
         )}
         {toast && (
           <ErrorBoundary>
-            <AchievementToast key={toast._id} toast={toast} onClose={() => setToast(null)} />
+            <AchievementToast key={toast._id} toast={toast} onClose={() => setToast(null)} theme={theme} />
           </ErrorBoundary>
         )}
       </div>

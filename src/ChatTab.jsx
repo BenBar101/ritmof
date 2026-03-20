@@ -40,6 +40,9 @@ let _msgSeq = 0;
 
 export default function ChatTab() {
   const { state, setState, latestStateRef, profile, apiKey, executeCommands, showBanner, buildSystemPrompt, checkMissions, trackTokens, theme } = useAppContext();
+  const fg  = theme === "light" ? "#000" : "#fff";
+  const bg  = theme === "light" ? "#f0f0f0" : "#000";
+  const dim = theme === "light" ? "#555" : "#aaa";
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [isListening, setIsListening] = useState(false);
@@ -377,8 +380,8 @@ export default function ChatTab() {
       {/* Data disclosure (one-time) */}
       {!disclosureDismissed && (
         <div style={{
-          padding: "16px", background: "#000", borderBottom: "3px solid #fff",
-          fontFamily: "'Share Tech Mono', monospace", fontSize: "14px", color: "#fff",
+          padding: "16px", background: bg, borderBottom: `3px solid ${fg}`,
+          fontFamily: "'Share Tech Mono', monospace", fontSize: "14px", color: fg,
           display: "flex", alignItems: "flex-start", gap: "12px", lineHeight: "1.6",
         }}>
           <span style={{ flex: 1 }}>
@@ -387,7 +390,7 @@ export default function ChatTab() {
           <button
             type="button"
             onClick={() => { LS.set(storageKey(DATA_DISCLOSURE_SEEN_KEY), "1"); setDisclosureDismissed(true); }}
-            style={{ padding: "10px 16px", border: "2px solid #fff", background: "transparent", color: "#fff", cursor: "pointer", flexShrink: 0, minHeight: "48px", fontFamily: "'Share Tech Mono', monospace", fontSize: "14px", fontWeight: "bold" }}
+            style={{ padding: "10px 16px", border: `2px solid ${fg}`, background: "transparent", color: fg, cursor: "pointer", flexShrink: 0, minHeight: "48px", fontFamily: "'Share Tech Mono', monospace", fontSize: "14px", fontWeight: "bold" }}
           >
             GOT IT
           </button>
@@ -401,7 +404,7 @@ export default function ChatTab() {
           <div style={{ textAlign: "center", padding: "40px 20px", fontFamily: "'Share Tech Mono', monospace" }}>
             <div style={{ fontSize: "64px", marginBottom: "16px" }}>◈</div>
             <div style={{ fontSize: "28px", marginBottom: "8px", fontWeight: "bold", letterSpacing: "3px" }}>[ RITMOL ONLINE ]</div>
-            <div style={{ fontSize: "18px", color: "#fff" }}>SYSTEM READY. AWAITING HUNTER INPUT.</div>
+            <div style={{ fontSize: "18px", color: fg }}>SYSTEM READY. AWAITING HUNTER INPUT.</div>
           </div>
         )}
         {messages.map((msg, i) => {
@@ -415,7 +418,7 @@ export default function ChatTab() {
           <div style={{
             border: "2px solid #fff", padding: "14px 20px",
             fontFamily: "'Share Tech Mono', monospace", fontSize: "16px",
-            color: "#fff", fontWeight: "bold", display: "inline-block",
+            color: fg, fontWeight: "bold", display: "inline-block",
             alignSelf: "flex-start",
           }}>
             PROCESSING...
@@ -429,8 +432,8 @@ export default function ChatTab() {
         <div style={{ padding: "0 16px 12px", display: "flex", gap: "8px", overflowX: "auto", pointerEvents: loading ? "none" : "auto" }}>
           {chips.map((c) => (
             <button type="button" key={c} disabled={loading} onClick={() => sendMessage(c)} style={{
-              padding: "10px 16px", border: loading ? "2px solid #444" : "2px solid #fff",
-              background: "transparent", color: "#fff",
+              padding: "10px 16px", border: loading ? `2px solid ${dim}` : `2px solid ${fg}`,
+              background: "transparent", color: fg,
               fontFamily: "'Share Tech Mono', monospace", fontSize: "16px",
               whiteSpace: "nowrap", cursor: loading ? "default" : "pointer", flexShrink: 0,
               minHeight: "48px",
@@ -445,24 +448,24 @@ export default function ChatTab() {
       {rateLimitedUntil && Date.now() < rateLimitedUntil && (
         <div style={{
           padding: "8px 16px", borderTop: "2px solid #fff",
-          background: "#000", display: "flex", alignItems: "center", gap: "10px",
+          background: bg, display: "flex", alignItems: "center", gap: "10px",
           fontFamily: "'Share Tech Mono', monospace", fontSize: "11px", letterSpacing: "2px",
         }}>
-          <span style={{ color: "#fff", opacity: 0.5 }}>⏳ RATE CAP — WAIT</span>
+          <span style={{ color: fg, opacity: 0.5 }}>⏳ RATE CAP — WAIT</span>
           <span style={{
-            color: "#fff", fontWeight: "bold", fontSize: "14px",
+            color: fg, fontWeight: "bold", fontSize: "14px",
             minWidth: "32px", textAlign: "center",
           }}>
             {Math.max(0, Math.ceil((rateLimitedUntil - Date.now()) / 1000))}s
           </span>
           <div style={{ flex: 1, height: "2px", background: "#333", position: "relative", overflow: "hidden" }}>
             <div style={{
-              position: "absolute", left: 0, top: 0, height: "100%", background: "#fff",
+              position: "absolute", left: 0, top: 0, height: "100%", background: fg,
               width: `${Math.max(0, Math.min(100, ((rateLimitedUntil - Date.now()) / RATE_LIMIT_WINDOW_MS) * 100))}%`,
               transition: "width 0.5s linear",
             }} />
           </div>
-          <span style={{ color: "#fff", opacity: 0.5 }}>AI LOCKED</span>
+          <span style={{ color: fg, opacity: 0.5 }}>AI LOCKED</span>
         </div>
       )}
 
@@ -481,8 +484,8 @@ export default function ChatTab() {
           placeholder={rateLimitedUntil && Date.now() < rateLimitedUntil ? "Rate cap active — please wait..." : "Message RITMOL..."}
           rows={2}
           style={{
-            flex: 1, background: "#000", border: "2px solid #fff",
-            color: "#fff", padding: "12px",
+            flex: 1, background: bg, border: `2px solid ${fg}`,
+            color: fg, padding: "12px",
             fontFamily: "'Share Tech Mono', monospace", fontSize: "16px",
             outline: "none", resize: "none", borderRadius: "0",
             lineHeight: "1.6",
