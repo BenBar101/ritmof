@@ -6,9 +6,7 @@ import { primaryBtn, inputStyle } from "./Onboarding";
 import { sanitizeForDisplay } from "./utils/db";
 
 export function Modal({ children, onClose, theme = "dark" }) {
-  const fg  = theme === "light" ? "#000" : "#fff";
   const bg  = theme === "light" ? "#f0f0f0" : "#000";
-  const dim = theme === "light" ? "#555" : "#aaa";
 
   return (
     <div style={{
@@ -25,8 +23,6 @@ export function Modal({ children, onClose, theme = "dark" }) {
 
 export function DailyLoginModal({ data, onClose, theme = "dark" }) {
   const fg  = theme === "light" ? "#000" : "#fff";
-  const bg  = theme === "light" ? "#f0f0f0" : "#000";
-  const dim = theme === "light" ? "#555" : "#aaa";
 
   return (
     <Modal onClose={onClose}>
@@ -50,8 +46,6 @@ export function DailyLoginModal({ data, onClose, theme = "dark" }) {
 
 export function SleepCheckinModal({ onClose, onSubmit, theme = "dark" }) {
   const fg  = theme === "light" ? "#000" : "#fff";
-  const bg  = theme === "light" ? "#f0f0f0" : "#000";
-  const dim = theme === "light" ? "#555" : "#aaa";
 
   const [hours, setHours] = useState(7);
   const [quality, setQuality] = useState(3);
@@ -115,8 +109,6 @@ export function SleepCheckinModal({ onClose, onSubmit, theme = "dark" }) {
 
 export function ScreenTimeModal({ period, onClose, onSubmit, theme = "dark" }) {
   const fg  = theme === "light" ? "#000" : "#fff";
-  const bg  = theme === "light" ? "#f0f0f0" : "#000";
-  const dim = theme === "light" ? "#555" : "#aaa";
 
   const [mins, setMins] = useState(90);
   return (
@@ -142,8 +134,6 @@ export function ScreenTimeModal({ period, onClose, onSubmit, theme = "dark" }) {
 
 export function SessionLogModal({ onClose, onSubmit, state, theme = "dark" }) {
   const fg  = theme === "light" ? "#000" : "#fff";
-  const bg  = theme === "light" ? "#f0f0f0" : "#000";
-  const dim = theme === "light" ? "#555" : "#aaa";
 
   const [type, setType] = useState("lecture");
   const [course, setCourse] = useState("");
@@ -231,7 +221,6 @@ export function SessionLogModal({ onClose, onSubmit, state, theme = "dark" }) {
 export function LevelUpModal({ data, onClose, theme = "dark" }) {
   const fg  = theme === "light" ? "#000" : "#fff";
   const bg  = theme === "light" ? "#f0f0f0" : "#000";
-  const dim = theme === "light" ? "#555" : "#aaa";
 
   return (
     <div style={{
@@ -256,7 +245,6 @@ export function LevelUpModal({ data, onClose, theme = "dark" }) {
 export function AchievementToast({ toast, onClose, theme = "dark" }) {
   const fg  = theme === "light" ? "#000" : "#fff";
   const bg  = theme === "light" ? "#f0f0f0" : "#000";
-  const dim = theme === "light" ? "#555" : "#aaa";
 
   const [width, setWidth] = useState(100);
   const r = ACHIEVEMENT_RARITIES[toast.rarity] || ACHIEVEMENT_RARITIES.common;

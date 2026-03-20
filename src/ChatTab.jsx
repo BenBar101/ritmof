@@ -158,7 +158,11 @@ export default function ChatTab() {
         role: m.role,
         content: stripForApi(m.content),
       }));
-      const { text: raw, tokensUsed } = await callGemini(apiKey, apiMessages, systemPrompt, true, controller.signal);
+      // Increased from default 1024 to 4096 to support large task-list responses
+      // (e.g. 10+ prepare-to-lecture tasks). The response is batched client-side
+      // into chunks of 5 by the command dispatcher below, so the AI only needs to
+      // produce one large JSON blob — we just need enough tokens to fit it.
+      const { text: raw, tokensUsed } = await callGemini(apiKey, apiMessages, systemPrompt, true, controller.signal, 4096);
       trackTokens?.(tokensUsed);
 
       // Robust JSON extraction — tries multiple strategies before falling back to plain text.
@@ -233,7 +237,32 @@ export default function ChatTab() {
       setState((s) => ({ ...s, chatHistory: [...s.chatHistory, assistantMsg].slice(-1000) }));
 
       if (parsed.commands?.length) {
-        setTimeout(() => executeCommands(parsed.commands), 300);
+        // Split commands into small batches and fire them sequentially with a short
+        // delay between each. This prevents large task lists (e.g. "prepare-to-lecture
+        // tasks for every lecture this week") from overflowing a single executeCommands
+        // run and silently dropping tasks, while also avoiding a burst of synchronous
+        // setState calls that can cause React to skip intermediate renders.
+        //
+        // Non-task commands (award_xp, announce, set_daily_goal, etc.) are separated
+        // out and always run first so the AI's message + XP land before the task list.
+        const TASK_BATCH_SIZE = 5;
+        const BATCH_DELAY_MS  = 350; // enough for React to flush between batches
+
+        const taskCmds    = parsed.commands.filter((c) => c?.cmd === "add_task");
+        const nonTaskCmds = parsed.commands.filter((c) => c?.cmd !== "add_task");
+
+        // Fire non-task commands immediately (keeps XP, banners, etc. instant)
+        if (nonTaskCmds.length) {
+          setTimeout(() => executeCommands(nonTaskCmds), 300);
+        }
+
+        // Chunk task commands into batches and stagger them
+        for (let i = 0; i < taskCmds.length; i += TASK_BATCH_SIZE) {
+          const batch = taskCmds.slice(i, i + TASK_BATCH_SIZE);
+          const batchIndex = Math.ceil(i / TASK_BATCH_SIZE);
+          const delay = 300 + (batchIndex + (nonTaskCmds.length ? 1 : 0)) * BATCH_DELAY_MS;
+          setTimeout(() => executeCommands(batch), delay);
+        }
       }
     } catch (e) {
       if (e instanceof RateLimitedError) {

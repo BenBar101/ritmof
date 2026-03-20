@@ -23,9 +23,7 @@ const SAFE_GACHA_RENDER_REGEX = /[\u0000-\u0009\u000B-\u001F\u007F-\u009F\u200B-
 
 export default function ProfileTab() {
   const { state, setState, latestStateRef, profile, level, rank, xpPerLevel, showBanner, showToast, executeCommands, apiKey, buildSystemPrompt, streakShieldCost, gachaCost, trackTokens, theme } = useAppContext();
-  const fg  = theme === "light" ? "#000" : fg;
-  const bg  = theme === "light" ? "#f0f0f0" : bg;
-  const dim = theme === "light" ? "#555" : "#aaa";
+  const fg  = theme === "light" ? "#000" : "#fff";
   const [section, setSection] = useState("overview");
   // showGacha state is reserved for future gacha modal implementation
   // eslint-disable-next-line no-unused-vars
@@ -83,7 +81,6 @@ export default function ProfileTab() {
 function ProfileOverview({ state, setState, profile, level, streakShieldCost, apiKey, showBanner, trackTokens, theme }) {
   const fg  = theme === "light" ? "#000" : "#fff";
   const bg  = theme === "light" ? "#f0f0f0" : "#000";
-  const dim = theme === "light" ? "#555" : "#aaa";
 
   const totalSessions = (state.sessions || []).length;
   const totalHabitsLogged = Object.values(state.habitLog || {}).reduce((acc, arr) => acc + arr.length, 0);
@@ -257,7 +254,6 @@ function ProfileOverview({ state, setState, profile, level, streakShieldCost, ap
 function AchievementsSection({ state, theme }) {
   const fg  = theme === "light" ? "#000" : "#fff";
   const bg  = theme === "light" ? "#f0f0f0" : "#000";
-  const dim = theme === "light" ? "#555" : "#aaa";
 
   const achievements = state.achievements || [];
   const rarityOrder = { legendary: 0, epic: 1, rare: 2, common: 3 };
@@ -312,7 +308,6 @@ function AchievementsSection({ state, theme }) {
 function CalendarSection({ state, setState, profile, apiKey, buildSystemPrompt, showBanner, executeCommands, theme }) {
   const fg  = theme === "light" ? "#000" : "#fff";
   const bg  = theme === "light" ? "#f0f0f0" : "#000";
-  const dim = theme === "light" ? "#555" : "#aaa";
 
   const [form, setForm] = useState({ title: "", type: "exam", start: "", end: "" });
   const [gCalLoading, setGCalLoading] = useState(false);
@@ -583,8 +578,6 @@ function CalendarSection({ state, setState, profile, apiKey, buildSystemPrompt, 
 // Displays the user's Google Calendar subscriptions and lets them toggle which ones to sync.
 function CalendarPicker({ calendars, initialSelected, onConfirm, onCancel, theme }) {
   const fg  = theme === "light" ? "#000" : "#fff";
-  const bg  = theme === "light" ? "#f0f0f0" : "#000";
-  const dim = theme === "light" ? "#555" : "#aaa";
 
   const [selected, setSelected] = useState(() => new Set(initialSelected));
 
@@ -619,11 +612,7 @@ function CalendarPicker({ calendars, initialSelected, onConfirm, onCancel, theme
                 cursor: "pointer", background: checked ? "rgba(255,255,255,0.05)" : "transparent",
               }}>
               {/* Colour dot from Google Calendar */}
-              <span style={{
-                width: "12px", height: "12px", borderRadius: "50%", flexShrink: 0,
-                background: cal.color || "#fff",
-                border: "1px solid rgba(255,255,255,0.3)",
-              }} />
+              
               <span style={{ ...mono, fontSize: "14px", color: fg, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                 {cal.title}
               </span>
@@ -665,7 +654,6 @@ function CalendarPicker({ calendars, initialSelected, onConfirm, onCancel, theme
 function GachaSection({ state, setState, profile, apiKey, gachaCost, showBanner, showToast, trackTokens, latestStateRef, theme }) {
   const fg  = theme === "light" ? "#000" : "#fff";
   const bg  = theme === "light" ? "#f0f0f0" : "#000";
-  const dim = theme === "light" ? "#555" : "#aaa";
 
   const [pulling, setPulling] = useState(false);
   const [lastPull, setLastPull] = useState(null);
@@ -1169,8 +1157,6 @@ Reply with ONLY this JSON:
 
 function GachaCard({ card, compact, theme }) {
   const fg  = theme === "light" ? "#000" : "#fff";
-  const bg  = theme === "light" ? "#f0f0f0" : "#000";
-  const dim = theme === "light" ? "#555" : "#aaa";
 
   const [expanded, setExpanded] = useState(!compact);
   const styleMap = STYLE_CSS;
@@ -1230,8 +1216,8 @@ function GachaCard({ card, compact, theme }) {
 
 // eslint-disable-next-line no-unused-vars
 function SettingsSection({ profile, setState, showBanner, syncStatus, lastSynced, syncFileConnected, dropboxConnected, onPush, onPull, onPickSyncFile, onForgetSyncFile, confirmForgetSync, connectDropbox, disconnectDropbox, theme, setTheme, latestStateRef, rehydrate }) {
-  const fg  = theme === "light" ? "#000" : fg;
-  const bg  = theme === "light" ? "#f0f0f0" : bg;
+  const fg  = theme === "light" ? "#000" : "#fff";
+  const bg  = theme === "light" ? "#f0f0f0" : "#000";
   const dim = theme === "light" ? "#555" : "#aaa";
   const importRef = useRef(null);
   const [importLoading, setImportLoading] = useState(false);

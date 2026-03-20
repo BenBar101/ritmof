@@ -29,7 +29,10 @@ const TOKEN_WARN_THRESHOLDS = [0.5, 0.8, 0.99];
 const MAX_XP_PER_CMD        = 500;
 const MAX_XP_PER_RESPONSE   = 1500;
 const MAX_STR_LEN           = 300;
-const MAX_TASKS_PER_RUN     = 10;
+// Raised from 10 → 50: batched executeCommands calls (from ChatTab's task-splitting
+// logic) each count as a separate run, so the old cap of 10 would silently drop tasks
+// in any batch that happened to contain more than 10 add_task commands.
+const MAX_TASKS_PER_RUN     = 50;
 const MAX_TASKS_TOTAL       = 500;
 const MAX_GOALS_TOTAL       = 200;
 const MAX_COMMANDS_PER_RUN  = 20;
