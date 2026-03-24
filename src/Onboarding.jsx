@@ -623,7 +623,7 @@ export default function Onboarding({ onComplete, onGeminiKeySaved, connectDropbo
   // pulls the Gemini key into sessionStorage during the onboarding flow.
   const [needsGemini, setNeedsGemini] = useState(() => {
     if (getGeminiApiKey()) return false;
-    if (envGoogleClientId && isGoogleAuthConnected()) return false;
+    if (isGoogleAuthConnected()) return false;
     return true;
   });
 
