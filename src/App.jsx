@@ -145,6 +145,7 @@ import ChatTab    from "./ChatTab";
 import ProfileTab from "./ProfileTab";
 import SettingsTab from "./SettingsTab";
 import TutorialOverlay from "./TutorialOverlay";
+import CalendarOverlay from "./CalendarOverlay";
 
 // ─────────────────────────────────────────────────────────────
 // KEYS CONFIG GATE
@@ -394,6 +395,7 @@ function SyncingScreen({ theme = "dark" }) {
 export default function App() {
   const { state, setState, latestStateRef, rehydrate, idbReady, rehydrateCount } = useAppState();
   const [tab, setTab]               = useState("home");
+  const [calendarOpen, setCalendarOpen] = useState(false);
   const [theme, setThemeState]      = useState(() => LS.get(storageKey(THEME_KEY), "dark"));
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [showGeminiKeySetup, setShowGeminiKeySetup] = useState(false);
@@ -975,7 +977,7 @@ export default function App() {
             DEV MODE — separate localStorage (ritmol_dev_*)
           </div>
         )}
-        <TopBar xp={state.xp} xpPerLevel={xpPerLevel} level={level} rank={rank} profile={profile} syncStatus={syncStatus} lastSynced={lastSynced} onPush={syncPush} onPull={syncPull} dropboxConnected={dropboxConnected || (IS_DEV && typeof window !== "undefined" && window.__RITMOL_TEST__)} isReloading={isReloading} theme={theme} onOpenSettings={() => setTab("settings")} />
+        <TopBar xp={state.xp} xpPerLevel={xpPerLevel} level={level} rank={rank} profile={profile} syncStatus={syncStatus} lastSynced={lastSynced} onPush={syncPush} onPull={syncPull} dropboxConnected={dropboxConnected || (IS_DEV && typeof window !== "undefined" && window.__RITMOL_TEST__)} isReloading={isReloading} theme={theme} onOpenSettings={() => setTab("settings")} onOpenCalendar={() => setCalendarOpen(true)} gcalConnected={!!state.gCalConnected} />
         <div data-scroll="" style={{ flex: 1, overflowY: "auto", overflowX: "hidden", paddingBottom: "calc(60px + env(safe-area-inset-bottom, 0px))" }}>
           {tab === "home"     && <ErrorBoundary key="home"><HomeTab /></ErrorBoundary>}
           {tab === "habits"   && <ErrorBoundary key="habits"><HabitsTab /></ErrorBoundary>}
@@ -985,6 +987,9 @@ export default function App() {
           {tab === "settings" && <ErrorBoundary key="settings"><SettingsTab /></ErrorBoundary>}
         </div>
         <BottomNav tab={tab} setTab={setTab} theme={theme} />
+        {calendarOpen && (
+          <CalendarOverlay theme={theme} onClose={() => setCalendarOpen(false)} />
+        )}
         {state.tutorialDone === false && !showOnboarding && (
           <TutorialOverlay
             tab={tab}

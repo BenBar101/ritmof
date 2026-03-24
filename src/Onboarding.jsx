@@ -453,6 +453,15 @@ function GeminiAiOnboardingStep({ onGeminiKeySaved, onAdvance }) {
   const envClientId = (typeof import.meta !== "undefined" && import.meta.env?.VITE_GOOGLE_CLIENT_ID || "").trim();
   const [oauthConnected, setOauthConnected] = useState(() => isGoogleAuthConnected());
   const [connectErr, setConnectErr] = useState("");
+  // If no env client ID, let user enter their own
+  const [manualClientId, setManualClientId] = useState("");
+  // "oauth" (default) | "apikey" — tab switcher for power users
+  const [authMode, setAuthMode] = useState("oauth");
+  const [oauthStarted, setOauthStarted] = useState(false);
+
+  const mono = { fontFamily: "'Share Tech Mono', monospace" };
+
+  const activeClientId = envClientId || manualClientId.trim();
 
   useEffect(() => {
     const id = setInterval(() => {
@@ -461,76 +470,143 @@ function GeminiAiOnboardingStep({ onGeminiKeySaved, onAdvance }) {
     return () => clearInterval(id);
   }, []);
 
+  // Auto-advance once OAuth is confirmed
   useEffect(() => {
-    if (!oauthConnected || !envClientId) return;
+    if (!oauthConnected) return;
     const t = setTimeout(() => onAdvance?.(), 1000);
     return () => clearTimeout(t);
-  }, [oauthConnected, envClientId, onAdvance]);
+  }, [oauthConnected, onAdvance]);
 
-  if (envClientId) {
-    if (oauthConnected) {
-      return (
-        <div style={{ display: "flex", flexDirection: "column", gap: "16px", alignItems: "center", padding: "8px 0" }}>
-          <div style={{
-            width: "64px", height: "64px", borderRadius: "0",
-            border: "3px solid #fff", display: "flex", alignItems: "center", justifyContent: "center",
-            fontSize: "32px", color: "#fff",
-          }}>✓</div>
-          <div style={{ fontSize: "18px", color: "#fff", letterSpacing: "2px", fontWeight: "bold", fontFamily: "'Share Tech Mono', monospace" }}>[ GOOGLE CONNECTED ]</div>
-          <div style={{ fontSize: "16px", color: "#fff", textAlign: "center", fontFamily: "'Share Tech Mono', monospace" }}>CONTINUING…</div>
-        </div>
-      );
+  function handleOAuth() {
+    setConnectErr("");
+    const id = activeClientId;
+    if (!id) {
+      setConnectErr("Enter your Google Client ID above to continue.");
+      return;
     }
+    if (!/^[\w.-]+\.apps\.googleusercontent\.com$/.test(id)) {
+      setConnectErr("Invalid format — must end in .apps.googleusercontent.com");
+      return;
+    }
+    try {
+      setOauthStarted(true);
+      startGoogleOAuthFlow(id);
+    } catch (e) {
+      setOauthStarted(false);
+      setConnectErr(e?.message || "Could not start Google sign-in.");
+    }
+  }
+
+  if (oauthConnected) {
     return (
-      <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-        <div style={{ fontSize: "15px", color: "#fff", lineHeight: "1.7", fontFamily: "'Share Tech Mono', monospace" }}>
-          Sign in with Google to use Gemini in RITMOL. No API key to paste when this build has a Client ID configured.
-        </div>
-        <button
-          type="button"
-          onClick={() => {
-            setConnectErr("");
-            try {
-              startGoogleOAuthFlow(envClientId);
-            } catch (e) {
-              setConnectErr(e?.message || "Could not start Google sign-in.");
-            }
-          }}
-          style={{
-            width: "100%", padding: "14px", border: "2px solid #fff",
-            background: "#fff", color: "#000",
-            fontFamily: "'Share Tech Mono', monospace", fontSize: "16px", letterSpacing: "2px",
-            cursor: "pointer",
-          }}
-        >
-          CONNECT GOOGLE
-        </button>
-        {!!getGeminiApiKey() && (
-          <button
-            type="button"
-            onClick={() => onAdvance?.()}
-            style={{
-              width: "100%", padding: "12px", border: "2px solid #555", background: "transparent", color: "#888",
-              fontFamily: "'Share Tech Mono', monospace", fontSize: "14px", letterSpacing: "1px", cursor: "pointer",
-            }}
-          >
-            Continue with existing API key from synced data
-          </button>
-        )}
-        {connectErr && (
-          <div style={{ color: "#fff", fontSize: "14px", fontFamily: "'Share Tech Mono', monospace", fontWeight: "bold" }}>[ ERR ] {connectErr}</div>
-        )}
+      <div style={{ display: "flex", flexDirection: "column", gap: "16px", alignItems: "center", padding: "8px 0" }}>
+        <div style={{
+          width: "64px", height: "64px", borderRadius: "0",
+          border: "3px solid #fff", display: "flex", alignItems: "center", justifyContent: "center",
+          fontSize: "32px", color: "#fff",
+        }}>✓</div>
+        <div style={{ fontSize: "18px", color: "#fff", letterSpacing: "2px", fontWeight: "bold", ...mono }}>[ GOOGLE CONNECTED ]</div>
+        <div style={{ fontSize: "16px", color: "#fff", textAlign: "center", ...mono }}>CONTINUING…</div>
       </div>
     );
   }
 
   return (
-    <GeminiKeySetupScreen
-      onSave={(key) => {
-        onGeminiKeySaved(key, null);
-        onAdvance();
-      }}
-    />
+    <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+      {/* Mode tabs */}
+      <div style={{ display: "flex", gap: "0", border: "2px solid #fff" }}>
+        {[["oauth", "SIGN IN WITH GOOGLE"], ["apikey", "RAW API KEY"]].map(([mode, label]) => (
+          <button
+            key={mode}
+            type="button"
+            onClick={() => { setAuthMode(mode); setConnectErr(""); }}
+            style={{
+              flex: 1, padding: "10px", border: "none",
+              background: authMode === mode ? "#fff" : "transparent",
+              color: authMode === mode ? "#000" : "#fff",
+              ...mono, fontSize: "11px", letterSpacing: "2px",
+              cursor: "pointer", fontWeight: "bold",
+            }}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {authMode === "oauth" ? (
+        <>
+          <div style={{ fontSize: "13px", color: "#fff", lineHeight: "1.7", ...mono }}>
+            Sign in with Google — no API key to copy/paste. Uses OAuth so your credentials are never stored in plain text.
+          </div>
+
+          {/* Client ID input — only shown when not baked in at build time */}
+          {!envClientId && (
+            <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+              <label style={{ ...mono, fontSize: "11px", letterSpacing: "3px", color: "#fff", fontWeight: "bold" }}>
+                GOOGLE CLIENT ID
+              </label>
+              <input
+                type="text"
+                value={manualClientId}
+                onChange={(e) => { setManualClientId(e.target.value); setConnectErr(""); }}
+                placeholder="xxxx.apps.googleusercontent.com"
+                style={{
+                  background: "#000", border: "2px solid #fff", color: "#fff",
+                  padding: "10px", fontSize: "13px", ...mono, outline: "none",
+                }}
+              />
+              <div style={{ ...mono, fontSize: "11px", color: "#aaa", lineHeight: "1.6" }}>
+                Get one free at{" "}
+                <a href="https://console.cloud.google.com/" target="_blank" rel="noopener noreferrer"
+                   style={{ color: "#fff" }}>console.cloud.google.com</a>
+                {" "}→ APIs &amp; Services → Credentials → Create OAuth 2.0 Client ID.
+              </div>
+            </div>
+          )}
+
+          <button
+            type="button"
+            onClick={handleOAuth}
+            disabled={oauthStarted}
+            style={{
+              width: "100%", padding: "14px", border: "2px solid #fff",
+              background: oauthStarted ? "transparent" : "#fff",
+              color: oauthStarted ? "#fff" : "#000",
+              ...mono, fontSize: "16px", letterSpacing: "2px",
+              cursor: oauthStarted ? "not-allowed" : "pointer",
+            }}
+          >
+            {oauthStarted ? "OPENING GOOGLE…" : "SIGN IN WITH GOOGLE"}
+          </button>
+
+          {!!getGeminiApiKey() && (
+            <button
+              type="button"
+              onClick={() => onAdvance?.()}
+              style={{
+                width: "100%", padding: "12px", border: "2px solid #555", background: "transparent", color: "#888",
+                ...mono, fontSize: "13px", letterSpacing: "1px", cursor: "pointer",
+              }}
+            >
+              Continue with existing API key from synced data
+            </button>
+          )}
+
+          {connectErr && (
+            <div style={{ color: "#fff", fontSize: "13px", ...mono, fontWeight: "bold", border: "2px solid #fff", padding: "10px" }}>
+              [ ERR ] {connectErr}
+            </div>
+          )}
+        </>
+      ) : (
+        <GeminiKeySetupScreen
+          onSave={(key) => {
+            onGeminiKeySaved(key, null);
+            onAdvance();
+          }}
+        />
+      )}
+    </div>
   );
 }
 
@@ -573,10 +649,10 @@ export default function Onboarding({ onComplete, onGeminiKeySaved, connectDropbo
     if (needsGemini) {
       list.push({
         key: "_gemini",
-        title: envGoogleClientId ? "GOOGLE AI ACCESS" : "GEMINI API KEY",
+        title: envGoogleClientId ? "GOOGLE AI ACCESS" : "AI AUTHENTICATION",
         subtitle: envGoogleClientId
-          ? "Sign in with Google for Gemini. If you synced an API key from another device, you can skip sign-in."
-          : "Required for AI features. Get yours free at aistudio.google.com/apikey",
+          ? "Sign in with Google for Gemini access — no API key needed."
+          : "Sign in with Google OAuth (recommended) or paste a raw Gemini API key.",
         type: "_gemini",
         style: "geometric",
         optional: false,

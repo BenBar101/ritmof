@@ -45,6 +45,13 @@ const STEPS = [
     spotlight: { top: 0, left: 0, width: "100%", height: "56px" },
     tooltipPosition: "below-topbar",
   },
+  {
+    id: "calendar-icon",
+    title: "[ CALENDAR ]",
+    body: "Tap the calendar icon in the top bar to open your schedule overlay — add events, sync Google Calendar, or check upcoming exams without leaving your current tab. A dot appears on the icon until you sync Google Calendar.",
+    spotlight: { top: 0, left: 0, width: "100%", height: "56px" },
+    tooltipPosition: "below-topbar",
+  },
 ];
 
 const panelBase = {

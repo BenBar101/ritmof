@@ -4,7 +4,7 @@ import { getLevelProgress } from "./utils/xp";
 // TOP BAR
 // ═══════════════════════════════════════════════════════════════
 // eslint-disable-next-line no-unused-vars
-export function TopBar({ xp, xpPerLevel, level, rank, profile, syncStatus, lastSynced, onPush, onPull, dropboxConnected, isReloading = false, onOpenSettings, theme = "dark" }) {
+export function TopBar({ xp, xpPerLevel, level, rank, profile, syncStatus, lastSynced, onPush, onPull, dropboxConnected, isReloading = false, onOpenSettings, onOpenCalendar, gcalConnected = false, theme = "dark" }) {
   const progress = getLevelProgress(xp, xpPerLevel);
   const pct = xpPerLevel > 0
     ? Math.min(100, Math.max(0, (progress / xpPerLevel) * 100))
@@ -45,6 +45,36 @@ export function TopBar({ xp, xpPerLevel, level, rank, profile, syncStatus, lastS
           <circle cx="12" cy="12" r="3" />
           <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
         </svg>
+      </button>
+
+      {/* Calendar icon — opens Calendar overlay */}
+      <button
+        type="button"
+        onClick={onOpenCalendar}
+        title="Calendar"
+        style={{
+          display: "flex", alignItems: "center", justifyContent: "center",
+          flexShrink: 0, position: "relative",
+          background: "none", border: "none", cursor: "pointer",
+          padding: "0 4px 8px 0",
+          minHeight: "40px", minWidth: "40px",
+        }}
+      >
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={fg} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+          <line x1="16" y1="2" x2="16" y2="6" />
+          <line x1="8" y1="2" x2="8" y2="6" />
+          <line x1="3" y1="10" x2="21" y2="10" />
+        </svg>
+        {/* Sync badge — shown when Google Calendar not yet connected */}
+        {!gcalConnected && (
+          <span style={{
+            position: "absolute", top: "4px", right: "2px",
+            width: "8px", height: "8px", borderRadius: "50%",
+            background: fg, border: `1px solid ${theme === "light" ? "#f0f0f0" : "#000"}`,
+            display: "block",
+          }} title="Google Calendar not synced" />
+        )}
       </button>
 
       {/* XP bar — fills remaining space */}
