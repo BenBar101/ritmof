@@ -76,8 +76,13 @@ public class RitmolHealthPlugin: CAPPlugin, CAPBridgedPlugin {
             for s in samples {
                 let dur = s.endDate.timeIntervalSince(s.startDate)
                 totalSeconds += dur
-                if s.value == HKCategoryValueSleepAnalysis.asleepDeep.rawValue ||
-                    s.value == HKCategoryValueSleepAnalysis.asleepREM.rawValue {
+                var countsDeepOrRem = false
+                if #available(iOS 16.0, *) {
+                    countsDeepOrRem =
+                        s.value == HKCategoryValueSleepAnalysis.asleepDeep.rawValue
+                        || s.value == HKCategoryValueSleepAnalysis.asleepREM.rawValue
+                }
+                if countsDeepOrRem {
                     deepRem += dur
                 }
             }
