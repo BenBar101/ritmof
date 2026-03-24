@@ -2,6 +2,10 @@
 // GOOGLE CALENDAR (GIS TokenClient + REST — no deprecated gapi.client)
 // ═══════════════════════════════════════════════════════════════
 
+import { GCAL_API_BASE_URL } from "../config.js";
+
+export { GCAL_SCOPE } from "../config.js";
+
 // Fix [GC-1]: sanitize helpers for GCal event fields.
 // Google Calendar events have user-controlled content (titles, IDs). A crafted
 // calendar event with BiDi overrides in the title can visually disguise text in
@@ -37,7 +41,7 @@ export async function fetchCalendarList(accessToken) {
   }
   try {
     const res = await fetch(
-      "https://www.googleapis.com/calendar/v3/users/me/calendarList?maxResults=250&minAccessRole=reader",
+      `${GCAL_API_BASE_URL}/users/me/calendarList?maxResults=250&minAccessRole=reader`,
       {
         headers: { Authorization: `Bearer ${accessToken}` },
         signal: AbortSignal.timeout ? AbortSignal.timeout(15000) : undefined,
@@ -91,7 +95,7 @@ export async function fetchGCalEvents(accessToken, calendarIds = ["primary"], ma
         // Encode the calendar ID for use in the URL path.
         const encodedId = encodeURIComponent(calId);
         const res = await fetch(
-          `https://www.googleapis.com/calendar/v3/calendars/${encodedId}/events?${params}`,
+          `${GCAL_API_BASE_URL}/calendars/${encodedId}/events?${params}`,
           {
             headers: { Authorization: `Bearer ${accessToken}` },
             signal: AbortSignal.timeout ? AbortSignal.timeout(15000) : undefined,

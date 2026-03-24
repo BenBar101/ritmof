@@ -1,28 +1,44 @@
 import React, { useState, useEffect, useRef } from "react";
+import { Capacitor } from "@capacitor/core";
 import { useAppContext } from "./context/AppContext";
 import { getGeminiApiKey, setGeminiApiKey, getMaxDateSeen, IS_DEV } from "./utils/db";
 import { DATA_DISCLOSURE_SEEN_KEY, THEME_KEY } from "./constants";
 import { clearRateLimitWindow } from "./api/gemini";
-import { SyncManager, FSAPI_SUPPORTED } from "./sync/SyncManager";
+import { SyncManager } from "./sync/SyncManager";
+import { LocalNotifications } from "@capacitor/local-notifications";
+import { startGoogleOAuthFlow, revokeGoogleAuth } from "./api/googleAuth";
 import { idbClearAll, idbSet } from "./utils/db";
+import { RitmolHealth } from "./plugins/RitmolHealth.js";
 
 // Keys belonging to this app but not starting with "jv_" — must be wiped on full reset.
 const APP_CONSTANT_KEYS = new Set([DATA_DISCLOSURE_SEEN_KEY, THEME_KEY, "jv_last_synced"]);
+
+const NOTIF_NATIVE =
+  typeof LocalNotifications?.requestPermissions === "function" &&
+  typeof window !== "undefined" &&
+  window?.Capacitor?.isNativePlatform?.();
+
+const HEALTHKIT_SETTINGS =
+  typeof window !== "undefined" &&
+  Capacitor.isNativePlatform() &&
+  Capacitor.getPlatform() === "ios";
 
 export default function SettingsTab() {
   const {
     rehydrate,
     showBanner,
+    state, setState,
     syncStatus, lastSynced, dropboxConnected,
     syncPush: onPush, syncPull: onPull,
-    pickSyncFile: onPickSyncFile, forgetSyncFile: onForgetSyncFile, confirmForgetSync,
     connectDropbox, disconnectDropbox,
     theme, setTheme,
+    requestNotificationPermission,
   } = useAppContext();
 
   const importRef = useRef(null);
   const [importLoading, setImportLoading] = useState(false);
   const currentGeminiKey = getGeminiApiKey();
+  const googleClientId = (import.meta.env.VITE_GOOGLE_CLIENT_ID || "").trim();
 
   // ── PWA install prompt ────────────────────────────────────────
   const [installPrompt, setInstallPrompt] = useState(null);
@@ -310,41 +326,18 @@ export default function SettingsTab() {
             </div>
             <div style={{ height: "2px", background: fg, margin: "4px 0" }} />
             <div style={{ fontSize: "16px", color: fg, letterSpacing: "1px", fontWeight: "bold", ...mono }}>
-              {FSAPI_SUPPORTED ? "or use local file" : "or export / import manually"}
+              Export / import backup
             </div>
-            {FSAPI_SUPPORTED ? (
-              <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
-                <button type="button" onClick={onPickSyncFile} style={{ padding: "12px", border, background: "transparent", color: fg, ...mono, fontSize: "16px", cursor: "pointer", minHeight: "48px" }}>PICK FILE</button>
-                <button type="button" onClick={() => {
-                  if (typeof navigator !== "undefined" && navigator.onLine === false) { showBanner("No network connection.", "alert"); return; }
-                  onPush();
-                }} disabled={typeof navigator !== "undefined" && navigator.onLine === false}
-                  style={{ padding: "12px", border, background: "transparent", color: fg, ...mono, fontSize: "16px", cursor: "pointer", minHeight: "48px" }}>PUSH ↑</button>
-                <button type="button" onClick={() => {
-                  if (typeof navigator !== "undefined" && navigator.onLine === false) { showBanner("No network connection.", "alert"); return; }
-                  onPull();
-                }} disabled={typeof navigator !== "undefined" && navigator.onLine === false}
-                  style={{ padding: "12px", border: dimBorder, background: "transparent", color: fg, ...mono, fontSize: "16px", cursor: "pointer", minHeight: "48px" }}>PULL ↓</button>
-                <button type="button" onClick={onForgetSyncFile}
-                  style={{ padding: "12px", border, background: "transparent", color: fg, ...mono, fontSize: "16px", cursor: "pointer", minHeight: "48px" }}>
-                  {confirmForgetSync ? "CONFIRM?" : "FORGET"}
-                </button>
-              </div>
-            ) : (
-              <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-                <div style={{ fontSize: "16px", color: fg, border, padding: "12px", lineHeight: "1.7", ...mono }}>
-                  ⚠ Your browser does not support direct file access.
-                </div>
-                <button type="button" onClick={() => SyncManager.download((msg) => showBanner(msg, "alert"))}
-                  style={{ padding: "12px", border, background: "transparent", color: fg, ...mono, fontSize: "16px", cursor: "pointer", minHeight: "48px" }}>EXPORT ↓</button>
-                <input ref={importRef} type="file" accept=".json" disabled={importLoading || syncStatus === "syncing"} onChange={handleImportFile} style={{ display: "none" }} />
-                <button type="button" disabled={importLoading || syncStatus === "syncing"}
-                  onClick={() => { if (!importLoading && syncStatus !== "syncing") importRef.current?.click(); }}
-                  style={{ padding: "12px", border, background: "transparent", color: fg, ...mono, fontSize: "16px", minHeight: "48px", cursor: importLoading || syncStatus === "syncing" ? "default" : "pointer" }}>
-                  {importLoading ? "IMPORTING..." : "IMPORT ↑"}
-                </button>
-              </div>
-            )}
+            <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+              <button type="button" onClick={() => SyncManager.download((msg) => showBanner(msg, "alert"))}
+                style={{ padding: "12px", border, background: "transparent", color: fg, ...mono, fontSize: "16px", cursor: "pointer", minHeight: "48px" }}>EXPORT ↓</button>
+              <input ref={importRef} type="file" accept=".json" disabled={importLoading || syncStatus === "syncing"} onChange={handleImportFile} style={{ display: "none" }} />
+              <button type="button" disabled={importLoading || syncStatus === "syncing"}
+                onClick={() => { if (!importLoading && syncStatus !== "syncing") importRef.current?.click(); }}
+                style={{ padding: "12px", border, background: "transparent", color: fg, ...mono, fontSize: "16px", minHeight: "48px", cursor: importLoading || syncStatus === "syncing" ? "default" : "pointer" }}>
+                {importLoading ? "IMPORTING..." : "IMPORT ↑"}
+              </button>
+            </div>
           </>
         )}
       </div>
@@ -354,10 +347,29 @@ export default function SettingsTab() {
       {/* ── AI CONFIG ── */}
       <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
         {sectionHeader("[ AI CONFIG ]")}
-        <button type="button" onClick={handleChangeGeminiKey}
-          style={{ padding: "12px", border, background: "transparent", color: fg, ...mono, fontSize: "16px", letterSpacing: "1px", cursor: "pointer", minHeight: "48px" }}>
-          CHANGE GEMINI API KEY
-        </button>
+        {googleClientId ? (
+          <>
+            <div style={{ fontSize: "14px", color: dimColor, ...mono, lineHeight: "1.6" }}>
+              {state?.googleAuthConnected ? "Google account connected for Gemini." : "Connect Google for Gemini (OAuth)."}
+            </div>
+            {state?.googleAuthConnected ? (
+              <button type="button" onClick={() => { revokeGoogleAuth(); showBanner("Google disconnected.", "info"); }}
+                style={{ padding: "12px", border, background: "transparent", color: fg, ...mono, fontSize: "16px", cursor: "pointer", minHeight: "48px" }}>
+                DISCONNECT GOOGLE
+              </button>
+            ) : (
+              <button type="button" onClick={() => { try { startGoogleOAuthFlow(googleClientId); } catch { showBanner("Could not start Google sign-in.", "alert"); } }}
+                style={{ padding: "12px", border, background: fg, color: bg, ...mono, fontSize: "16px", cursor: "pointer", minHeight: "48px" }}>
+                CONNECT GOOGLE
+              </button>
+            )}
+          </>
+        ) : (
+          <button type="button" onClick={handleChangeGeminiKey}
+            style={{ padding: "12px", border, background: "transparent", color: fg, ...mono, fontSize: "16px", letterSpacing: "1px", cursor: "pointer", minHeight: "48px" }}>
+            CHANGE GEMINI API KEY
+          </button>
+        )}
         {IS_DEV && (
           <div style={{ border: "2px dashed #555", padding: "10px 12px", fontSize: "12px", color: "#ccc", ...mono, lineHeight: "1.6", wordBreak: "break-all" }}>
             <div style={{ fontSize: "11px", letterSpacing: "2px", marginBottom: "4px", fontWeight: "bold" }}>DEV ONLY — CURRENT GEMINI KEY</div>
@@ -367,6 +379,65 @@ export default function SettingsTab() {
       </div>
 
       {divider}
+
+      {/* ── HEALTH (iOS native) ── */}
+      {HEALTHKIT_SETTINGS && (
+        <>
+          <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+            {sectionHeader("[ HEALTH ]")}
+            <div style={{ fontSize: "14px", color: dimColor, ...mono, lineHeight: "1.6" }}>
+              {state?.healthKitEnabled ? "HealthKit access was granted (sleep read)." : "HealthKit not connected — sleep check-in modal still works."}
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                void RitmolHealth.requestPermission()
+                  .then(({ granted }) => {
+                    setState((s) => ({ ...s, healthKitEnabled: !!granted }));
+                    showBanner(granted ? "Health permission updated." : "Health access not granted.", "info");
+                  })
+                  .catch(() => showBanner("Could not request Health access.", "alert"));
+              }}
+              style={{ padding: "12px", border, background: "transparent", color: fg, ...mono, fontSize: "16px", cursor: "pointer", minHeight: "48px" }}
+            >
+              RE-REQUEST HEALTH PERMISSION
+            </button>
+          </div>
+          {divider}
+        </>
+      )}
+
+      {/* ── NOTIFICATIONS ── */}
+      {NOTIF_NATIVE && (
+        <>
+          <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+            {sectionHeader("[ NOTIFICATIONS ]")}
+            {state?.notificationsEnabled ? (
+              <>
+                <div style={{ fontSize: "14px", color: fg, ...mono }}>Notifications enabled ✓</div>
+                <button type="button" onClick={() => {
+                  LocalNotifications.cancelAll?.().catch(() => {});
+                  LocalNotifications.getPending?.().then((p) => {
+                    const n = p?.notifications ?? [];
+                    if (n.length) LocalNotifications.cancel({ notifications: n }).catch(() => {});
+                  }).catch(() => {});
+                  setState((s) => ({ ...s, notificationsEnabled: false }));
+                  showBanner("Notifications disabled.", "info");
+                }}
+                  style={{ padding: "12px", border, background: "transparent", color: fg, ...mono, fontSize: "16px", cursor: "pointer" }}>
+                  DISABLE
+                </button>
+              </>
+            ) : (
+              <button type="button" onClick={() => requestNotificationPermission?.()}
+                style={{ padding: "12px", border, background: fg, color: bg, ...mono, fontSize: "16px", cursor: "pointer" }}>
+                ENABLE NOTIFICATIONS
+              </button>
+            )}
+          </div>
+          {divider}
+        </>
+      )}
 
       {/* ── DANGER ZONE ── */}
       <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>

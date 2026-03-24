@@ -62,8 +62,13 @@ export function initState() {
     dynamicCosts: idbGet(storageKey("jv_dynamic_costs"), null) || { xpPerLevel: DEFAULT_XP_PER_LEVEL, gachaCost: DEFAULT_GACHA_COST, streakShieldCost: DEFAULT_STREAK_SHIELD_COST },
     lastShieldUseDate: idbGet(storageKey("jv_last_shield_use_date"), null),
     lastShieldBuyDate: idbGet(storageKey("jv_last_shield_buy_date"), null),
-    syncFileConnected: false, // updated async after mount by SyncManager.getHandle()
     tutorialDone: idbGet(storageKey("jv_tutorial_done"), false),
+    healthKitEnabled: idbGet(storageKey("jv_healthkit_enabled"), false),
+    googleAuthConnected: idbGet(storageKey("jv_google_auth_connected"), false),
+    notificationsEnabled: idbGet(storageKey("jv_notifications_enabled"), false),
+    lastAiNotificationBatch: idbGet(storageKey("jv_last_ai_notif_batch"), null),
+    aiNotificationLog: idbGet(storageKey("jv_ai_notif_log"), {}),
+    lectureQuickLogPending: idbGet(storageKey("jv_lecture_quick_log_pending"), {}),
   };
 }
 

@@ -15,17 +15,22 @@
 // call in the window ages out and a slot opens up. UI components use this to
 // display a running countdown.
 //
-// Cap is 12 (Google free-tier Gemini 2.5 Flash allows 15 RPM; we stay 3 under
-// to leave headroom for multi-tab usage). The previous cap of 3 was far too
-// tight: on a new-user cold load, several background calls fire within ~20 s
-// (weekly missions, dynamic costs, monthly missions, habit init) —
-// all within the same 60-second window — causing RateLimitedError for every
-// new user before they could interact with the app at all.
+// Cap and window are defined in config.js (Google free-tier limits).
 // Timestamps are persisted to sessionStorage so a hard-reload within the same
 // browser session doesn't reset the window and let the burst fire again.
 
-export const RATE_LIMIT_CAP = 12;      // max calls per window (Google free tier: 15 RPM)
-export const RATE_LIMIT_WINDOW_MS = 60_000; // window size in ms
+import {
+  GEMINI_MODEL,
+  GEMINI_API_BASE_URL,
+  GEMINI_API_VERSION,
+  GEMINI_REQUEST_TIMEOUT_MS,
+  GEMINI_RATE_LIMIT_CAP,
+  GEMINI_RATE_LIMIT_WINDOW_MS,
+} from "../config.js";
+
+// Re-export so existing callers (ChatTab.jsx) that import these names from gemini.js do not break:
+export const RATE_LIMIT_CAP = GEMINI_RATE_LIMIT_CAP;
+export const RATE_LIMIT_WINDOW_MS = GEMINI_RATE_LIMIT_WINDOW_MS;
 
 export class RateLimitedError extends Error {
   constructor(retryAfterMs) {
@@ -49,7 +54,7 @@ function _loadTimestamps() {
     if (!Array.isArray(parsed)) return [];
     const now = Date.now();
     // Only keep timestamps still inside the current window.
-    return parsed.filter((t) => typeof t === "number" && now - t < RATE_LIMIT_WINDOW_MS);
+    return parsed.filter((t) => typeof t === "number" && now - t < GEMINI_RATE_LIMIT_WINDOW_MS);
   } catch {
     return [];
   }
@@ -68,14 +73,14 @@ const _callTimestamps = _loadTimestamps();
 export function getRateLimitStatus() {
   const now = Date.now();
   // Drop timestamps older than the window
-  while (_callTimestamps.length && now - _callTimestamps[0] >= RATE_LIMIT_WINDOW_MS) {
+  while (_callTimestamps.length && now - _callTimestamps[0] >= GEMINI_RATE_LIMIT_WINDOW_MS) {
     _callTimestamps.shift();
   }
-  if (_callTimestamps.length < RATE_LIMIT_CAP) {
+  if (_callTimestamps.length < GEMINI_RATE_LIMIT_CAP) {
     return { limited: false };
   }
   // Oldest call in window + window size = when the next slot opens
-  const retryAfterMs = RATE_LIMIT_WINDOW_MS - (now - _callTimestamps[0]);
+  const retryAfterMs = GEMINI_RATE_LIMIT_WINDOW_MS - (now - _callTimestamps[0]);
   return { limited: true, retryAfterMs: Math.max(0, retryAfterMs) };
 }
 
@@ -83,7 +88,7 @@ export function getRateLimitStatus() {
 function _recordCall() {
   const now = Date.now();
   // Trim stale entries first
-  while (_callTimestamps.length && now - _callTimestamps[0] >= RATE_LIMIT_WINDOW_MS) {
+  while (_callTimestamps.length && now - _callTimestamps[0] >= GEMINI_RATE_LIMIT_WINDOW_MS) {
     _callTimestamps.shift();
   }
   _callTimestamps.push(now);
@@ -210,10 +215,7 @@ export async function callGemini(apiKey, messages, systemPrompt, jsonMode = fals
   // Always work with the trimmed key so whitespace from paste/storage never causes 403.
   apiKey = apiKey.trim();
 
-  // Use gemini-2.5-flash (GA, not preview) — matches the README spec and has
-  // better free-tier limits than the old gemini-2.0-flash-001 endpoint.
-  // Free tier: 15 RPM, 1M TPM, 1500 RPD.
-  const url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent";
+  const url = `${GEMINI_API_BASE_URL}/${GEMINI_API_VERSION}/models/${GEMINI_MODEL}:generateContent`;
 
   const contents = messages.map((m) => ({
     role: m.role === "assistant" ? "model" : "user",
@@ -250,14 +252,14 @@ export async function callGemini(apiKey, messages, systemPrompt, jsonMode = fals
 
     if (signal && typeof AbortSignal.any === "function") {
       // Fix #8: combine caller signal + fresh timeout signal.
-      const timeoutSignal = AbortSignal.timeout ? AbortSignal.timeout(30000) : undefined;
+      const timeoutSignal = AbortSignal.timeout ? AbortSignal.timeout(GEMINI_REQUEST_TIMEOUT_MS) : undefined;
       effectiveSignal = timeoutSignal ? AbortSignal.any([signal, timeoutSignal]) : signal;
     } else if (signal) {
       // Browser lacks AbortSignal.any — combine manually.
       const combined = new AbortController();
       const abort = () => combined.abort();
       signal.addEventListener("abort", abort, { once: true });
-      const tid = setTimeout(abort, 30000);
+      const tid = setTimeout(abort, GEMINI_REQUEST_TIMEOUT_MS);
       effectiveSignal = combined.signal;
       _cleanup = () => {
         clearTimeout(tid);
@@ -266,12 +268,12 @@ export async function callGemini(apiKey, messages, systemPrompt, jsonMode = fals
     } else {
       // No caller signal provided — use a standalone 30s timeout.
       if (AbortSignal.timeout) {
-        effectiveSignal = AbortSignal.timeout(30000);
+        effectiveSignal = AbortSignal.timeout(GEMINI_REQUEST_TIMEOUT_MS);
       } else {
         // AbortSignal.timeout unavailable (older browsers) — manual fallback so the
         // fetch never hangs forever.
         const fallback = new AbortController();
-        const tid = setTimeout(() => fallback.abort(), 30000);
+        const tid = setTimeout(() => fallback.abort(), GEMINI_REQUEST_TIMEOUT_MS);
         effectiveSignal = fallback.signal;
         _cleanup = () => clearTimeout(tid);
       }
@@ -297,15 +299,18 @@ export async function callGemini(apiKey, messages, systemPrompt, jsonMode = fals
           _recordCall();
         }
 
+        const headers = {
+          "Content-Type": "application/json",
+        };
+        if (apiKey.startsWith("AIza")) {
+          headers["x-goog-api-key"] = apiKey;
+        } else {
+          headers.Authorization = `Bearer ${apiKey}`;
+        }
+
         const res = await fetch(url, {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            // NOTE: The API key is visible in the browser's DevTools Network tab.
-            // This is unavoidable for a purely client-side app; warn users in the README
-            // not to share screenshots of request headers or HAR files.
-            "x-goog-api-key": apiKey,
-          },
+          headers,
           body: JSON.stringify(body),
           signal: effectiveSignal,
         });

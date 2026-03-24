@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import { useAppContext } from "./context/AppContext";
 import { todayUTC, localDateFromUTC, LS, storageKey } from "./utils/db";
-import { DAILY_TOKEN_LIMIT, DATA_DISCLOSURE_SEEN_KEY } from "./constants";
+import { DATA_DISCLOSURE_SEEN_KEY } from "./constants";
+import { GEMINI_DAILY_TOKEN_LIMIT } from "./config.js";
 import { callGemini, RateLimitedError, RATE_LIMIT_WINDOW_MS, RATE_LIMIT_CAP } from "./api/gemini";
 import { isSafeSyncValue } from "./sync/SyncManager";
 
@@ -9,7 +10,7 @@ function NeuralEnergyBar({ usage, theme }) {
   if (!usage || typeof usage.date !== "string") return null;
   const isToday = usage.date === todayUTC();
   const tokens = isToday ? (usage.tokens || 0) : 0;
-  const pct = Math.min(100, (tokens / DAILY_TOKEN_LIMIT) * 100);
+  const pct = Math.min(100, (tokens / GEMINI_DAILY_TOKEN_LIMIT) * 100);
   const pctDisplay = pct < 0.1 ? "<0.1" : pct.toFixed(1);
   const isLight = theme === "light";
   const textColor = isLight ? "#000" : "#fff";
@@ -39,7 +40,7 @@ const INJECTION_CHARS_RE = /[<>{}`"'\\]/g;
 let _msgSeq = 0;
 
 export default function ChatTab() {
-  const { state, setState, latestStateRef, profile, apiKey, executeCommands, showBanner, buildSystemPrompt, checkMissions, trackTokens, theme } = useAppContext();
+  const { state, setState, latestStateRef, profile, apiKey, getAiToken, executeCommands, showBanner, buildSystemPrompt, checkMissions, trackTokens, theme } = useAppContext();
   const fg  = theme === "light" ? "#000" : "#fff";
   const bg  = theme === "light" ? "#f0f0f0" : "#000";
   const dim = theme === "light" ? "#555" : "#aaa";
@@ -111,10 +112,9 @@ export default function ChatTab() {
       showBanner(`Message too long (max ${MAX_INPUT_LENGTH} chars).`, "alert");
       return;
     }
-    if (!apiKey) { showBanner("No Gemini API key configured.", "alert"); return; }
     if (typeof navigator !== 'undefined' && navigator.onLine === false) { showBanner("SYSTEM: No network connection. AI offline.", "alert"); return; }
     const usage = latestStateRef?.current?.tokenUsage ?? state.tokenUsage;
-    if (usage && usage.date === todayUTC() && usage.tokens >= DAILY_TOKEN_LIMIT) {
+    if (usage && usage.date === todayUTC() && usage.tokens >= GEMINI_DAILY_TOKEN_LIMIT) {
       showBanner("SYSTEM: Neural energy depleted. AI functions offline until tomorrow.", "alert");
       return;
     }
@@ -142,6 +142,25 @@ export default function ChatTab() {
     inFlightRef.current = true;
     setLoading(true);
 
+    let token;
+    try {
+      token = await getAiToken();
+    } catch (e) {
+      if (e?.message === "GOOGLE_AUTH_REFRESH_FAILED" || e?.message === "GOOGLE_AUTH_NO_REFRESH_TOKEN") {
+        showBanner("Google session expired. Reconnect in Settings → AI.", "alert");
+        setLoading(false);
+        inFlightRef.current = false;
+        return;
+      }
+      token = apiKey;
+    }
+    if (!token || !String(token).trim()) {
+      showBanner("No AI connection configured.", "alert");
+      setLoading(false);
+      inFlightRef.current = false;
+      return;
+    }
+
     try {
       // NOTE: state here is the pre-setState snapshot. buildSystemPrompt must tolerate stale refs —
       // all string fields must be sanitized inside buildSystemPrompt, not assumed clean here.
@@ -162,7 +181,7 @@ export default function ChatTab() {
       // (e.g. 10+ prepare-to-lecture tasks). The response is batched client-side
       // into chunks of 5 by the command dispatcher below, so the AI only needs to
       // produce one large JSON blob — we just need enough tokens to fit it.
-      const { text: raw, tokensUsed } = await callGemini(apiKey, apiMessages, systemPrompt, true, controller.signal, 4096);
+      const { text: raw, tokensUsed } = await callGemini(token, apiMessages, systemPrompt, true, controller.signal, 4096);
       trackTokens?.(tokensUsed);
 
       // Robust JSON extraction — tries multiple strategies before falling back to plain text.

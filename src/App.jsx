@@ -5,8 +5,10 @@ import { useAppState }   from "./hooks/useAppState";
 import { useUI }         from "./hooks/useUI";
 import { useSync }       from "./hooks/useSync";
 import { useGameEngine } from "./hooks/useGameEngine";
-import { useScheduler }  from "./hooks/useScheduler";
+import { useNotifications } from "./hooks/useNotifications";
+import { useAiNotifications } from "./hooks/useAiNotifications";
 import { useDailyLogin } from "./hooks/useDailyLogin";
+import { useHealthKit } from "./hooks/useHealthKit";
 
 // Context
 import { AppContext } from "./context/AppContext";
@@ -14,12 +16,19 @@ import { AppContext } from "./context/AppContext";
 // Utils
 import { LS, storageKey, IS_DEV, getGeminiApiKey, setGeminiApiKey, todayUTC, localDateFromUTC, APP_ICON_URL } from "./utils/db";
 import { getLevel, getRank, getXpPerLevel, getGachaCost, getStreakShieldCost, calcSessionXP } from "./utils/xp";
-import { THEME_KEY, SESSION_TYPES, DEFAULT_XP_PER_LEVEL, DEFAULT_GACHA_COST, DEFAULT_STREAK_SHIELD_COST, DAILY_TOKEN_LIMIT } from "./constants";
+import { THEME_KEY, SESSION_TYPES, DEFAULT_XP_PER_LEVEL, DEFAULT_GACHA_COST, DEFAULT_STREAK_SHIELD_COST } from "./constants";
+import { GEMINI_DAILY_TOKEN_LIMIT, OAUTH_REDIRECT_SCHEME } from "./config.js";
 import { buildSystemPrompt } from "./api/systemPrompt";
-import { fetchGCalEvents, loadGoogleGIS } from "./api/gcal";
+import { fetchGCalEvents, loadGoogleGIS, GCAL_SCOPE } from "./api/gcal";
 import { callGemini, RateLimitedError, clearRateLimitWindow } from "./api/gemini";
-import { FSAPI_SUPPORTED, isSafeSyncValue } from "./sync/SyncManager";
+import { isSafeSyncValue } from "./sync/SyncManager";
 import { verifyOAuthState } from "./api/dropbox";
+import { App as CapApp } from "@capacitor/app";
+import {
+  handleGoogleOAuthCallback,
+  getActiveAiToken,
+} from "./api/googleAuth";
+import { SyncManager } from "./sync/SyncManager";
 
 const MISSION_DEFS = [
   { id: "m1", desc: "Complete 3 habits",  target: 3,  type: "habits",  xp: 100, done: false },
@@ -150,10 +159,9 @@ import TutorialOverlay from "./TutorialOverlay";
 // Rendered inside the main App (after hooks run) so it has access
 // to connectDropbox, syncPull, pickSyncFile, etc.
 // ─────────────────────────────────────────────────────────────
-function MissingKeyGate({ connectDropbox, dropboxConnected, pickSyncFile, syncPull, resetPullMutex, onGeminiKeySaved }) {
-  const [mode, setMode]           = useState("choose"); // "choose" | "gemini" | "syncthing"
-  const [syncFileLinked, setSyncFileLinked] = useState(false);
-  const [syncStatus, setSyncStatus]         = useState("idle"); // "idle" | "syncing" | "synced" | "error"
+function MissingKeyGate({ connectDropbox, dropboxConnected, onGeminiKeySaved }) {
+  const [mode, setMode]           = useState("choose"); // "choose" | "gemini" | "import"
+  const importInputRef = useRef(null);
   const [syncError, setSyncError]           = useState("");
   const [dropboxError, setDropboxError]     = useState("");
 
@@ -189,43 +197,23 @@ function MissingKeyGate({ connectDropbox, dropboxConnected, pickSyncFile, syncPu
     }
   }
 
-  async function handleSyncthingLink() {
+  async function handleImportFile(e) {
     setSyncError("");
-    try {
-      await pickSyncFile();
-      setSyncFileLinked(true);
-    } catch (e) {
-      if (e?.name !== "AbortError") setSyncError("Could not link file. Try again.");
-    }
-  }
-
-  async function handleSyncthingPull() {
-    setSyncError(""); setSyncStatus("syncing");
+    const file = e.target.files?.[0];
+    try { e.target.value = ""; } catch { /* ignore */ }
+    if (!file) return;
     window.dispatchEvent(new CustomEvent("ritmol:block-autopush", { detail: { ms: 3000 } }));
     try {
-      await syncPull();
-      setSyncStatus("synced");
-      setTimeout(() => {
-        try { window.location.reload(); } catch {
-          try { window.location.href = window.location.origin + window.location.pathname; }
-          catch { resetPullMutex?.(); }
-        }
-        setTimeout(() => resetPullMutex?.(), 3000);
-      }, 250);
-    } catch (e) {
-      setSyncStatus("error");
+      await SyncManager.importFile(file);
+      window.location.reload();
+    } catch (err) {
       const msgs = {
-        NO_HANDLE:              "No sync file linked yet. Use the button above to link your file.",
-        CORRUPT_FILE:           "Sync file is corrupt or not valid JSON. Re-export from another device.",
-        SYNC_SCHEMA_OUTDATED:   "Sync file was written by an older version of RITMOL. Update the app first.",
-        SYNC_FILE_TOO_LARGE:    "Sync file exceeds 10 MB. Check for unusually large chat or session history.",
-        SYNC_BUSY:              "Sync already in progress. Please wait a moment and try again.",
-        IDB_NOT_READY:          "Still loading — try again in a moment.",
-        DROPBOX_FILE_NOT_FOUND: "No RITMOL file found in Dropbox. Push from another device first.",
-        DROPBOX_OFFLINE:        "No network connection. Connect to the internet and try again.",
-        DROPBOX_TOKEN_EXPIRED:  "Dropbox session expired. Reconnect Dropbox and try again.",
+        CORRUPT_FILE: "Import failed: file is corrupt or not valid JSON.",
+        SYNC_FILE_TOO_LARGE: "Import failed: file exceeds 10 MB.",
+        SYNC_BUSY: "Sync already in progress. Please wait.",
+        IDB_NOT_READY: "Still loading — try again in a moment.",
       };
-      setSyncError(msgs[e?.message] ?? "Pull failed. Check your sync file and try again.");
+      setSyncError(msgs[err?.message] ?? "Import failed.");
     }
   }
 
@@ -267,11 +255,10 @@ function MissingKeyGate({ connectDropbox, dropboxConnected, pickSyncFile, syncPu
           <button type="button" onClick={() => setMode("gemini")} style={{ ...btnSecondary, marginBottom: 0, fontSize: "13px" }}>
             ENTER GEMINI KEY MANUALLY
           </button>
-          {FSAPI_SUPPORTED && (
-            <button type="button" onClick={() => setMode("syncthing")} style={{ ...btnSecondary, marginBottom: 0, fontSize: "13px" }}>
-              LOAD FROM FILE
-            </button>
-          )}
+          <input ref={importInputRef} type="file" accept=".json,application/json" style={{ display: "none" }} onChange={handleImportFile} />
+          <button type="button" onClick={() => importInputRef.current?.click()} style={{ ...btnSecondary, marginBottom: 0, fontSize: "13px" }}>
+            IMPORT JSON FILE
+          </button>
         </div>
 
         <div style={{ marginTop: "32px", fontSize: "11px", color: "#fff", letterSpacing: "2px", opacity: 0.4 }}>
@@ -290,11 +277,11 @@ function MissingKeyGate({ connectDropbox, dropboxConnected, pickSyncFile, syncPu
       <img src={APP_ICON_URL} alt="" style={{ width: 44, height: 44, marginBottom: "20px", marginTop: "24px" }} onError={(e) => { e.currentTarget.style.display = "none"; }} />
       <div style={{ fontSize: "16px", color: "#fff", letterSpacing: "3px", marginBottom: "6px", fontFamily: "'Share Tech Mono', monospace", fontWeight: "bold" }}>[ RITMOL ]</div>
       <div style={{ fontSize: "20px", fontWeight: "bold", letterSpacing: "1px", marginBottom: "6px" }}>
-        {mode === "gemini" ? "GEMINI API KEY" : mode === "syncthing" ? "LOAD FROM FILE" : "SETUP REQUIRED"}
+        {mode === "gemini" ? "GEMINI API KEY" : mode === "import" ? "IMPORT FILE" : "SETUP REQUIRED"}
       </div>
       <div style={{ fontSize: "16px", color: "#fff", marginBottom: "28px", fontFamily: "'Share Tech Mono', monospace" }}>
         {mode === "gemini"   ? "Enter your key to enable AI features." :
-         mode === "syncthing" ? "Pull your data file to restore your config." :
+         mode === "import" ? "Import a ritmol-data.json backup." :
          "A Gemini API key is needed to continue."}
       </div>
 
@@ -312,11 +299,10 @@ function MissingKeyGate({ connectDropbox, dropboxConnected, pickSyncFile, syncPu
                   CONNECT DROPBOX ↗
                 </button>
                 {dropboxError && <div style={{ color: "#fff", fontSize: "16px", marginBottom: "10px", fontFamily: "'Share Tech Mono', monospace", fontWeight: "bold" }}>[ ERR ] {dropboxError}</div>}
-                {FSAPI_SUPPORTED && (
-                  <button type="button" onClick={() => setMode("syncthing")} style={{ ...btnSecondary, marginBottom: "24px" }}>
-                    LOAD FROM SYNCTHING FILE
-                  </button>
-                )}
+                <input ref={importInputRef} type="file" accept=".json,application/json" style={{ display: "none" }} onChange={handleImportFile} />
+                <button type="button" onClick={() => importInputRef.current?.click()} style={{ ...btnSecondary, marginBottom: "24px" }}>
+                  IMPORT JSON FILE
+                </button>
                 <div style={{ height: "1px", background: "#222", marginBottom: "24px" }} />
               </>
             )}
@@ -339,31 +325,18 @@ function MissingKeyGate({ connectDropbox, dropboxConnected, pickSyncFile, syncPu
           </>
         )}
 
-        {/* ── Syncthing pull ── */}
-        {mode === "syncthing" && (
+        {/* ── Import file ── */}
+        {mode === "import" && (
           <>
             <div style={{ fontSize: "16px", color: "#fff", lineHeight: "1.8", marginBottom: "16px", fontFamily: "'Share Tech Mono', monospace" }}>
-              Link your <code>ritmol-data.json</code> from your Syncthing folder, then pull to load your Gemini key and data.
+              Select a <code>ritmol-data.json</code> export to restore your data and Gemini key (if present in the file).
             </div>
-            <button type="button" onClick={handleSyncthingLink} style={btnPrimary}>
-              {syncFileLinked ? "✓ FILE LINKED" : "LINK SYNC FILE →"}
-            </button>
-            <button
-              type="button"
-              onClick={handleSyncthingPull}
-              disabled={!syncFileLinked || syncStatus === "syncing"}
-              style={{
-                ...btnSecondary,
-                color: (!syncFileLinked || syncStatus === "syncing") ? "#555" : "#fff",
-                border: (!syncFileLinked || syncStatus === "syncing") ? "2px solid #555" : "2px solid #fff",
-                cursor: (!syncFileLinked || syncStatus === "syncing") ? "not-allowed" : "pointer",
-                marginBottom: "12px",
-              }}
-            >
-              {syncStatus === "syncing" ? "LOADING..." : syncStatus === "synced" ? "✓ LOADED — RELOADING…" : "PULL FROM FILE ↓"}
+            <input ref={importInputRef} type="file" accept=".json,application/json" style={{ display: "none" }} onChange={handleImportFile} />
+            <button type="button" onClick={() => importInputRef.current?.click()} style={btnPrimary}>
+              CHOOSE FILE
             </button>
             {syncError && <div style={{ color: "#fff", fontSize: "16px", marginBottom: "8px", fontFamily: "'Share Tech Mono', monospace", fontWeight: "bold" }}>[ ERR ] {syncError}</div>}
-            <button type="button" onClick={() => { setMode("choose"); setSyncError(""); setSyncStatus("idle"); }} style={btnSecondary}>
+            <button type="button" onClick={() => { setMode("choose"); setSyncError(""); }} style={{ ...btnSecondary, marginTop: "12px" }}>
               ← BACK
             </button>
           </>
@@ -434,6 +407,23 @@ export default function App() {
   // this call observes the updated value — there is at most a single render
   // where the old key remains in scope.
   const apiKey           = getGeminiApiKey();
+  const googleClientId   = (import.meta.env.VITE_GOOGLE_CLIENT_ID || "").trim();
+  const getAiToken = useCallback(async () => {
+    try {
+      const g = latestStateRef.current?.googleAuthConnected;
+      return await getActiveAiToken(g, googleClientId);
+    } catch (e) {
+      if (e?.message === "GOOGLE_AUTH_REFRESH_FAILED" || e?.message === "GOOGLE_AUTH_NO_REFRESH_TOKEN") {
+        showBanner("Google session expired. Reconnect in Settings → AI Connection.", "alert");
+        const k = getGeminiApiKey();
+        return k && String(k).trim() ? k : null;
+      }
+      throw e;
+    }
+  }, [googleClientId, showBanner, latestStateRef]);
+  const hasAiAuth =
+    !!(apiKey && String(apiKey).trim()) || !!state?.googleAuthConnected;
+
   const xpPerLevel       = state ? getXpPerLevel(state) : DEFAULT_XP_PER_LEVEL;
   const level            = state ? getLevel(state.xp, xpPerLevel) : 0;
   const rank             = getRank(level);
@@ -441,10 +431,16 @@ export default function App() {
   const streakShieldCost = state ? getStreakShieldCost(state) : DEFAULT_STREAK_SHIELD_COST;
 
   const { awardXP, checkMissions, unlockAchievement, executeCommands, trackTokens, logHabit, actionLocksRef, lastLevelUpXpRef } =
-    useGameEngine({ setState, latestStateRef, showBanner, showToast, setLevelUpData });
+    useGameEngine({ setState, latestStateRef, showBanner, showToast, setLevelUpData, getAiToken });
 
-  const { syncFileConnected, dropboxConnected, syncStatus, lastSynced, confirmForgetSync, syncPush, syncPull, pickSyncFile, forgetSyncFile, connectDropbox, handleDropboxCallback, disconnectDropbox, isReloading, resetPullMutex } =
+  const { dropboxConnected, syncStatus, lastSynced, syncPush, syncPull, connectDropbox, handleDropboxCallback, disconnectDropbox, isReloading } =
     useSync({ latestStateRef, rehydrate, showBanner });
+
+  const { scheduleAiNotification, requestNotificationPermission } = useNotifications({
+    state, profile, showBanner, setModal, setState,
+  });
+  useAiNotifications({ latestStateRef, getAiToken, setState, scheduleAiNotification });
+  useHealthKit({ latestStateRef, setState, showBanner });
 
   // OAuth callback: when returning from Dropbox, exchange code and pull.
   // Two landing scenarios:
@@ -505,10 +501,75 @@ export default function App() {
     }
   }, [handleDropboxCallback, showBanner, showOnboarding]);
 
-  useDailyLogin({ profile, setState, setModal, setLevelUpData, showBanner, trackTokens, lastLevelUpXpRef });
-  useScheduler({ state, profile, showBanner, setModal });
+  // Google OAuth return (web / Capacitor)
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    let code = params.get("code");
+    let st = params.get("state");
+    if ((!code || !st) && params.get("q")) {
+      try {
+        const decoded = decodeURIComponent(params.get("q"));
+        let search = decoded;
+        if (decoded.includes("?")) {
+          const [pathPart, queryPart] = decoded.split("?");
+          if (pathPart.includes("google-callback")) search = queryPart;
+          else search = "";
+        }
+        if (search) {
+          const qParams = new URLSearchParams(search);
+          code = code || qParams.get("code");
+          st = st || qParams.get("state");
+        }
+      } catch { /* ignore */ }
+    }
+    const pathOk = window.location.pathname.includes("google-callback");
+    const pending = (() => {
+      try { return sessionStorage.getItem("ritmol_google_oauth_state"); } catch { return null; }
+    })();
+    if (code && st && (pathOk || pending)) {
+      window.history.replaceState({}, "", window.location.pathname.replace(/\/google-callback\/?$/, "") || "/");
+      handleGoogleOAuthCallback(code, st)
+        .then(() => setState((s) => ({ ...s, googleAuthConnected: true })))
+        .catch((err) => showBanner(`Google connection failed: ${err.message}`, "alert"));
+    }
+  }, [setState, showBanner]);
 
-  // Handle "mark reminded" event dispatched by useScheduler
+  useEffect(() => {
+    let sub;
+    (async () => {
+      sub = await CapApp.addListener("appUrlOpen", ({ url }) => {
+        try {
+          if (url.startsWith(`${OAUTH_REDIRECT_SCHEME}://auth/google`)) {
+            const u = new URL(url);
+            handleGoogleOAuthCallback(u.searchParams.get("code") || "", u.searchParams.get("state") || "")
+              .then(() => setState((s) => ({ ...s, googleAuthConnected: true })))
+              .catch((err) => showBanner(`Google connection failed: ${err.message}`, "alert"));
+          }
+          if (url.startsWith(`${OAUTH_REDIRECT_SCHEME}://auth/dropbox`)) {
+            const u = new URL(url);
+            const c = u.searchParams.get("code");
+            const st = u.searchParams.get("state");
+            if (c && st && verifyOAuthState(st)) {
+              handleDropboxCallback(c, {
+                onNeedsGeminiKey: () => { if (!showOnboarding) setShowGeminiKeySetup(true); },
+              });
+            }
+          }
+        } catch { /* ignore */ }
+      });
+    })();
+    return () => { try { sub?.remove?.(); } catch { /* ignore */ } };
+  }, [handleDropboxCallback, showBanner, showOnboarding, setState]);
+
+  useEffect(() => {
+    const onRevoke = () => setState((s) => ({ ...s, googleAuthConnected: false }));
+    window.addEventListener("ritmol:google-auth-revoked", onRevoke);
+    return () => window.removeEventListener("ritmol:google-auth-revoked", onRevoke);
+  }, [setState]);
+
+  useDailyLogin({ profile, setState, setModal, setLevelUpData, showBanner, trackTokens, lastLevelUpXpRef });
+
+  // Handle "mark reminded" event dispatched by useNotifications (web + native)
   useEffect(() => {
     const handler = (e) => {
       const ids = new Set(e.detail?.ids || []);
@@ -569,7 +630,7 @@ export default function App() {
   }
 
   useEffect(() => {
-    if (!profile || !apiKey) return;
+    if (!profile || !hasAiAuth) return;
 
     const wk = localWeekKey();
     const mo = localMonthKey();
@@ -592,7 +653,7 @@ export default function App() {
 
       // Skip if token budget exhausted
       const usage = state?.tokenUsage;
-      if (usage && usage.date === todayUTC() && usage.tokens >= DAILY_TOKEN_LIMIT) return;
+      if (usage && usage.date === todayUTC() && usage.tokens >= GEMINI_DAILY_TOKEN_LIMIT) return;
 
       // Mark attempted immediately — before the async call — so no re-render can sneak in a second call.
       // Also persist to sessionStorage so a page reload within the same session doesn't re-fire.
@@ -609,7 +670,11 @@ export default function App() {
         return;
       }
 
-      generateAiMissions(apiKey, profile, period, trackTokens, abortControllers[period].signal)
+      getAiToken()
+        .then((key) => {
+          if (!key) throw new Error("NO_KEY");
+          return generateAiMissions(key, profile, period, trackTokens, abortControllers[period].signal);
+        })
         .then((missions) => {
           if (missions === null) {
             // Parse failure — write empty array but do NOT advance the date key
@@ -627,7 +692,13 @@ export default function App() {
           // On abort (effect cleanup) or 429 (rate limit): clear the attempted flag
           // so the next session can retry, and do NOT advance the date key.
           const isAbort = err?.name === "AbortError";
+          const isNoKey = err?.message === "NO_KEY";
           const isRateLimit = err?.message?.includes("429") || err instanceof RateLimitedError;
+          if (isNoKey) {
+            missionAttemptedRef.current[period] = false;
+            try { sessionStorage.removeItem(`ritmol_mission_attempted_${period}_${currentPeriodKey}`); } catch { /* ignore */ }
+            return;
+          }
           if (isAbort || isRateLimit) {
             missionAttemptedRef.current[period] = false;
             try { sessionStorage.removeItem(`ritmol_mission_attempted_${period}_${currentPeriodKey}`); } catch { /* ignore */ }
@@ -654,11 +725,11 @@ export default function App() {
       abortControllers.weekly.abort();
       abortControllers.monthly.abort();
     };
-  // Only re-run when profile or apiKey first becomes available — never on state changes.
+  // Only re-run when profile or AI auth first becomes available — never on state changes.
   // profile.name is intentionally omitted: a name change does not warrant new missions,
   // and including it caused spurious re-runs that fired duplicate API calls.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [!!profile, !!apiKey]);
+  }, [!!profile, !!hasAiAuth]);
 
   // ── Daily Google Calendar auto-sync ──────────────────────────
   // Fires once per day when the user has already connected GCal.
@@ -690,7 +761,7 @@ export default function App() {
         const tokenResponse = await new Promise((resolve, reject) => {
           const tokenClient = window.google.accounts.oauth2.initTokenClient({
             client_id: clientId,
-            scope: "https://www.googleapis.com/auth/calendar.readonly",
+            scope: GCAL_SCOPE,
             // Empty prompt = silent re-auth using existing Google session.
             // If the session has expired this will reject and we skip silently.
             callback: (resp) => { if (resp.error) reject(new Error(resp.error)); else resolve(resp); },
@@ -758,6 +829,8 @@ export default function App() {
     return (
       <ErrorBoundary>
         <Onboarding
+          setState={setState}
+          healthKitEnabled={state?.healthKitEnabled}
           onComplete={async (profile) => {
             setState((s) => ({ ...s, profile }));
             setShowOnboarding(false);
@@ -812,7 +885,7 @@ export default function App() {
       </ErrorBoundary>
     );
   }
-  if (!apiKey) {
+  if (!hasAiAuth) {
     // While the auto-pull on mount is in flight (Dropbox connected, pulling key),
     // show a loading screen instead of MissingKeyGate so the user never sees a
     // jarring "setup required" flash on a normal returning-user open.
@@ -828,9 +901,6 @@ export default function App() {
         <MissingKeyGate
           connectDropbox={connectDropbox}
           dropboxConnected={dropboxConnected}
-          pickSyncFile={pickSyncFile}
-          syncPull={syncPull}
-          resetPullMutex={resetPullMutex}
           onGeminiKeySaved={async (key) => {
             setGeminiApiKey(key);
             await syncPush();
@@ -853,11 +923,14 @@ export default function App() {
     level, rank, xpPerLevel, gachaCost, streakShieldCost,
     awardXP, checkMissions, unlockAchievement, executeCommands, trackTokens, logHabit, actionLocksRef,
     showBanner, showToast, setModal,
-    syncStatus, lastSynced, syncFileConnected, dropboxConnected, confirmForgetSync,
-    syncPush, syncPull, pickSyncFile, forgetSyncFile,
+    syncStatus, lastSynced, dropboxConnected,
+    syncPush, syncPull,
     connectDropbox, handleDropboxCallback, disconnectDropbox,
     buildSystemPrompt, setTab,
     rehydrateCount,
+    getAiToken,
+    hasAiAuth,
+    requestNotificationPermission,
   };
 
   return (
@@ -902,7 +975,7 @@ export default function App() {
             DEV MODE — separate localStorage (ritmol_dev_*)
           </div>
         )}
-        <TopBar xp={state.xp} xpPerLevel={xpPerLevel} level={level} rank={rank} profile={profile} syncStatus={syncStatus} lastSynced={lastSynced} onPush={syncPush} onPull={syncPull} syncFileConnected={syncFileConnected || (IS_DEV && typeof window !== "undefined" && window.__RITMOL_TEST__)} isReloading={isReloading} theme={theme} onOpenSettings={() => setTab("settings")} />
+        <TopBar xp={state.xp} xpPerLevel={xpPerLevel} level={level} rank={rank} profile={profile} syncStatus={syncStatus} lastSynced={lastSynced} onPush={syncPush} onPull={syncPull} dropboxConnected={dropboxConnected || (IS_DEV && typeof window !== "undefined" && window.__RITMOL_TEST__)} isReloading={isReloading} theme={theme} onOpenSettings={() => setTab("settings")} />
         <div data-scroll="" style={{ flex: 1, overflowY: "auto", overflowX: "hidden", paddingBottom: "calc(60px + env(safe-area-inset-bottom, 0px))" }}>
           {tab === "home"     && <ErrorBoundary key="home"><HomeTab /></ErrorBoundary>}
           {tab === "habits"   && <ErrorBoundary key="habits"><HabitsTab /></ErrorBoundary>}

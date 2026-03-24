@@ -29,6 +29,16 @@
 //
 // ═══════════════════════════════════════════════════════════════
 
+import {
+  DROPBOX_OAUTH_URL,
+  DROPBOX_TOKEN_URL,
+  DROPBOX_UPLOAD_URL,
+  DROPBOX_DOWNLOAD_URL,
+  DROPBOX_METADATA_URL,
+  DROPBOX_CREATE_FOLDER_URL,
+  OAUTH_REDIRECT_SCHEME,
+} from "../config.js";
+
 const DROPBOX_CLIENT_ID = import.meta.env.VITE_DROPBOX_APP_KEY;
 
 // Guard: if VITE_DROPBOX_APP_KEY was not set at build time, all Dropbox functions
@@ -52,14 +62,18 @@ function _redactAppKey(str) {
   if (!DROPBOX_CLIENT_ID || typeof str !== "string") return str;
   return str.split(DROPBOX_CLIENT_ID).join("[app_key]");
 }
+
 const BASE = (import.meta.env.BASE_URL || "/").replace(/\/$/, "") || "";
-const REDIRECT_URI = `${window.location.origin}${BASE}/dropbox-callback`;
 const SYNC_FILE_PATH = "/Apps/RITMOL/ritmol-data.json";
-const TOKEN_ENDPOINT = "https://api.dropboxapi.com/oauth2/token";
-const UPLOAD_ENDPOINT = "https://content.dropboxapi.com/2/files/upload";
-const DOWNLOAD_ENDPOINT = "https://content.dropboxapi.com/2/files/download";
-const METADATA_ENDPOINT = "https://api.dropboxapi.com/2/files/get_metadata";
-const CREATE_FOLDER_ENDPOINT = "https://api.dropboxapi.com/2/files/create_folder_v2";
+
+/** Must match between authorize redirect and token exchange (web vs Capacitor native). */
+export function getDropboxRedirectUri() {
+  const isNative = typeof window !== "undefined" &&
+    window?.Capacitor?.isNativePlatform?.();
+  return isNative
+    ? `${OAUTH_REDIRECT_SCHEME}://auth/dropbox`
+    : `${window.location.origin}${BASE}/dropbox-callback`;
+}
 
 const PREFIX = import.meta.env.DEV ? "ritmol_dev_" : "ritmol_";
 // Access token is short-lived and security-sensitive — keep in sessionStorage.
@@ -242,16 +256,17 @@ export function startOAuthFlow() {
   sessionStorage.setItem(SS_OAUTH_STATE, oauthState);
 
   generateCodeChallenge(verifier).then((challenge) => {
+    const redirectUri = getDropboxRedirectUri();
     const params = new URLSearchParams({
       client_id: DROPBOX_CLIENT_ID,
-      redirect_uri: REDIRECT_URI,
+      redirect_uri: redirectUri,
       response_type: "code",
       code_challenge: challenge,
       code_challenge_method: "S256",
       token_access_type: "offline",
       state: oauthState,
     });
-    window.location.href = `https://www.dropbox.com/oauth2/authorize?${params.toString()}`;
+    window.location.href = `${DROPBOX_OAUTH_URL}?${params.toString()}`;
   });
 }
 
@@ -279,13 +294,13 @@ export async function handleOAuthCallback(code) {
   const body = new URLSearchParams({
     grant_type: "authorization_code",
     code,
-    redirect_uri: REDIRECT_URI,
+    redirect_uri: getDropboxRedirectUri(),
     code_verifier: verifier,
     client_id: DROPBOX_CLIENT_ID,
   });
 
   try {
-    const res = await _fetchWithTimeout(TOKEN_ENDPOINT, {
+    const res = await _fetchWithTimeout(DROPBOX_TOKEN_URL, {
       method: "POST",
       headers: {
         "Content-Type": "application/x-www-form-urlencoded",
@@ -341,7 +356,7 @@ export async function refreshAccessToken() {
   });
 
   try {
-    const res = await _fetchWithTimeout(TOKEN_ENDPOINT, {
+    const res = await _fetchWithTimeout(DROPBOX_TOKEN_URL, {
       method: "POST",
       headers: {
         "Content-Type": "application/x-www-form-urlencoded",
@@ -390,7 +405,7 @@ export async function getMetadata() {
   if (!tokens) throw new Error("DROPBOX_AUTH_REQUIRED");
 
   try {
-    const res = await _fetchWithTimeout(METADATA_ENDPOINT, {
+    const res = await _fetchWithTimeout(DROPBOX_METADATA_URL, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${tokens.accessToken}`,
@@ -422,7 +437,7 @@ export async function downloadFile() {
   if (!tokens) throw new Error("DROPBOX_AUTH_REQUIRED");
 
   try {
-    const res = await _fetchWithTimeout(DOWNLOAD_ENDPOINT, {
+    const res = await _fetchWithTimeout(DROPBOX_DOWNLOAD_URL, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${tokens.accessToken}`,
@@ -470,7 +485,7 @@ export async function uploadFile(text) {
     : { ".tag": "overwrite" };
 
   try {
-    const res = await _fetchWithTimeout(UPLOAD_ENDPOINT, {
+    const res = await _fetchWithTimeout(DROPBOX_UPLOAD_URL, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${tokens.accessToken}`,
@@ -514,7 +529,7 @@ export async function ensureFolderExists() {
   if (!tokens) throw new Error("DROPBOX_AUTH_REQUIRED");
 
   try {
-    const res = await _fetchWithTimeout(CREATE_FOLDER_ENDPOINT, {
+    const res = await _fetchWithTimeout(DROPBOX_CREATE_FOLDER_URL, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${tokens.accessToken}`,

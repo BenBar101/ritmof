@@ -23,7 +23,7 @@ import { storageKey, todayUTC, localDateFromUTC, getMaxDateSeen, idbGet, getGemi
 import { getLevel, getRank, getXpPerLevel } from "../utils/xp";
 import { updateDynamicCosts } from "../api/dynamicCosts";
 import { sanitizeForPrompt } from "../api/systemPrompt";
-import { DAILY_TOKEN_LIMIT, DAILY_AI_XP_LIMIT, MAX_HABITS_TOTAL } from "../constants";
+import { GEMINI_DAILY_TOKEN_LIMIT, GEMINI_AI_XP_LIMIT, MAX_HABITS_TOTAL } from "../config.js";
 
 const TOKEN_WARN_THRESHOLDS = [0.5, 0.8, 0.99];
 const MAX_XP_PER_CMD        = 500;
@@ -55,8 +55,23 @@ function sanitizeStr(s, max = MAX_STR_LEN) {
   return s.replace(CTRL_RE, "").replace(BIDI_RE, "").replace(INJECT_RE, "").slice(0, max);
 }
 
+async function resolveGeminiKeyFromRef(getAiTokenRef) {
+  const fn = getAiTokenRef?.current;
+  if (typeof fn === "function") {
+    try {
+      const k = await fn();
+      if (k && String(k).trim()) return String(k).trim();
+    } catch { /* fall through to raw key */ }
+  }
+  const g = getGeminiApiKey();
+  return g && String(g).trim() ? String(g).trim() : "";
+}
+
 // ─────────────────────────────────────────────────────────────
-export function useGameEngine({ setState, latestStateRef, showBanner, showToast, setLevelUpData }) {
+export function useGameEngine({ setState, latestStateRef, showBanner, showToast, setLevelUpData, getAiToken }) {
+  const getAiTokenRef = useRef(getAiToken);
+  useEffect(() => { getAiTokenRef.current = getAiToken; }, [getAiToken]);
+
   // ── Refs that must survive render cycles ─────────────────
   // aiXpTodayRef: updated synchronously so concurrent executeCommands
   // calls in the same event loop all see the accumulated total [Fix #5]
@@ -89,7 +104,7 @@ export function useGameEngine({ setState, latestStateRef, showBanner, showToast,
 
       TOKEN_WARN_THRESHOLDS.forEach((threshold) => {
         const pct = Math.round(threshold * 100);
-        if (!newWarned.includes(pct) && prevTokens < DAILY_TOKEN_LIMIT * threshold && newTokens >= DAILY_TOKEN_LIMIT * threshold) {
+        if (!newWarned.includes(pct) && prevTokens < GEMINI_DAILY_TOKEN_LIMIT * threshold && newTokens >= GEMINI_DAILY_TOKEN_LIMIT * threshold) {
           newWarned.push(pct);
           if (threshold >= 0.99) {
             setTimeout(() => showBanner("SYSTEM: Neural energy depleted. AI functions offline until tomorrow.", "alert"), 0);
@@ -141,7 +156,7 @@ export function useGameEngine({ setState, latestStateRef, showBanner, showToast,
       aiXpTodayRef.current = { date: t, value: baseXp };
     }
     const alreadyAwarded = aiXpTodayRef.current.value;
-    const remaining      = Math.max(0, DAILY_AI_XP_LIMIT - alreadyAwarded);
+    const remaining      = Math.max(0, GEMINI_AI_XP_LIMIT - alreadyAwarded);
     const allowed        = Math.min(requested, remaining);
     if (allowed > 0) {
       aiXpTodayRef.current = { date: t, value: alreadyAwarded + allowed };
@@ -185,7 +200,11 @@ export function useGameEngine({ setState, latestStateRef, showBanner, showToast,
             return { level: newLevel, rank: getRank(newLevel) };
           });
           if (typeof navigator === "undefined" || navigator.onLine !== false) {
-            updateDynamicCosts(getGeminiApiKey(), snapshot, "level_up", trackTokensRef.current)
+            (async () => {
+              const key = await resolveGeminiKeyFromRef(getAiTokenRef);
+              if (!key) return;
+              return updateDynamicCosts(key, snapshot, "level_up", trackTokensRef.current);
+            })()
               .then((costs) => {
                 if (costs && Object.keys(costs).length && _engineMountedRef.current) {
                   setState((prev) => ({ ...prev, dynamicCosts: { ...prev.dynamicCosts, ...costs } }));
@@ -270,7 +289,11 @@ export function useGameEngine({ setState, latestStateRef, showBanner, showToast,
             return { level, rank };
           });
           if (typeof navigator === "undefined" || navigator.onLine !== false) {
-            updateDynamicCosts(getGeminiApiKey(), snapshot, "level_up", trackTokensRef.current)
+            (async () => {
+              const key = await resolveGeminiKeyFromRef(getAiTokenRef);
+              if (!key) return;
+              return updateDynamicCosts(key, snapshot, "level_up", trackTokensRef.current);
+            })()
               .then((costs) => {
                 if (costs && Object.keys(costs).length && _engineMountedRef.current) {
                   setState((prev) => ({ ...prev, dynamicCosts: { ...prev.dynamicCosts, ...costs } }));

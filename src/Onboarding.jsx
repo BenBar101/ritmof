@@ -3,7 +3,9 @@ import { STYLE_CSS } from "./constants";
 import { sanitizeForPrompt } from "./api/systemPrompt";
 import { getGeminiApiKey } from "./utils/db";
 import { isAuthenticated } from "./api/dropbox";
-import { loadGoogleGIS } from "./api/gcal";
+import { loadGoogleGIS, GCAL_SCOPE } from "./api/gcal";
+import { isGoogleAuthConnected, startGoogleOAuthFlow } from "./api/googleAuth";
+import { RitmolHealth } from "./plugins/RitmolHealth.js";
 import GeometricCorners from "./GeometricCorners";
 
 export const primaryBtn = {
@@ -168,7 +170,7 @@ function GCalOnboardingStep({ onSkip, onAdvance, profile, onClientIdChange }) {
       await new Promise((resolve, reject) => {
         const tokenClient = window.google.accounts.oauth2.initTokenClient({
           client_id: id,
-          scope: "https://www.googleapis.com/auth/calendar.readonly",
+          scope: GCAL_SCOPE,
           callback: (resp) => {
             if (resp.error) reject(new Error(resp.error));
             else resolve(resp);
@@ -412,17 +414,142 @@ export function GeminiKeySetupScreen({ onSave }) {
   );
 }
 
+function HealthKitOnboardingStep({ setState, onAdvance }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+      <div style={{ fontSize: "15px", color: "#fff", lineHeight: "1.7", fontFamily: "'Share Tech Mono', monospace" }}>
+        Optional: allow RITMOL to read sleep data from Apple Health to pre-fill your log. No health data is sent to Dropbox or any server.
+      </div>
+      <button
+        type="button"
+        onClick={async () => {
+          try {
+            const { granted } = await RitmolHealth.requestPermission();
+            setState?.((s) => ({ ...s, healthKitEnabled: !!granted }));
+          } catch {
+            setState?.((s) => ({ ...s, healthKitEnabled: false }));
+          }
+          onAdvance?.();
+        }}
+        style={{ ...primaryBtn }}
+      >
+        ALLOW HEALTH ACCESS
+      </button>
+      <button
+        type="button"
+        onClick={() => onAdvance?.()}
+        style={{
+          width: "100%", padding: "12px", border: "2px solid #fff", background: "transparent", color: "#fff",
+          fontFamily: "'Share Tech Mono', monospace", fontSize: "16px", cursor: "pointer", minHeight: "48px",
+        }}
+      >
+        SKIP
+      </button>
+    </div>
+  );
+}
+
+function GeminiAiOnboardingStep({ onGeminiKeySaved, onAdvance }) {
+  const envClientId = (typeof import.meta !== "undefined" && import.meta.env?.VITE_GOOGLE_CLIENT_ID || "").trim();
+  const [oauthConnected, setOauthConnected] = useState(() => isGoogleAuthConnected());
+  const [connectErr, setConnectErr] = useState("");
+
+  useEffect(() => {
+    const id = setInterval(() => {
+      if (isGoogleAuthConnected()) setOauthConnected(true);
+    }, 400);
+    return () => clearInterval(id);
+  }, []);
+
+  useEffect(() => {
+    if (!oauthConnected || !envClientId) return;
+    const t = setTimeout(() => onAdvance?.(), 1000);
+    return () => clearTimeout(t);
+  }, [oauthConnected, envClientId, onAdvance]);
+
+  if (envClientId) {
+    if (oauthConnected) {
+      return (
+        <div style={{ display: "flex", flexDirection: "column", gap: "16px", alignItems: "center", padding: "8px 0" }}>
+          <div style={{
+            width: "64px", height: "64px", borderRadius: "0",
+            border: "3px solid #fff", display: "flex", alignItems: "center", justifyContent: "center",
+            fontSize: "32px", color: "#fff",
+          }}>✓</div>
+          <div style={{ fontSize: "18px", color: "#fff", letterSpacing: "2px", fontWeight: "bold", fontFamily: "'Share Tech Mono', monospace" }}>[ GOOGLE CONNECTED ]</div>
+          <div style={{ fontSize: "16px", color: "#fff", textAlign: "center", fontFamily: "'Share Tech Mono', monospace" }}>CONTINUING…</div>
+        </div>
+      );
+    }
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+        <div style={{ fontSize: "15px", color: "#fff", lineHeight: "1.7", fontFamily: "'Share Tech Mono', monospace" }}>
+          Sign in with Google to use Gemini in RITMOL. No API key to paste when this build has a Client ID configured.
+        </div>
+        <button
+          type="button"
+          onClick={() => {
+            setConnectErr("");
+            try {
+              startGoogleOAuthFlow(envClientId);
+            } catch (e) {
+              setConnectErr(e?.message || "Could not start Google sign-in.");
+            }
+          }}
+          style={{
+            width: "100%", padding: "14px", border: "2px solid #fff",
+            background: "#fff", color: "#000",
+            fontFamily: "'Share Tech Mono', monospace", fontSize: "16px", letterSpacing: "2px",
+            cursor: "pointer",
+          }}
+        >
+          CONNECT GOOGLE
+        </button>
+        {!!getGeminiApiKey() && (
+          <button
+            type="button"
+            onClick={() => onAdvance?.()}
+            style={{
+              width: "100%", padding: "12px", border: "2px solid #555", background: "transparent", color: "#888",
+              fontFamily: "'Share Tech Mono', monospace", fontSize: "14px", letterSpacing: "1px", cursor: "pointer",
+            }}
+          >
+            Continue with existing API key from synced data
+          </button>
+        )}
+        {connectErr && (
+          <div style={{ color: "#fff", fontSize: "14px", fontFamily: "'Share Tech Mono', monospace", fontWeight: "bold" }}>[ ERR ] {connectErr}</div>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <GeminiKeySetupScreen
+      onSave={(key) => {
+        onGeminiKeySaved(key, null);
+        onAdvance();
+      }}
+    />
+  );
+}
+
 const BASE_URL = (import.meta.env.BASE_URL || "/").replace(/\/$/, "") || "";
 const APP_ICON_URL = BASE_URL ? `${BASE_URL}/icon-192.png` : "/icon-192.png";
 
 // ── Main onboarding ───────────────────────────────────────────
-export default function Onboarding({ onComplete, onGeminiKeySaved, connectDropbox }) {
+export default function Onboarding({ onComplete, onGeminiKeySaved, connectDropbox, setState, healthKitEnabled }) {
   // needsDropbox is snapshotted once — Dropbox auth navigates away and back,
   // so by the time we're here the auth state is already final.
   const needsDropbox = useMemo(() => !isAuthenticated(), []);
+  const envGoogleClientId = (typeof import.meta !== "undefined" && import.meta.env?.VITE_GOOGLE_CLIENT_ID || "").trim();
   // needsGemini is reactive state so it updates when Dropbox connects and
   // pulls the Gemini key into sessionStorage during the onboarding flow.
-  const [needsGemini, setNeedsGemini] = useState(() => !getGeminiApiKey());
+  const [needsGemini, setNeedsGemini] = useState(() => {
+    if (getGeminiApiKey()) return false;
+    if (envGoogleClientId && isGoogleAuthConnected()) return false;
+    return true;
+  });
 
   const [step, setStep] = useState(0);
   const [form, setForm] = useState({ name: "", major: "", interests: "", semesterGoal: "", gcalClientId: "" });
@@ -446,8 +573,10 @@ export default function Onboarding({ onComplete, onGeminiKeySaved, connectDropbo
     if (needsGemini) {
       list.push({
         key: "_gemini",
-        title: "GEMINI API KEY",
-        subtitle: "Required for AI features. Get yours free at aistudio.google.com/apikey",
+        title: envGoogleClientId ? "GOOGLE AI ACCESS" : "GEMINI API KEY",
+        subtitle: envGoogleClientId
+          ? "Sign in with Google for Gemini. If you synced an API key from another device, you can skip sign-in."
+          : "Required for AI features. Get yours free at aistudio.google.com/apikey",
         type: "_gemini",
         style: "geometric",
         optional: false,
@@ -500,8 +629,23 @@ export default function Onboarding({ onComplete, onGeminiKeySaved, connectDropbo
       },
     );
 
+    const capIos =
+      typeof window !== "undefined" &&
+      window.Capacitor?.isNativePlatform?.() &&
+      window.Capacitor?.getPlatform?.() === "ios";
+    if (capIos && !healthKitEnabled) {
+      list.push({
+        key: "_healthkit",
+        title: "APPLE HEALTH",
+        subtitle: "Optional sleep import from Health (iOS only).",
+        type: "_healthkit",
+        style: "geometric",
+        optional: true,
+      });
+    }
+
     return list;
-  }, [needsDropbox, needsGemini]);
+  }, [needsDropbox, needsGemini, envGoogleClientId, healthKitEnabled]);
 
   const current = steps[step];
 
@@ -542,10 +686,11 @@ export default function Onboarding({ onComplete, onGeminiKeySaved, connectDropbo
     // setNeedsGemini(false) will cause steps to rebuild (shorter list) on
     // the next render, so we read the key first before calling setStep.
     const keyNowPresent = !!getGeminiApiKey();
-    if (keyNowPresent) setNeedsGemini(false);
+    const googleConnected = isGoogleAuthConnected();
+    if (keyNowPresent || googleConnected) setNeedsGemini(false);
     // Calculate next step against the list length that will exist after the
     // rebuild: if the Gemini step is being dropped, the list shrinks by 1.
-    const nextListLength = steps.length - (keyNowPresent && needsGemini ? 1 : 0);
+    const nextListLength = steps.length - ((keyNowPresent || googleConnected) && needsGemini ? 1 : 0);
     if (step < nextListLength - 1) {
       setStep(step + 1);
     } else {
@@ -554,7 +699,7 @@ export default function Onboarding({ onComplete, onGeminiKeySaved, connectDropbo
   }
 
   function handleNext() {
-    if (current.type === "_dropbox" || current.type === "_gemini" || current.type === "_gcal") {
+    if (current.type === "_dropbox" || current.type === "_gemini" || current.type === "_gcal" || current.type === "_healthkit") {
       advance();
       return;
     }
@@ -621,12 +766,7 @@ export default function Onboarding({ onComplete, onGeminiKeySaved, connectDropbo
         )}
 
         {current.type === "_gemini" && (
-          <GeminiKeySetupScreen
-            onSave={(key) => {
-              onGeminiKeySaved(key, null);
-              advance();
-            }}
-          />
+          <GeminiAiOnboardingStep onGeminiKeySaved={onGeminiKeySaved} onAdvance={advance} />
         )}
 
         {current.type === "_gcal" && (
@@ -638,7 +778,11 @@ export default function Onboarding({ onComplete, onGeminiKeySaved, connectDropbo
           />
         )}
 
-        {current.type !== "_dropbox" && current.type !== "_gemini" && current.type !== "_gcal" && (
+        {current.type === "_healthkit" && (
+          <HealthKitOnboardingStep setState={setState} onAdvance={advance} />
+        )}
+
+        {current.type !== "_dropbox" && current.type !== "_gemini" && current.type !== "_gcal" && current.type !== "_healthkit" && (
           <>
             <label style={{ fontSize: "16px", color: "#fff", letterSpacing: "2px", display: "block", marginBottom: "6px", marginTop: "0", fontFamily: "'Share Tech Mono', monospace", fontWeight: "bold" }}>
               {current.label}

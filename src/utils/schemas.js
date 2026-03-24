@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { todayUTC, localDateFromUTC } from './db'
-import { SYNC_SCHEMA_VERSION, MAX_HABITS_TOTAL } from '../constants'
+import { SYNC_SCHEMA_VERSION, MAX_HABITS_TOTAL } from '../config.js'
 
 // ── Primitives ─────────────────────────────────────────────────
 const dateStr       = z.string().regex(/^\d{4}-\d{2}-\d{2}$/)
@@ -247,4 +247,14 @@ export const SyncPayloadSchema = z.object({
   // geminiKey is allowed in the payload for reading (extracted to sessionStorage)
   // but is never written back out on push
   geminiKey:                z.string().max(64).regex(/^AIza[A-Za-z0-9_-]{20,60}$/).optional(),
+  // v2 fields — optional for v1 sync files
+  jv_healthkit_enabled: z.boolean().optional(),
+  jv_google_auth_connected: z.boolean().optional(),
+  jv_notifications_enabled: z.boolean().optional(),
+  jv_last_ai_notif_batch: z.string().datetime().nullable().optional(),
+  jv_ai_notif_log: z.record(
+    z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    z.array(z.string().max(80)).max(10),
+  ).optional(),
+  jv_lecture_quick_log_pending: z.record(z.string().max(150), z.boolean()).optional(),
 })

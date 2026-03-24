@@ -6,16 +6,6 @@
 export const DATA_DISCLOSURE_SEEN_KEY = "jv_data_disclosure_seen";
 export const THEME_KEY = "jv_theme";
 
-// AI / token limits
-export const DAILY_TOKEN_LIMIT = 80000;
-export const DAILY_AI_XP_LIMIT = 5000;
-
-// Sync schema version — bump when payload format changes; schemas.js uses this for Zod ceiling.
-export const SYNC_SCHEMA_VERSION = 1;
-
-// Maximum number of habits allowed in state — enforced by both Zod schema and useGameEngine.
-export const MAX_HABITS_TOTAL = 100;
-
 // XP / gacha defaults
 export const DEFAULT_XP_PER_LEVEL = 1000;
 export const DEFAULT_GACHA_COST = 100;

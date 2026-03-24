@@ -1,20 +1,16 @@
 import React, { useState, useEffect, useRef } from "react";
 import { useAppContext } from "./context/AppContext";
-import { todayUTC, localDateFromUTC, getGeminiApiKey, setGeminiApiKey, getMaxDateSeen, IS_DEV } from "./utils/db";
-import { ACHIEVEMENT_RARITIES, STYLE_CSS, DAILY_TOKEN_LIMIT, RANKS, sampleGachaRarity } from "./constants";
-import { DATA_DISCLOSURE_SEEN_KEY, THEME_KEY } from "./constants";
+import { todayUTC, localDateFromUTC, getGeminiApiKey } from "./utils/db";
+import { ACHIEVEMENT_RARITIES, STYLE_CSS, RANKS, sampleGachaRarity } from "./constants";
+import { GEMINI_DAILY_TOKEN_LIMIT } from "./config.js";
 import { getLevelProgress } from "./utils/xp";
-import { callGemini, RateLimitedError, clearRateLimitWindow } from "./api/gemini";
-import { fetchGCalEvents, fetchCalendarList, loadGoogleGIS } from "./api/gcal";
-import { SyncManager, FSAPI_SUPPORTED, isSafeSyncValue } from "./sync/SyncManager";
+import { callGemini, RateLimitedError } from "./api/gemini";
+import { fetchGCalEvents, fetchCalendarList, loadGoogleGIS, GCAL_SCOPE } from "./api/gcal";
+import { isSafeSyncValue } from "./sync/SyncManager";
 import GeometricCorners from "./GeometricCorners";
 import { primaryBtn } from "./Onboarding";
-import { idbClearAll, idbSet } from "./utils/db";
 import { updateDynamicCosts } from "./api/dynamicCosts";
 import { sanitizeForPrompt } from "./api/systemPrompt";
-
-// Keys belonging to this app but not starting with "jv_" — must be wiped on full reset.
-const APP_CONSTANT_KEYS = new Set([DATA_DISCLOSURE_SEEN_KEY, THEME_KEY, "jv_last_synced"]);
 
 // Strip control chars, BiDi overrides/zero-width chars from stored gacha fields at render time.
 // Also used by GachaCard to defensively clean up legacy cards saved before stricter sanitizers.
@@ -22,14 +18,14 @@ const APP_CONSTANT_KEYS = new Set([DATA_DISCLOSURE_SEEN_KEY, THEME_KEY, "jv_last
 const SAFE_GACHA_RENDER_REGEX = /[\u0000-\u0009\u000B-\u001F\u007F-\u009F\u200B-\u200D\uFEFF\u202A-\u202E\u2066-\u2069]/g;
 
 export default function ProfileTab() {
-  const { state, setState, latestStateRef, profile, level, rank, xpPerLevel, showBanner, showToast, executeCommands, apiKey, buildSystemPrompt, streakShieldCost, gachaCost, trackTokens, theme } = useAppContext();
+  const { state, setState, latestStateRef, profile, level, rank, xpPerLevel, showBanner, showToast, apiKey, getAiToken, hasAiAuth, streakShieldCost, gachaCost, trackTokens, theme } = useAppContext();
   const fg  = theme === "light" ? "#000" : "#fff";
   const [section, setSection] = useState("overview");
   // showGacha state is reserved for future gacha modal implementation
   // eslint-disable-next-line no-unused-vars
   const [showGacha, setShowGacha] = useState(false);
 
-  const sections = ["overview", "achievements", "calendar", "gacha"];
+  const sections = ["overview", "calendar", "gacha"];
 
   return (
     <div style={{ padding: "16px", display: "flex", flexDirection: "column", gap: "16px" }}>
@@ -70,15 +66,14 @@ export default function ProfileTab() {
         ))}
       </div>
 
-      {section === "overview" && <ProfileOverview theme={theme} state={state} setState={setState} profile={profile} level={level} rank={rank} streakShieldCost={streakShieldCost} apiKey={apiKey} showBanner={showBanner} latestStateRef={latestStateRef} trackTokens={trackTokens} />}
-      {section === "achievements" && <AchievementsSection state={state} theme={theme} />}
-      {section === "calendar" && <CalendarSection state={state} theme={theme} setState={setState} profile={profile} apiKey={apiKey} buildSystemPrompt={buildSystemPrompt} showBanner={showBanner} executeCommands={executeCommands} />}
-      {section === "gacha" && <GachaSection theme={theme} state={state} setState={setState} profile={profile} apiKey={apiKey} gachaCost={gachaCost} showBanner={showBanner} showToast={showToast} trackTokens={trackTokens} latestStateRef={latestStateRef} />}
+      {section === "overview" && <ProfileOverview theme={theme} state={state} setState={setState} profile={profile} level={level} rank={rank} streakShieldCost={streakShieldCost} hasAiAuth={hasAiAuth} getAiToken={getAiToken} showBanner={showBanner} latestStateRef={latestStateRef} trackTokens={trackTokens} />}
+      {section === "calendar" && <CalendarSection state={state} theme={theme} setState={setState} profile={profile} hasAiAuth={hasAiAuth} showBanner={showBanner} />}
+      {section === "gacha" && <GachaSection theme={theme} state={state} setState={setState} profile={profile} apiKey={apiKey} getAiToken={getAiToken} hasAiAuth={hasAiAuth} gachaCost={gachaCost} showBanner={showBanner} showToast={showToast} trackTokens={trackTokens} latestStateRef={latestStateRef} />}
     </div>
   );
 }
 
-function ProfileOverview({ state, setState, profile, level, streakShieldCost, apiKey, showBanner, trackTokens, theme }) {
+function ProfileOverview({ state, setState, profile, level, streakShieldCost, hasAiAuth, getAiToken, showBanner, trackTokens, theme }) {
   const fg  = theme === "light" ? "#000" : "#fff";
   const bg  = theme === "light" ? "#f0f0f0" : "#000";
 
@@ -97,7 +92,7 @@ function ProfileOverview({ state, setState, profile, level, streakShieldCost, ap
     if (buyShieldInFlightRef.current) return;
     buyShieldInFlightRef.current = true;
     setBuyShieldInFlight(true);
-    if (!apiKey) {
+    if (!hasAiAuth) {
       buyShieldInFlightRef.current = false;
       setBuyShieldInFlight(false);
       return;
@@ -144,34 +139,47 @@ function ProfileOverview({ state, setState, profile, level, streakShieldCost, ap
     });
 
     queueMicrotask(() => {
-      if (!shieldSnapshotRef.current) {
+      void (async () => {
+        if (!shieldSnapshotRef.current) {
+          buyShieldInFlightRef.current = false;
+          setBuyShieldInFlight(false);
+          if (buyShieldSkipReasonRef.current === "already_purchased") {
+            showBanner("Streak shield already purchased today.", "info");
+          }
+          return;
+        }
         buyShieldInFlightRef.current = false;
         setBuyShieldInFlight(false);
-        if (buyShieldSkipReasonRef.current === "already_purchased") {
-          showBanner("Streak shield already purchased today.", "info");
+        const snapshotForApi = shieldSnapshotRef.current;
+        shieldSnapshotRef.current = null;
+        if (!snapshotForApi) return;
+        const _displayCost = snapshotForApi?.xp !== undefined ? ((state.xp ?? 0) - (snapshotForApi.xp ?? 0)) : appliedCost;
+        showBanner(`Streak shield purchased. Cost: ${_displayCost > 0 ? _displayCost : appliedCost} XP. Next cost may change.`, "success");
+        if (typeof navigator === "undefined" || navigator.onLine !== false) {
+          let token;
+          try {
+            token = await getAiToken();
+          } catch (e) {
+            if (e?.message === "GOOGLE_AUTH_REFRESH_FAILED" || e?.message === "GOOGLE_AUTH_NO_REFRESH_TOKEN") {
+              showBanner("Google session expired. Reconnect in Settings → AI.", "alert");
+              return;
+            }
+            token = getGeminiApiKey();
+          }
+          if (!token || !String(token).trim()) return;
+          updateDynamicCosts(token, snapshotForApi, "streak_shield_buy", trackTokens)
+            .then((costs) => {
+              if (costs && Object.keys(costs).length) {
+                setState((prev) => ({ ...prev, dynamicCosts: { ...prev.dynamicCosts, ...costs } }));
+              }
+            })
+            .catch((err) => {
+              if (import.meta.env.DEV) {
+                console.warn("[ProfileTab] updateDynamicCosts failed:", err?.message || err);
+              }
+            });
         }
-        return;
-      }
-      buyShieldInFlightRef.current = false;
-      setBuyShieldInFlight(false);
-      const snapshotForApi = shieldSnapshotRef.current;
-      shieldSnapshotRef.current = null;
-      if (!snapshotForApi) return;
-      const _displayCost = snapshotForApi?.xp !== undefined ? ((state.xp ?? 0) - (snapshotForApi.xp ?? 0)) : appliedCost;
-      showBanner(`Streak shield purchased. Cost: ${_displayCost > 0 ? _displayCost : appliedCost} XP. Next cost may change.`, "success");
-      if (typeof navigator === "undefined" || navigator.onLine !== false) {
-        updateDynamicCosts(getGeminiApiKey(), snapshotForApi, "streak_shield_buy", trackTokens)
-          .then((costs) => {
-            if (costs && Object.keys(costs).length) {
-              setState((prev) => ({ ...prev, dynamicCosts: { ...prev.dynamicCosts, ...costs } }));
-            }
-          })
-          .catch((err) => {
-            if (import.meta.env.DEV) {
-              console.warn("[ProfileTab] updateDynamicCosts failed:", err?.message || err);
-            }
-          });
-      }
+      })();
     });
 
   }
@@ -203,10 +211,10 @@ function ProfileOverview({ state, setState, profile, level, streakShieldCost, ap
         <button
           type="button"
           onClick={buyShield}
-          disabled={!canBuyShield || !apiKey || buyShieldInFlight || (typeof navigator !== "undefined" && navigator.onLine === false)}
+          disabled={!canBuyShield || !hasAiAuth || buyShieldInFlight || (typeof navigator !== "undefined" && navigator.onLine === false)}
           style={{
-            padding: "12px 16px", border: canBuyShield && apiKey ? "2px solid #fff" : "2px solid #444", background: canBuyShield && apiKey ? "#fff" : bg,
-            color: canBuyShield && apiKey ? "#000" : "#444", fontFamily: "'Share Tech Mono', monospace", fontSize: "16px", letterSpacing: "2px", cursor: canBuyShield && apiKey ? "pointer" : "default",
+            padding: "12px 16px", border: canBuyShield && hasAiAuth ? "2px solid #fff" : "2px solid #444", background: canBuyShield && hasAiAuth ? "#fff" : bg,
+            color: canBuyShield && hasAiAuth ? "#000" : "#444", fontFamily: "'Share Tech Mono', monospace", fontSize: "16px", letterSpacing: "2px", cursor: canBuyShield && hasAiAuth ? "pointer" : "default",
             minHeight: "48px",
           }}
         >
@@ -251,61 +259,7 @@ function ProfileOverview({ state, setState, profile, level, streakShieldCost, ap
   );
 }
 
-function AchievementsSection({ state, theme }) {
-  const fg  = theme === "light" ? "#000" : "#fff";
-  const bg  = theme === "light" ? "#f0f0f0" : "#000";
-
-  const achievements = state.achievements || [];
-  const rarityOrder = { legendary: 0, epic: 1, rare: 2, common: 3 };
-
-  const sorted = [...achievements].sort((a, b) => (rarityOrder[a.rarity] ?? 3) - (rarityOrder[b.rarity] ?? 3));
-
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-      <div style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: "16px", color: fg, fontWeight: "bold" }}>
-        {achievements.length} UNLOCKED
-      </div>
-      {achievements.length === 0 && (
-        <div style={{ border: "2px solid #fff", padding: "24px", textAlign: "center", fontFamily: "'Share Tech Mono', monospace", fontSize: "16px", color: fg }}>
-          No achievements yet. RITMOL is watching.
-        </div>
-      )}
-      {sorted.map((ach) => {
-        const r = ACHIEVEMENT_RARITIES[ach.rarity] || ACHIEVEMENT_RARITIES.common;
-        return (
-          <div key={ach.id} style={{
-            border: "2px solid #fff", padding: "14px",
-            fontFamily: "'Share Tech Mono', monospace",
-            background: bg,
-          }}>
-            <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-              <span style={{ fontSize: "24px" }}>{sanitizeForPrompt(String(ach.icon ?? ''), 4)}</span>
-              <div style={{ flex: 1 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <span style={{ fontSize: "16px", fontWeight: "bold" }}>{sanitizeForPrompt(String(ach.title ?? ''), 300)}</span>
-                  <span style={{ fontSize: "14px", color: fg, letterSpacing: "2px", fontWeight: "bold" }}>{r.label}</span>
-                </div>
-                <div style={{ fontSize: "16px", color: fg, marginTop: "4px" }}>
-                  {typeof ach.desc === "string"
-                    ? sanitizeForPrompt(ach.desc, 300)
-                    : ""}
-                </div>
-                {ach.flavorText && typeof ach.flavorText === "string" && (
-                  <div style={{ fontSize: "14px", color: fg, marginTop: "4px", fontFamily: "'Share Tech Mono', monospace" }}>
-                    &ldquo;{sanitizeForPrompt(ach.flavorText, 300)}&rdquo;
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-// eslint-disable-next-line no-unused-vars
-function CalendarSection({ state, setState, profile, apiKey, buildSystemPrompt, showBanner, executeCommands, theme }) {
+function CalendarSection({ state, setState, profile, hasAiAuth, showBanner, theme }) {
   const fg  = theme === "light" ? "#000" : "#fff";
   const bg  = theme === "light" ? "#f0f0f0" : "#000";
 
@@ -344,7 +298,7 @@ function CalendarSection({ state, setState, profile, apiKey, buildSystemPrompt, 
     showBanner(`Event added: ${safeTitle}`, "success");
 
     // Let RITMOL react
-    if (apiKey && safeType === "exam") {
+    if (hasAiAuth && safeType === "exam") {
       const days = Math.ceil((new Date(safeStart) - Date.now()) / 86400000);
       showBanner(`Exam detected: ${safeTitle} in ${days} days. RITMOL adapting your plan.`, "alert");
     }
@@ -415,7 +369,7 @@ function CalendarSection({ state, setState, profile, apiKey, buildSystemPrompt, 
       const tokenResponse = await new Promise((resolve, reject) => {
         const tokenClient = window.google.accounts.oauth2.initTokenClient({
           client_id: clientId,
-          scope: "https://www.googleapis.com/auth/calendar.readonly",
+          scope: GCAL_SCOPE,
           callback: (resp) => { if (resp.error) reject(new Error(resp.error)); else resolve(resp); },
         });
         tokenClient.requestAccessToken({ prompt: state.gCalConnected ? "" : "consent" });
@@ -651,7 +605,7 @@ function CalendarPicker({ calendars, initialSelected, onConfirm, onCancel, theme
   );
 }
 
-function GachaSection({ state, setState, profile, apiKey, gachaCost, showBanner, showToast, trackTokens, latestStateRef, theme }) {
+function GachaSection({ state, setState, profile, apiKey, getAiToken, hasAiAuth, gachaCost, showBanner, showToast, trackTokens, latestStateRef, theme }) {
   const fg  = theme === "light" ? "#000" : "#fff";
   const bg  = theme === "light" ? "#f0f0f0" : "#000";
 
@@ -672,7 +626,7 @@ function GachaSection({ state, setState, profile, apiKey, gachaCost, showBanner,
   const canAfford = state.xp >= gachaCost;
   // Check if daily token budget is depleted
   const tokenUsage = state.tokenUsage;
-  const tokensExhausted = !!(tokenUsage && tokenUsage.date === todayUTC() && tokenUsage.tokens >= DAILY_TOKEN_LIMIT);
+  const tokensExhausted = !!(tokenUsage && tokenUsage.date === todayUTC() && tokenUsage.tokens >= GEMINI_DAILY_TOKEN_LIMIT);
   // Abort controller so unmounting mid-pull cancels the Gemini request and prevents
   // trackTokens / setState firing against an unmounted component.
   const gachaAbortRef = useRef(null);
@@ -693,13 +647,13 @@ function GachaSection({ state, setState, profile, apiKey, gachaCost, showBanner,
     const liveXp = latestStateRef?.current?.xp ?? state.xp;
     const liveCost = latestStateRef?.current?.dynamicCosts?.gachaCost ?? gachaCost;
     const liveCanAfford = liveXp >= liveCost;
-    if (pullingRef.current || !liveCanAfford || pulling || !apiKey) {
+    if (pullingRef.current || !liveCanAfford || pulling || !hasAiAuth) {
       if (!liveCanAfford) showBanner(`Insufficient XP. Need ${liveCost} XP to pull.`, "alert");
-      if (!apiKey) showBanner("No API key. Configure in settings.", "alert");
+      if (!hasAiAuth) showBanner("No AI connection. Connect Google or add an API key in Settings.", "alert");
       return;
     }
     const usage = latestStateRef?.current?.tokenUsage ?? state.tokenUsage;
-    if (usage && usage.date === todayUTC() && usage.tokens >= DAILY_TOKEN_LIMIT) {
+    if (usage && usage.date === todayUTC() && usage.tokens >= GEMINI_DAILY_TOKEN_LIMIT) {
       showBanner("SYSTEM: Neural energy depleted. AI functions offline until tomorrow.", "alert");
       return;
     }
@@ -718,6 +672,25 @@ function GachaSection({ state, setState, profile, apiKey, gachaCost, showBanner,
     // SAFETY: assign gachaAbortRef before any await so the useEffect cleanup
     // (which calls gachaAbortRef.current?.abort()) always sees the latest controller.
     gachaAbortRef.current = controller;
+
+    let token;
+    try {
+      token = await getAiToken();
+    } catch (e) {
+      if (e?.message === "GOOGLE_AUTH_REFRESH_FAILED" || e?.message === "GOOGLE_AUTH_NO_REFRESH_TOKEN") {
+        showBanner("Google session expired. Reconnect in Settings → AI.", "alert");
+        setPulling(false);
+        pullingRef.current = false;
+        return;
+      }
+      token = apiKey;
+    }
+    if (!token || !String(token).trim()) {
+      showBanner("No AI connection configured.", "alert");
+      setPulling(false);
+      pullingRef.current = false;
+      return;
+    }
 
     try {
       const sp = (s, max) => sanitizeForPrompt(
@@ -834,7 +807,7 @@ Reply with ONLY this JSON:
       // Final guard: ensure no stray backticks remain anywhere in the prompt.
       prompt = prompt.replace(/`/g, "");
 
-      const { text: raw, tokensUsed } = await callGemini(apiKey, [{ role: "user", content: prompt }], "You are a creative RPG loremaster. Respond only in JSON.", true, controller.signal, 4096, false);
+      const { text: raw, tokensUsed } = await callGemini(token, [{ role: "user", content: prompt }], "You are a creative RPG loremaster. Respond only in JSON.", true, controller.signal, 4096, false);
       if (mountedRef.current) {
         trackTokens(tokensUsed);
       }
@@ -967,7 +940,7 @@ Reply with ONLY this JSON:
         };
       });
       if (typeof navigator === "undefined" || navigator.onLine !== false) {
-        updateDynamicCosts(getGeminiApiKey(), costsSnapshot, "gacha_pull", trackTokens).then((costs) => {
+        updateDynamicCosts(token, costsSnapshot, "gacha_pull", trackTokens).then((costs) => {
           if (costs && Object.keys(costs).length && mountedRef.current) {
             setState((prev) => ({ ...prev, dynamicCosts: { ...prev.dynamicCosts, ...costs } }));
           }
@@ -1058,13 +1031,13 @@ Reply with ONLY this JSON:
         <button
           type="button"
           onClick={doPull}
-          disabled={!canAfford || pulling || tokensExhausted}
+          disabled={!canAfford || pulling || tokensExhausted || !hasAiAuth}
           style={{
             width: "100%", padding: "14px",
-            background: canAfford && !pulling && !tokensExhausted ? "#fff" : bg,
-            color: canAfford && !pulling && !tokensExhausted ? "#000" : fg,
+            background: canAfford && !pulling && !tokensExhausted && hasAiAuth ? "#fff" : bg,
+            color: canAfford && !pulling && !tokensExhausted && hasAiAuth ? "#000" : fg,
             fontFamily: "'Share Tech Mono', monospace", fontSize: "16px", letterSpacing: "2px",
-            border: "none", cursor: canAfford && !pulling && !tokensExhausted ? "pointer" : "default",
+            border: "none", cursor: canAfford && !pulling && !tokensExhausted && hasAiAuth ? "pointer" : "default",
             opacity: tokensExhausted ? 0.5 : 1,
           }}
         >
@@ -1210,503 +1183,6 @@ function GachaCard({ card, compact, theme }) {
           </div>
         </>
       )}
-    </div>
-  );
-}
-
-// eslint-disable-next-line no-unused-vars
-function SettingsSection({ profile, setState, showBanner, syncStatus, lastSynced, syncFileConnected, dropboxConnected, onPush, onPull, onPickSyncFile, onForgetSyncFile, confirmForgetSync, connectDropbox, disconnectDropbox, theme, setTheme, latestStateRef, rehydrate }) {
-  const fg  = theme === "light" ? "#000" : "#fff";
-  const bg  = theme === "light" ? "#f0f0f0" : "#000";
-  const dim = theme === "light" ? "#555" : "#aaa";
-  const importRef = useRef(null);
-  const [importLoading, setImportLoading] = useState(false);
-  const currentGeminiKey = getGeminiApiKey();
-
-  // ── PWA install prompt ────────────────────────────────────────
-  const [installPrompt, setInstallPrompt] = useState(null);
-  const [installDone, setInstallDone] = useState(false);
-  const isStandalone =
-    typeof window !== "undefined" &&
-    (window.matchMedia("(display-mode: standalone)").matches ||
-      window.navigator.standalone === true);
-
-  useEffect(() => {
-    const handler = (e) => { e.preventDefault(); setInstallPrompt(e); };
-    window.addEventListener("beforeinstallprompt", handler);
-    return () => window.removeEventListener("beforeinstallprompt", handler);
-  }, []);
-
-  async function doInstall() {
-    if (!installPrompt) return;
-    await installPrompt.prompt();
-    const { outcome } = await installPrompt.userChoice;
-    if (outcome === "accepted") { setInstallDone(true); setInstallPrompt(null); }
-  }
-
-  const isIOS =
-    typeof navigator !== "undefined" &&
-    /iphone|ipad|ipod/i.test(navigator.userAgent) &&
-    !window.MSStream;
-
-  // Fix: replace window.confirm with a two-step in-app confirmation — window.confirm() is
-  // blocked in PWA standalone mode and some embedded contexts (same reason forgetSyncFile was fixed).
-  const [confirmReset, setConfirmReset] = useState(false);
-  const confirmResetTimerRef = useRef(null);
-
-  useEffect(() => () => {
-    if (confirmResetTimerRef.current) clearTimeout(confirmResetTimerRef.current);
-  }, []);
-
-  async function handleChangeGeminiKey() {
-    try {
-      const next = window.prompt(
-        "Enter new Gemini API key (stored only in this browser tab):",
-        currentGeminiKey || "",
-      );
-      if (next == null) return;
-      const trimmed = next.trim();
-      if (!trimmed) {
-        showBanner("Gemini API key not changed.", "info");
-        return;
-      }
-      setGeminiApiKey(trimmed);
-      // Clear the client-side rate-limit window so the new key starts fresh.
-      clearRateLimitWindow();
-      // Force App to re-render so apiKey (read via getGeminiApiKey() on render)
-      // reflects the new value immediately. Without this, the context value stays
-      // stale until an unrelated re-render occurs.
-      await rehydrate?.();
-      showBanner("Gemini API key updated for this session.", "success");
-    } catch {
-      showBanner("Could not update Gemini API key.", "alert");
-    }
-  }
-
-  async function resetAll() {
-    if (!confirmReset) {
-      setConfirmReset(true);
-      confirmResetTimerRef.current = setTimeout(() => setConfirmReset(false), 4000);
-      return;
-    }
-    clearTimeout(confirmResetTimerRef.current);
-    setConfirmReset(false);
-
-    // 1. Preserve the anti-rollback watermark before wiping IDB so full reset
-    // does not allow clock rollback exploits on AI XP / streak logic.
-    const maxDateSeen = getMaxDateSeen();
-
-    // 2. Wipe all IDB user data
-    await idbClearAll();
-
-    // 3. Restore the anti-cheat watermark if it existed.
-    if (maxDateSeen) {
-      idbSet("jv_max_date_seen", maxDateSeen);
-      await new Promise((r) => setTimeout(r, 100));
-    }
-
-    // 4. Clear the residual localStorage keys that belong to this app
-    //    (theme, disclosure flag, jv_last_synced, migration flag, quote cache)
-    const lsKeysToDelete = [];
-    for (let i = 0; i < localStorage.length; i++) {
-      const k = localStorage.key(i);
-      if (k && (
-        k.startsWith("jv_") ||
-        k.startsWith("ritmol_dev_") ||
-        APP_CONSTANT_KEYS.has(k)
-      )) {
-        lsKeysToDelete.push(k);
-      }
-    }
-    lsKeysToDelete.forEach((k) => localStorage.removeItem(k));
-
-    // 5. Forget sync file handle from IDB handles store
-    await SyncManager.forget();
-
-    // 6. Clear in-memory Gemini key
-    setGeminiApiKey("");
-
-    // 7. Reload — no setTimeout needed under write-through IDB persistence
-    window.location.reload();
-  }
-
-  async function handleImportFile(e) {
-    if (importLoading || syncStatus === "syncing") {
-      showBanner("Sync already in progress. Please wait.", "alert");
-      try { e.target.value = ""; } catch { /* ignore */ }
-      return;
-    }
-    setImportLoading(true);
-    try {
-      const file = e.target.files?.[0];
-      if (!file) { setImportLoading(false); return; }
-      try {
-        await SyncManager.importFile(file);
-        window.dispatchEvent(new CustomEvent("ritmol:block-autopush", { detail: { ms: 3000 } }));
-        window.location.reload();
-      } catch (err) {
-        const msgs = {
-          CORRUPT_FILE:          "Import failed: file is corrupt or not valid JSON.",
-          SYNC_SCHEMA_OUTDATED:  "Import failed: file was written by an older version of RITMOL. Re-export it from an up-to-date device.",
-          SYNC_FILE_TOO_LARGE:   "Import failed: file exceeds 10 MB.",
-          SYNC_BUSY:             "Sync already in progress. Please wait.",
-          IDB_NOT_READY:         "Import failed: app is still loading — try again in a moment.",
-          // Dropbox error codes — not thrown by importFile today but may be in future
-          // if the Dropbox transport is extended to support file-import flows.
-          DROPBOX_AUTH_REQUIRED: "Import failed: Dropbox session required.",
-          DROPBOX_TOKEN_EXPIRED: "Import failed: Dropbox session expired. Reconnect in Settings.",
-          DROPBOX_OFFLINE:       "Import failed: no network connection.",
-          DROPBOX_TIMEOUT:       "Import failed: request timed out. Check your connection.",
-          DROPBOX_FILE_NOT_FOUND:"Import failed: no RITMOL file found in Dropbox.",
-          DROPBOX_QUOTA_EXCEEDED:"Import failed: Dropbox storage is full.",
-        };
-        const safeErrMsg = (err?.message || "")
-          .replace(/AIza[A-Za-z0-9_-]{20,60}/g, "[key]")
-          .replace(/eyJ[\w.-]+/g, "[token]")
-          .replace(/ya29\.[A-Za-z0-9_-]{20,}/g, "[oauth]")
-          .slice(0, 80);
-        showBanner(msgs[err?.message] ?? `Import failed: ${safeErrMsg || "check the file"}`, "alert");
-      } finally {
-        setImportLoading(false);
-        e.target.value = "";
-      }
-    } catch {
-      showBanner("Import failed unexpectedly.", "alert");
-      setImportLoading(false);
-      try { if (importRef.current) importRef.current.value = ""; } catch { /* ignore */ }
-    }
-  }
-
-  const lastSyncedLabel = lastSynced
-    ? new Date(lastSynced).toLocaleString()
-    : "Never";
-
-  const syncStatusLabel =
-    syncStatus === "syncing" ? "SYNCING..." :
-    syncStatus === "error"   ? "⚠ SYNC ERROR" :
-    syncStatus === "synced"  ? `✓ ${lastSyncedLabel}` :
-                               lastSynced ? lastSyncedLabel : "Not synced yet";
-
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "12px", fontFamily: "'Share Tech Mono', monospace" }}>
-      <div style={{ fontSize: "16px", color: fg, letterSpacing: "2px", fontWeight: "bold" }}>[ APPEARANCE ]</div>
-      <div style={{ display: "flex", gap: "8px" }}>
-        <button
-          type="button"
-          onClick={() => setTheme("dark")}
-          style={{
-            flex: 1, padding: "12px", border: "2px solid #fff",
-            background: theme === "dark" ? "#fff" : "transparent",
-            color: theme === "dark" ? "#000" : fg,
-            fontFamily: "'Share Tech Mono', monospace", fontSize: "16px", letterSpacing: "1px", cursor: "pointer", minHeight: "48px",
-          }}
-        >
-          DARK
-        </button>
-        <button
-          type="button"
-          onClick={() => setTheme("light")}
-          style={{
-            flex: 1, padding: "10px", border: `2px solid ${theme === "light" ? "#000" : "#333"}`,
-            background: theme === "light" ? "#fff" : "transparent",
-            color: theme === "light" ? "#000" : fg,
-            fontFamily: "'Share Tech Mono', monospace", fontSize: "16px", letterSpacing: "1px", cursor: "pointer", minHeight: "48px",
-          }}
-        >
-          LIGHT
-        </button>
-      </div>
-
-      <div style={{ height: "1px", background: dim, margin: "8px 0" }} />
-
-      {/* ── INSTALL APP ── */}
-      {!isStandalone && (
-        <>
-          <div style={{ fontSize: "16px", color: fg, letterSpacing: "2px", fontWeight: "bold" }}>[ INSTALL APP ]</div>
-          {installDone ? (
-            <div style={{ fontSize: "16px", color: fg, border: "2px solid #fff", padding: "12px" }}>
-              ✓ APP INSTALLED SUCCESSFULLY
-            </div>
-          ) : installPrompt ? (
-            /* Chrome / Android — native install prompt available */
-            <>
-              <div style={{ fontSize: "14px", color: fg, lineHeight: "1.7", opacity: 0.7 }}>
-                Install RITMOL as an app for offline access and a full-screen experience.
-              </div>
-              <button
-                type="button"
-                onClick={doInstall}
-                style={{
-                  width: "100%", padding: "14px", background: fg, color: bg,
-                  fontFamily: "'Share Tech Mono', monospace", fontSize: "16px",
-                  letterSpacing: "2px", border: "none", cursor: "pointer", minHeight: "56px",
-                }}
-              >
-                ⬇ INSTALL APP
-              </button>
-            </>
-          ) : isIOS ? (
-            /* iOS Safari — no beforeinstallprompt, show manual steps */
-            <>
-              <div style={{ fontSize: "14px", color: fg, lineHeight: "1.7", opacity: 0.7 }}>
-                Install RITMOL on your iPhone or iPad:
-              </div>
-              <div style={{ border: "2px solid #fff", padding: "14px", fontSize: "15px", color: fg, lineHeight: "2", fontFamily: "'Share Tech Mono', monospace" }}>
-                1. Tap the <strong>Share</strong> button <span style={{ fontSize: "18px" }}>⎋</span> in Safari<br />
-                2. Scroll down and tap <strong>&quot;Add to Home Screen&quot;</strong><br />
-                3. Tap <strong>Add</strong>
-              </div>
-            </>
-          ) : (
-            /* Already installed or browser doesn't support install */
-            <div style={{ fontSize: "14px", color: fg, lineHeight: "1.7", opacity: 0.6 }}>
-              Open this page in Chrome or Edge on Android to install it as an app.
-              On iPhone, use Safari → Share → Add to Home Screen.
-            </div>
-          )}
-          <div style={{ height: "1px", background: dim, margin: "8px 0" }} />
-        </>
-      )}
-
-      {/* ── SYNC ── */}
-      <div style={{ fontSize: "16px", color: fg, letterSpacing: "2px", fontWeight: "bold" }}>[ SYNC ]</div>
-
-      {dropboxConnected ? (
-        /* Dropbox connected */
-        <>
-          <div style={{ fontSize: "10px", color: "#555", lineHeight: "1.8" }}>
-            SYNC — DROPBOX
-          </div>
-          <div style={{ fontSize: "16px", color: fg, marginBottom: "8px" }}>
-            ● Connected
-          </div>
-          <div style={{ fontSize: "16px", color: fg, lineHeight: "1.8", fontFamily: "'Share Tech Mono', monospace" }}>
-            LAST SYNCED: <span style={{ color: fg, fontWeight: "bold" }}>{syncStatusLabel}</span>
-          </div>
-          <div style={{ display: "flex", gap: "8px" }}>
-            <button
-              type="button"
-              onClick={() => {
-                if (typeof navigator !== "undefined" && navigator.onLine === false) {
-                  showBanner("No network connection. Sync requires connectivity.", "alert");
-                  return;
-                }
-                onPush();
-              }}
-              disabled={typeof navigator !== "undefined" && navigator.onLine === false}
-              style={{
-                flex: 1, padding: "12px", border: "2px solid #fff",
-                background: "transparent", color: fg,
-                fontFamily: "'Share Tech Mono', monospace", fontSize: "16px", cursor: (typeof navigator !== "undefined" && navigator.onLine === false) ? "default" : "pointer",
-                minHeight: "48px",
-              }}
-            >
-              PUSH ↑
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                if (typeof navigator !== "undefined" && navigator.onLine === false) {
-                  showBanner("No network connection. Sync requires connectivity.", "alert");
-                  return;
-                }
-                onPull();
-              }}
-              disabled={typeof navigator !== "undefined" && navigator.onLine === false}
-              style={{
-                flex: 1, padding: "12px", border: `2px solid ${dim}`,
-                background: "transparent", color: fg,
-                fontFamily: "'Share Tech Mono', monospace", fontSize: "16px", cursor: (typeof navigator !== "undefined" && navigator.onLine === false) ? "default" : "pointer",
-                minHeight: "48px",
-              }}
-            >
-              PULL ↓
-            </button>
-            <button
-              type="button"
-              onClick={disconnectDropbox}
-              style={{
-                padding: "12px", border: "2px solid #fff",
-                background: "transparent", color: fg,
-                fontFamily: "'Share Tech Mono', monospace", fontSize: "16px", cursor: "pointer",
-                minHeight: "48px",
-              }}
-            >
-              DISCONNECT
-            </button>
-          </div>
-        </>
-      ) : (
-        /* Dropbox not connected */
-        <>
-          <button
-            type="button"
-            onClick={connectDropbox}
-            style={{
-              width: "100%", padding: "12px", border: "2px solid #fff", background: fg, color: bg,
-              fontFamily: "'Share Tech Mono', monospace", fontSize: "16px", letterSpacing: "2px", cursor: "pointer", minHeight: "48px",
-            }}
-          >
-            CONNECT DROPBOX
-          </button>
-          <div style={{ fontSize: "16px", color: fg, lineHeight: "1.8", fontFamily: "'Share Tech Mono', monospace" }}>
-            LAST SYNCED: <span style={{ color: fg, fontWeight: "bold" }}>{syncStatusLabel}</span>
-          </div>
-          <div style={{ height: "2px", background: fg, margin: "4px 0" }} />
-          <div style={{ fontSize: "16px", color: fg, letterSpacing: "1px", fontWeight: "bold" }}>
-            {FSAPI_SUPPORTED ? "or use local file" : "or export / import manually"}
-          </div>
-          {FSAPI_SUPPORTED ? (
-            <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-              <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
-                <button type="button" onClick={onPickSyncFile} style={{
-                  padding: "12px", border: "2px solid #fff", background: "transparent",
-                  color: fg, fontFamily: "'Share Tech Mono', monospace", fontSize: "16px", cursor: "pointer",
-                  minHeight: "48px",
-                }}>
-                  PICK FILE
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (typeof navigator !== "undefined" && navigator.onLine === false) {
-                      showBanner("No network connection. Sync requires connectivity.", "alert");
-                      return;
-                    }
-                    onPush();
-                  }}
-                  disabled={typeof navigator !== "undefined" && navigator.onLine === false}
-                  style={{
-                    padding: "12px", border: "2px solid #fff", background: "transparent",
-                    color: fg, fontFamily: "'Share Tech Mono', monospace", fontSize: "16px", cursor: (typeof navigator !== "undefined" && navigator.onLine === false) ? "default" : "pointer",
-                    minHeight: "48px",
-                  }}
-                >
-                  PUSH ↑
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (typeof navigator !== "undefined" && navigator.onLine === false) {
-                      showBanner("No network connection. Sync requires connectivity.", "alert");
-                      return;
-                    }
-                    onPull();
-                  }}
-                  disabled={typeof navigator !== "undefined" && navigator.onLine === false}
-                  style={{
-                    padding: "12px", border: `2px solid ${dim}`, background: "transparent",
-                    color: fg, fontFamily: "'Share Tech Mono', monospace", fontSize: "16px", cursor: (typeof navigator !== "undefined" && navigator.onLine === false) ? "default" : "pointer",
-                    minHeight: "48px",
-                  }}
-                >
-                  PULL ↓
-                </button>
-                <button type="button" onClick={onForgetSyncFile} style={{
-                  padding: "12px", border: "2px solid #fff",
-                  background: "transparent",
-                  color: fg,
-                  fontFamily: "'Share Tech Mono', monospace", fontSize: "16px", cursor: "pointer",
-                  minHeight: "48px",
-                }}>
-                  {confirmForgetSync ? "CONFIRM?" : "FORGET"}
-                </button>
-              </div>
-            </div>
-          ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-              <div style={{ fontSize: "16px", color: fg, border: "2px solid #fff", padding: "12px", lineHeight: "1.7", fontFamily: "'Share Tech Mono', monospace" }}>
-                ⚠ Your browser does not support direct file access.
-              </div>
-              <button type="button" onClick={() => SyncManager.download((msg) => showBanner(msg, "alert"))} style={{
-                padding: "12px", border: "2px solid #fff", background: "transparent",
-                color: fg, fontFamily: "'Share Tech Mono', monospace", fontSize: "16px", cursor: "pointer",
-                minHeight: "48px",
-              }}>
-                EXPORT ↓
-              </button>
-              <input
-                ref={importRef}
-                type="file"
-                accept=".json"
-                disabled={importLoading || syncStatus === "syncing"}
-                onChange={handleImportFile}
-                style={{ display: "none" }}
-              />
-              <button
-                type="button"
-                disabled={importLoading || syncStatus === "syncing"}
-                onClick={() => { if (!importLoading && syncStatus !== "syncing") importRef.current?.click(); }}
-                style={{
-                  padding: "12px", border: "2px solid #fff", background: "transparent",
-                  color: fg,
-                  fontFamily: "'Share Tech Mono', monospace", fontSize: "16px",
-                  minHeight: "48px",
-                  cursor: importLoading || syncStatus === "syncing" ? "default" : "pointer",
-                }}
-              >
-                {importLoading ? "IMPORTING..." : "IMPORT ↑"}
-              </button>
-            </div>
-          )}
-        </>
-      )}
-
-      {/* ── AI CONFIG ── */}
-      <div style={{ height: "1px", background: dim, margin: "8px 0" }} />
-      <div style={{ fontSize: "16px", color: fg, letterSpacing: "2px", fontWeight: "bold" }}>[ AI CONFIG ]</div>
-      <button
-        type="button"
-        onClick={handleChangeGeminiKey}
-        style={{
-          marginTop: "4px",
-          padding: "12px",
-          border: "2px solid #fff",
-          background: "transparent",
-          color: fg,
-          fontFamily: "'Share Tech Mono', monospace",
-          fontSize: "16px",
-          letterSpacing: "1px",
-          cursor: "pointer",
-          minHeight: "48px",
-        }}
-      >
-        CHANGE GEMINI API KEY
-      </button>
-      {IS_DEV && (
-        <div
-          style={{
-            marginTop: "8px",
-            border: "2px dashed #555",
-            padding: "10px 12px",
-            fontSize: "12px",
-            color: "#ccc",
-            fontFamily: "'Share Tech Mono', monospace",
-            lineHeight: "1.6",
-            wordBreak: "break-all",
-          }}
-        >
-          <div style={{ fontSize: "11px", letterSpacing: "2px", marginBottom: "4px", fontWeight: "bold" }}>
-            DEV ONLY — CURRENT GEMINI KEY
-          </div>
-          <div>
-            {currentGeminiKey || "(none set)"}
-          </div>
-        </div>
-      )}
-
-      <button type="button" onClick={resetAll} style={{
-        marginTop: "8px", padding: "10px",
-        border: "2px solid #fff",
-        background: confirmReset ? "#3a1111" : "transparent",
-        color: fg,
-        fontFamily: "'Share Tech Mono', monospace", fontSize: "16px", cursor: "pointer",
-        minHeight: "48px",
-        transition: "none",
-      }}>
-        {confirmReset ? "CONFIRM RESET? (click again)" : "RESET ALL DATA"}
-      </button>
-
     </div>
   );
 }

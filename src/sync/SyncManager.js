@@ -1,5 +1,5 @@
 // ═══════════════════════════════════════════════════════════════
-// SYNC MANAGER  (File System Access API + fallback download/import)
+// SYNC MANAGER  (Dropbox transport + manual import/export)
 // ═══════════════════════════════════════════════════════════════
 // Security model:
 //   - Key allowlist: only SYNC_KEYS are written from an incoming payload.
@@ -16,7 +16,7 @@
 import { LS, storageKey, setGeminiApiKey, getGeminiApiKey, getMaxDateSeen } from "../utils/db";
 import { idbGet, idbSet, store } from "../utils/db";
 import { SyncPayloadSchema } from "../utils/schemas.js";
-import { SYNC_SCHEMA_VERSION } from "../constants";
+import { SYNC_SCHEMA_VERSION, SYNC_FILE_MAX_BYTES } from "../config.js";
 import {
   ensureFreshToken,
   ensureFolderExists,
@@ -32,18 +32,23 @@ const DEV_PREFIX = "ritmol_dev_";
 
 // Re-export for consumers that need the current schema version
 export { SYNC_SCHEMA_VERSION };
-const MAX_PAYLOAD_BYTES = 10 * 1024 * 1024; // 10 MB
+const MAX_PAYLOAD_BYTES = SYNC_FILE_MAX_BYTES;
 
-// ── Storage key for the persisted file handle ────────────────────
-const HANDLE_LS_KEY = IS_DEV ? `${DEV_PREFIX}sync_handle` : "sync_handle";
-
-// ── Transport selector ("dropbox" | "fsapi" | "download") ─────────
+// ── Transport selector (Dropbox only; legacy values normalized) ─────────
 const TRANSPORT_LS_KEY = IS_DEV ? `${DEV_PREFIX}sync_transport` : "ritmol_sync_transport";
-let _transport = (typeof localStorage !== "undefined" ? localStorage.getItem(TRANSPORT_LS_KEY) : null) ?? "download";
+
+function normalizeTransport(raw) {
+  if (raw === "dropbox") return "dropbox";
+  return "dropbox";
+}
+
+let _transport = normalizeTransport(
+  typeof localStorage !== "undefined" ? localStorage.getItem(TRANSPORT_LS_KEY) : null,
+);
 export function setTransport(t) {
-  _transport = t;
+  _transport = normalizeTransport(t);
   try {
-    localStorage.setItem(TRANSPORT_LS_KEY, t);
+    localStorage.setItem(TRANSPORT_LS_KEY, _transport);
   } catch {
     /* ignore */
   }
@@ -51,12 +56,6 @@ export function setTransport(t) {
 export function getTransport() {
   return _transport;
 }
-
-// ── Feature detection ────────────────────────────────────────────
-export const FSAPI_SUPPORTED =
-  typeof window !== "undefined" &&
-  typeof window.showOpenFilePicker === "function" &&
-  typeof window.showSaveFilePicker === "function";
 
 // ── Keys written to / read from sync file ────────────────────────
 export const SYNC_KEYS = [
@@ -71,6 +70,8 @@ export const SYNC_KEYS = [
   "jv_last_shield_buy_date",
   "jv_weekly_missions", "jv_weekly_mission_date",
   "jv_monthly_missions", "jv_monthly_mission_date",
+  "jv_healthkit_enabled", "jv_google_auth_connected", "jv_notifications_enabled",
+  "jv_last_ai_notif_batch", "jv_ai_notif_log", "jv_lecture_quick_log_pending",
 ];
 
 // ── Helpers (used by sanitizeChatMessages and isSafeSyncValue) ─────
@@ -144,12 +145,8 @@ export function assertPayloadSize(text) {
   }
 }
 
-// ── Persist / restore file handle via IndexedDB ───────────────────
-// File handles can't be stored in localStorage, use IndexedDB.
-let _cachedHandle = null;
 let _opInProgress = false;
 let _broadcastChannel = null;
-let _lastPushTime = 0;
 let _lastObjectUrl = null;
 
 function getSyncChannel() {
@@ -174,45 +171,6 @@ export function closeSyncChannel() {
   // Reset mutex on channel close so a dispose in the middle of an operation
   // (e.g. HMR in development) does not leave SYNC_BUSY latched forever.
   _opInProgress = false;
-}
-
-function openDB() {
-  return new Promise((resolve, reject) => {
-    const req = indexedDB.open("ritmol_sync_v1", 1);
-    req.onupgradeneeded = () => req.result.createObjectStore("handles");
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
-  });
-}
-
-async function saveHandleToDB(handle) {
-  try {
-    const db = await openDB();
-    const tx = db.transaction("handles", "readwrite");
-    tx.objectStore("handles").put(handle, HANDLE_LS_KEY);
-    await new Promise((res, rej) => { tx.oncomplete = res; tx.onerror = () => rej(tx.error); });
-  } catch { /* silently ignore — handle won't persist across sessions */ }
-}
-
-async function loadHandleFromDB() {
-  try {
-    const db = await openDB();
-    const tx = db.transaction("handles", "readonly");
-    const req = tx.objectStore("handles").get(HANDLE_LS_KEY);
-    return await new Promise((res, rej) => {
-      req.onsuccess = () => res(req.result ?? null);
-      req.onerror = () => rej(req.error);
-    });
-  } catch { return null; }
-}
-
-async function clearHandleFromDB() {
-  try {
-    const db = await openDB();
-    const tx = db.transaction("handles", "readwrite");
-    tx.objectStore("handles").delete(HANDLE_LS_KEY);
-    await new Promise((res, rej) => { tx.oncomplete = res; tx.onerror = () => rej(tx.error); });
-  } catch { /* ignore */ }
 }
 
 // ── Build sync payload from IDB cache ───────────────────────────
@@ -374,7 +332,7 @@ function applyPayload(payload) {
 //   3. Add 1 to COMPLETED_MIGRATIONS here
 //   4. Update SyncPayloadSchema _schemaVersion .max() in schemas.js to match
 const COMPLETED_MIGRATIONS = new Set([
-  // 1,  // ← uncomment when V1→V2 migration block is written
+  1,
 ]);
 
 // ── Schema migration (V1 → V2, etc.) ─────────────────────────────
@@ -401,8 +359,7 @@ function migratePayload(p) {
     const fromVersion = out._schemaVersion;
     out._schemaVersion = fromVersion + 1;
     if (fromVersion === 1) {
-      // V1 is the initial schema — no structural changes exist yet.
-      // When V2 ships: write transforms here, then add 1 to COMPLETED_MIGRATIONS above.
+      // V1 → V2: new optional IDB keys (health, OAuth, notifications, AI log) default on read.
     }
     // Add further 'if (fromVersion === N)' blocks for each future version step.
   }
@@ -469,32 +426,7 @@ function extractSecretsFromPayload(payload) {
 
 // ── SyncManager public API ────────────────────────────────────────
 export const SyncManager = {
-  /** Returns the current FileSystemFileHandle, or null if none linked. */
-  async getHandle() {
-    if (_cachedHandle) return _cachedHandle;
-    _cachedHandle = await loadHandleFromDB();
-    return _cachedHandle;
-  },
-
-  /** Open a file picker and persist the chosen handle. */
-  async pickFile() {
-    if (!FSAPI_SUPPORTED) throw new Error("FSAPI_NOT_SUPPORTED");
-    const [handle] = await window.showOpenFilePicker({
-      types: [{ description: "RITMOL data", accept: { "application/json": [".json"] } }],
-      multiple: false,
-    });
-    _cachedHandle = handle;
-    await saveHandleToDB(handle);
-    return handle;
-  },
-
-  /** Returns true if a persisted file handle is available in IndexedDB. */
-  async isHandlePersisted() {
-    const h = await loadHandleFromDB();
-    return h !== null;
-  },
-
-  /** Write current TinyBase store state to the linked sync file. */
+  /** Write current TinyBase store state to Dropbox. */
   async push() {
     if (_opInProgress) throw new Error("SYNC_BUSY");
     _opInProgress = true;
@@ -505,157 +437,38 @@ export const SyncManager = {
     const ch = getSyncChannel();
     ch?.postMessage({ type: "sync_start" });
     try {
-      // In dev builds, never push changes back to Dropbox. Treat "dropbox"
-      // transport as read-only and redirect pushes to the local FSAPI handle
-      // instead so dev experiments cannot overwrite the cloud copy.
-      if (IS_DEV && _transport === "dropbox") {
-        const handle = await SyncManager.getHandle();
-        if (!handle) {
-          throw new Error("NO_HANDLE");
-        }
-        let perm;
-        try {
-          perm = await handle.queryPermission({ mode: "readwrite" });
-          if (perm !== "granted") {
-            perm = await handle.requestPermission({ mode: "readwrite" });
-          }
-        } catch (err) {
-          if (err && err.name === "NotFoundError") {
-            throw new Error("SYNC_FILE_NOT_FOUND");
-          }
-          throw new Error("PERMISSION_DENIED");
-        }
-        if (perm !== "granted") throw new Error("PERMISSION_DENIED");
-
-        try {
-          const currentFile = await handle.getFile();
-          const lastMod = currentFile.lastModified;
-          if (lastMod !== 0 && Date.now() - lastMod < 2000 && lastMod > _lastPushTime) {
-            throw new Error("SYNC_SKIPPED");
-          }
-        } catch (innerErr) {
-          if (innerErr?.message === "SYNC_SKIPPED") throw innerErr;
-          if (innerErr?.name === "NotFoundError") throw new Error("SYNC_FILE_NOT_FOUND");
-          if (innerErr?.name === "SecurityError") throw new Error("PERMISSION_DENIED");
-        }
-
-        const payload = buildPayload();
-        const text = JSON.stringify(payload, null, 2);
-        assertPayloadSize(text);
-        const byteSize = new TextEncoder().encode(text).length;
-        if (byteSize > 7 * 1024 * 1024) {
-          console.warn(
-            "[SyncManager] Dev push redirected to local file; sync file approaching size limit:",
-            (byteSize / (1024 * 1024)).toFixed(1),
-            "MB"
-          );
-        }
-
-        _lastPushTime = Date.now();
-        const writable = await handle.createWritable();
-        try {
-          await writable.write(text);
-          await writable.close();
-        } catch (writeErr) {
-          try {
-            await writable.abort();
-          } catch {
-            /* ignore abort errors */
-          }
-          throw writeErr;
-        }
-
-        const ts = Date.now();
-        LS.set(storageKey("jv_last_synced"), String(ts));
-        return ts;
+      if (_transport !== "dropbox") {
+        throw new Error("DROPBOX_AUTH_REQUIRED");
       }
-
-      if (_transport === "dropbox") {
-        if (typeof navigator !== "undefined" && navigator.onLine === false) {
-          throw new Error("DROPBOX_OFFLINE");
-        }
-        await ensureFreshToken();
-        // Re-check connectivity: network may have dropped while refreshing the token.
-        if (typeof navigator !== "undefined" && navigator.onLine === false) {
-          throw new Error("DROPBOX_OFFLINE");
-        }
-        await ensureFolderExists();
-        const payload = buildPayload(true);
-        const text = JSON.stringify(payload, null, 2);
-        assertPayloadSize(text);
-        await dropboxUpload(text);
-        const ts = Date.now();
-        LS.set(storageKey("jv_last_synced"), String(ts));
-        return ts;
+      if (typeof navigator !== "undefined" && navigator.onLine === false) {
+        throw new Error("DROPBOX_OFFLINE");
       }
-
-      if (_transport === "fsapi" || _transport === "download") {
-        const handle = await SyncManager.getHandle();
-        if (!handle) throw new Error("NO_HANDLE");
-        let perm;
-        try {
-        perm = await handle.queryPermission({ mode: "readwrite" });
-        if (perm !== "granted") {
-          perm = await handle.requestPermission({ mode: "readwrite" });
-        }
-        } catch (err) {
-          if (err && err.name === "NotFoundError") {
-            throw new Error("SYNC_FILE_NOT_FOUND");
-          }
-          throw new Error("PERMISSION_DENIED");
-        }
-        if (perm !== "granted") throw new Error("PERMISSION_DENIED");
-
-        try {
-          const currentFile = await handle.getFile();
-          const lastMod = currentFile.lastModified;
-          // Skip push if the file was modified less than 2 s ago by an external writer
-          // (e.g. Syncthing delivering a remote update) and the modification postdates
-          // our own last push (_lastPushTime). This prevents overwriting incoming data.
-          // _lastPushTime === 0 on first boot, so the lastMod > _lastPushTime guard
-          // correctly passes through on the first push (lastMod is always > 0).
-          if (lastMod !== 0 && Date.now() - lastMod < 2000 && lastMod > _lastPushTime) {
-            throw new Error("SYNC_SKIPPED");
-          }
-        } catch (innerErr) {
-          if (innerErr?.message === "SYNC_SKIPPED") throw innerErr;
-          if (innerErr?.name === "NotFoundError") throw new Error("SYNC_FILE_NOT_FOUND");
-          if (innerErr?.name === "SecurityError") throw new Error("PERMISSION_DENIED");
-        }
-
-        const payload = buildPayload();
-        const text = JSON.stringify(payload, null, 2);
-        assertPayloadSize(text);
-        const byteSize = new TextEncoder().encode(text).length;
-        if (byteSize > 7 * 1024 * 1024) {
-          console.warn("[SyncManager] Sync file approaching size limit:", (byteSize / (1024 * 1024)).toFixed(1), "MB");
-        }
-
-        _lastPushTime = Date.now();
-        const writable = await handle.createWritable();
-        try {
-          await writable.write(text);
-          await writable.close();
-        } catch (writeErr) {
-          try { await writable.abort(); } catch { /* ignore abort errors */ }
-          throw writeErr;
-        }
-
-        const ts = Date.now();
-        LS.set(storageKey("jv_last_synced"), String(ts));
-        return ts;
+      await ensureFreshToken();
+      if (typeof navigator !== "undefined" && navigator.onLine === false) {
+        throw new Error("DROPBOX_OFFLINE");
       }
+      await ensureFolderExists();
+      const payload = buildPayload(true);
+      const text = JSON.stringify(payload, null, 2);
+      assertPayloadSize(text);
+      const byteSize = new TextEncoder().encode(text).length;
+      if (byteSize > 7 * 1024 * 1024) {
+        console.warn("[SyncManager] Sync file approaching size limit:", (byteSize / (1024 * 1024)).toFixed(1), "MB");
+      }
+      await dropboxUpload(text);
+      const ts = Date.now();
+      LS.set(storageKey("jv_last_synced"), String(ts));
+      return ts;
     } finally {
       _opInProgress = false;
     }
   },
 
-  /** Read the linked sync file and apply it to the TinyBase store. */
+  /** Read from Dropbox and apply to the TinyBase store. */
   async pull() {
     if (_opInProgress) throw new Error("SYNC_BUSY");
     _opInProgress = true;
     try {
-      // Dev-only: E2E test hook to inject sync payload without file picker.
       if (import.meta.env.DEV && typeof window !== "undefined") {
         const inject = window.__RITMOL_TEST__?.injectSync;
         if (typeof inject === "function") {
@@ -670,21 +483,14 @@ export const SyncManager = {
         }
       }
 
-      if (_transport === "dropbox") {
-        if (typeof navigator !== "undefined" && navigator.onLine === false) {
-          throw new Error("DROPBOX_OFFLINE");
-        }
-        await ensureFreshToken();
-        const { text } = await dropboxDownload();
-        const payload = parseAndValidate(text);
-        extractSecretsFromPayload(payload);
-        applyPayload(payload);
-        return Date.now();
+      if (_transport !== "dropbox") {
+        throw new Error("DROPBOX_AUTH_REQUIRED");
       }
-      const handle = await SyncManager.getHandle();
-      if (!handle) throw new Error("NO_HANDLE");
-      const file = await handle.getFile();
-      const text = await file.text();
+      if (typeof navigator !== "undefined" && navigator.onLine === false) {
+        throw new Error("DROPBOX_OFFLINE");
+      }
+      await ensureFreshToken();
+      const { text } = await dropboxDownload();
       const payload = parseAndValidate(text);
       extractSecretsFromPayload(payload);
       applyPayload(payload);
@@ -748,12 +554,8 @@ export const SyncManager = {
     }, 5000);
   },
 
-  /** Forget the linked sync file handle. */
+  /** No-op compat: file handles removed; closes sync broadcast channel only. */
   async forget() {
-    _cachedHandle = null;
-    await clearHandleFromDB();
-    // Close the BroadcastChannel when there is no longer a sync target.
-    // getSyncChannel() will re-open it if sync is re-established.
     closeSyncChannel();
   },
 };

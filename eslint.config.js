@@ -44,5 +44,5 @@ export default [
       globals: { ...globals.node },
     },
   },
-  { ignores: ["dist/**", "node_modules/**"] },
+  { ignores: ["dist/**", "node_modules/**", "android/**", "ios/**"] },
 ];

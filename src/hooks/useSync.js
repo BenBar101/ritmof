@@ -1,23 +1,5 @@
 // ═══════════════════════════════════════════════════════════════
-// useSync
-//
-// Owns all Syncthing file sync logic that was previously scattered
-// through App.jsx (~200 lines). Exposes a clean API:
-//
-//   syncPush()      — write current state to sync file
-//   syncPull()      — read sync file, rehydrate state
-//   pickSyncFile()  — open file picker
-//   forgetSyncFile()— unlink (double-confirm)
-//   syncFileConnected — bool
-//   syncStatus      — "idle" | "syncing" | "synced" | "error"
-//   lastSynced      — timestamp or null
-//
-// The key fix over the original:
-//  isPullingRef lived in App and was passed into the visibility
-//  handler via closure — but the auto-push effect captured a
-//  stale closure and sometimes missed the flag. Here the mutex
-//  and the auto-push effect both live in the same module so
-//  they always share the same ref object.
+// useSync — Dropbox transport only
 // ═══════════════════════════════════════════════════════════════
 
 import { useState, useEffect, useRef, useCallback } from "react";
@@ -32,55 +14,35 @@ import {
 } from "../api/dropbox";
 
 export function useSync({ latestStateRef, rehydrate, showBanner }) {
-  const [syncFileConnected, setSyncFileConnected] = useState(false);
-  const [dropboxConnected, setDropboxConnected]   = useState(() => isAuthenticated());
-  const [syncStatus, setSyncStatus]               = useState("idle");
-  const [lastSynced, setLastSynced]               = useState(() =>
+  const [dropboxConnected, setDropboxConnected] = useState(() => isAuthenticated());
+  const [syncStatus, setSyncStatus] = useState("idle");
+  const [lastSynced, setLastSynced] = useState(() =>
     LS.get(storageKey("jv_last_synced"), null)
   );
-  // true during the 800ms window between pull completion and page reload;
-  // used by App.jsx to render a non-interactive overlay that prevents state writes.
-  const [isReloading, setIsReloading]             = useState(false);
+  const [isReloading, setIsReloading] = useState(false);
 
-  // Mutex: prevents auto-push from clobbering a concurrent manual Pull.
-  // Fix [S-2]: keeping this ref inside the same hook as the auto-push
-  // effect guarantees both sides always see the same object — no stale
-  // closure from passing the ref down through props.
   const isPullingRef = useRef(false);
   const debounceTimerRef = useRef(null);
   const reloadTimerRef = useRef(null);
   const pageHideInProgressRef = useRef(false);
   const blockUntilRef = useRef(0);
 
-  // ── Check if a sync file is already linked on mount ──
   useEffect(() => {
     if (isAuthenticated()) {
       setDropboxConnected(true);
       setTransport("dropbox");
-      setSyncFileConnected(true);
-    } else {
-      SyncManager.getHandle().then((h) => setSyncFileConnected(!!h)).catch(() => {});
     }
   }, []);
 
-  // ── Auto-pull on mount for returning users ────────────────
-  // When Dropbox is connected but the Gemini key is absent from sessionStorage
-  // (cleared on browser close), silently pull so the key + latest data are
-  // restored without forcing the user through MissingKeyGate.
-  // Guard: only fires once per mount (ref), only when online, only when
-  // Dropbox auth tokens exist, and only when the key is genuinely missing.
   const autoPullAttemptedRef = useRef(false);
   useEffect(() => {
     if (autoPullAttemptedRef.current) return;
     if (!isAuthenticated()) return;
-    if (getGeminiApiKey()) return; // key already present — nothing to do
+    if (getGeminiApiKey()) return;
     if (typeof navigator !== "undefined" && navigator.onLine === false) return;
     autoPullAttemptedRef.current = true;
     setSyncStatus("syncing");
     let cancelled = false;
-    // Set the mutex inside the effect body (not before) so if React Strict Mode
-    // double-invokes the effect and the cleanup runs, the finally block below
-    // always releases it — preventing a permanently blocked pull mutex.
     isPullingRef.current = true;
     (async () => {
       try {
@@ -90,28 +52,20 @@ export function useSync({ latestStateRef, rehydrate, showBanner }) {
         LS.set(storageKey("jv_last_synced"), String(Date.now()));
         setLastSynced(Date.now());
         setSyncStatus("synced");
-        // Full reload so all components re-initialise with the pulled data.
         setIsReloading(true);
         reloadTimerRef.current = setTimeout(() => {
           try { window.location.reload(); } catch { isPullingRef.current = false; }
         }, 400);
       } catch (e) {
         if (cancelled) { isPullingRef.current = false; return; }
-        // Token expired: clear auth so the user sees a clean reconnect prompt.
         if (e.message === "DROPBOX_TOKEN_EXPIRED") {
           clearTokens();
           setDropboxConnected(false);
-          setSyncFileConnected(false);
-          setTransport("download");
         }
-        // Any failure falls through to normal app load with MissingKeyGate.
         setSyncStatus("idle");
         isPullingRef.current = false;
       }
     })();
-    // Cleanup: if the component unmounts while the auto-pull is in flight
-    // (e.g. React Strict Mode double-invoke), release the mutex so future
-    // Pulls and auto-pushes are not permanently blocked.
     return () => {
       cancelled = true;
       if (isPullingRef.current) isPullingRef.current = false;
@@ -119,23 +73,16 @@ export function useSync({ latestStateRef, rehydrate, showBanner }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional mount-only effect
   }, []);
 
-  // ── Auto-push on tab hide / page hide ──
   useEffect(() => {
     const schedulePush = () => {
       if (isPullingRef.current) return;
       if (debounceTimerRef.current) return;
       if (Date.now() < blockUntilRef.current) return;
-      // 500ms debounce: ensures React's write-through setState has committed
-      // to the TinyBase store before SyncManager.push() reads it.
       debounceTimerRef.current = setTimeout(async () => {
         try {
           if (Date.now() < blockUntilRef.current) return;
-          if (isPullingRef.current) return; // skip during Pull [S-2]
-          const transport = getTransport();
-          const canPush = transport === "dropbox"
-            ? isAuthenticated()
-            : await SyncManager.getHandle().then((h) => !!h).catch(() => false);
-          if (!canPush) return;
+          if (isPullingRef.current) return;
+          if (!isAuthenticated()) return;
           if (!latestStateRef.current?.profile) return;
           const ts = await SyncManager.push();
           LS.set(storageKey("jv_last_synced"), String(ts));
@@ -154,30 +101,20 @@ export function useSync({ latestStateRef, rehydrate, showBanner }) {
       blockUntilRef.current = Date.now() + ms;
     };
     const onPageShow = (e) => {
-      // e.persisted is true when the page is restored from bfcache.
-      // isPullingRef may have been left true by a Pull that triggered the
-      // reload that caused this bfcache entry — reset it so auto-push and
-      // future Pulls are not permanently blocked.
       if (e.persisted) {
         isPullingRef.current = false;
       }
     };
     const onVisibility = () => { if (document.visibilityState === "hidden") schedulePush(); };
-    const onPageHide   = () => {
+    const onPageHide = () => {
       if (pageHideInProgressRef.current) return;
       pageHideInProgressRef.current = true;
-      // On browser/tab close, flush immediately without debounce so the final
-      // state is best-effort pushed even if the 500ms timer would not fire.
       if (debounceTimerRef.current) {
         clearTimeout(debounceTimerRef.current);
         debounceTimerRef.current = null;
       }
       (async () => {
-        const transport = getTransport();
-        const canPush = transport === "dropbox"
-          ? isAuthenticated()
-          : await SyncManager.getHandle().then((h) => !!h).catch(() => false);
-        if (!canPush || isPullingRef.current || !latestStateRef.current?.profile) return;
+        if (!isAuthenticated() || isPullingRef.current || !latestStateRef.current?.profile) return;
         return SyncManager.push();
       })()
         .catch((e) => {
@@ -206,16 +143,14 @@ export function useSync({ latestStateRef, rehydrate, showBanner }) {
       window.removeEventListener("pageshow", onPageShow);
       window.removeEventListener("ritmol:block-autopush", onBlockAutopush);
     };
-  }, [latestStateRef]); // latestStateRef is stable — safe dep
+  }, [latestStateRef]);
 
-  // ── Push ──────────────────────────────────────────────────
   const syncPush = useCallback(async () => {
     if (debounceTimerRef.current) {
       clearTimeout(debounceTimerRef.current);
       debounceTimerRef.current = null;
     }
     setSyncStatus("syncing");
-    // Fast-fail for Dropbox when offline to avoid a 20s ensureFreshToken() timeout.
     if (getTransport() === "dropbox" && typeof navigator !== "undefined" && navigator.onLine === false) {
       setSyncStatus("error");
       showBanner("No network connection. Dropbox sync requires connectivity.", "alert");
@@ -231,27 +166,19 @@ export function useSync({ latestStateRef, rehydrate, showBanner }) {
       LS.set(storageKey("jv_last_synced"), String(ts));
       setLastSynced(ts);
       setSyncStatus("synced");
-      const _pushTransport = getTransport();
-      showBanner(
-        _pushTransport === "dropbox" ? "Pushed to Dropbox." : "Pushed to sync file.",
-        "success"
-      );
+      showBanner("Pushed to Dropbox.", "success");
     } catch (e) {
       if (e.message === "SYNC_SKIPPED") {
         setSyncStatus("idle");
-        // Inform the user why the push was skipped so they don't think it failed silently.
         showBanner("Push skipped: sync file was just modified externally. Pull first or retry in a moment.", "info");
         return;
       }
-      // Log the full error so unexpected failures are visible in the console.
       console.error("[useSync] Push failed:", e);
       setSyncStatus("error");
       const msgs = {
-        NO_HANDLE:           "No sync file selected. Pick one in Profile → Settings.",
         PERMISSION_DENIED:   "Write permission denied. Try again and allow access.",
         SYNC_BUSY:           "Sync already in progress. Please wait.",
         IDB_NOT_READY:       "Still loading, try again.",
-        SYNC_FILE_NOT_FOUND: "Sync file not found — it may have been moved or deleted. Pick a new file in Profile → Settings.",
         DROPBOX_AUTH_REQUIRED: "Connect Dropbox in Profile → Settings to sync.",
         DROPBOX_TOKEN_EXPIRED: "Dropbox session expired. Reconnect in Profile → Settings.",
         DROPBOX_CONFLICT:      "Remote file changed since last pull. Pull first.",
@@ -260,16 +187,9 @@ export function useSync({ latestStateRef, rehydrate, showBanner }) {
         DROPBOX_OFFLINE:        "No network connection. Sync requires connectivity.",
         DROPBOX_TIMEOUT:       "Dropbox request timed out. Check your connection and try again.",
       };
-      if (e.message === "SYNC_FILE_NOT_FOUND") {
-        SyncManager.forget().catch(() => {});
-        setSyncFileConnected(false);
-        setSyncStatus("idle");
-      }
       if (e.message === "DROPBOX_TOKEN_EXPIRED") {
         clearTokens();
         setDropboxConnected(false);
-        setSyncFileConnected(false);
-        setTransport("download");
         setSyncStatus("idle");
       }
       const safeMsg = (e.message || "")
@@ -280,37 +200,22 @@ export function useSync({ latestStateRef, rehydrate, showBanner }) {
     }
   }, [latestStateRef, showBanner]);
 
-  // ── Pull ──────────────────────────────────────────────────
   const syncPull = useCallback(async () => {
     setSyncStatus("syncing");
-    // Fast-fail for Dropbox transport when offline — avoids a 20s timeout inside
-    // ensureFreshToken(). FSAPI/download transports read local files and do not need
-    // this guard (SyncManager.pull() will succeed offline for those paths).
     if (getTransport() === "dropbox" && typeof navigator !== "undefined" && navigator.onLine === false) {
       setSyncStatus("error");
       showBanner("No network connection. Dropbox sync requires connectivity.", "alert");
       return;
     }
-    // Write-through setState (useAppState) persists synchronously to IDB; no flush needed before pull.
-    isPullingRef.current = true; // [S-2] block auto-push during Pull
+    isPullingRef.current = true;
     let _willReload = false;
     try {
       const ts = await SyncManager.pull();
-      // rehydrate calls initState() which reads from the TinyBase store
-      // (already updated by applyPayload via idbSet) and resets React state
-      // atomically — no initState race condition.
       await rehydrate();
       LS.set(storageKey("jv_last_synced"), String(ts));
       setLastSynced(ts);
       setSyncStatus("synced");
-      const _pullTransport = getTransport();
-      const _pullBannerMsg = _pullTransport === "dropbox"
-        ? "Pulled data from Dropbox."
-        : "Pulled data from sync file.";
-      showBanner(_pullBannerMsg, "success");
-      // After a successful pull and rehydrate, a full reload ensures any components
-      // with local UI state derived from the old global state are reset to match
-      // the freshly loaded data.
+      showBanner("Pulled data from Dropbox.", "success");
       _willReload = true;
       setIsReloading(true);
       reloadTimerRef.current = setTimeout(() => {
@@ -320,18 +225,14 @@ export function useSync({ latestStateRef, rehydrate, showBanner }) {
           try {
             window.location.href = window.location.origin + window.location.pathname;
           } catch {
-            // Reload blocked (e.g. Safari private mode).
             _willReload = false;
           }
         }
-        // Reload may be blocked without throwing. Release mutex so auto-push can resume.
-        // If reload worked we're gone anyway; if blocked, state is already rehydrated.
         if (!_willReload) isPullingRef.current = false;
       }, 800);
     } catch (e) {
       setSyncStatus("error");
       const msgs = {
-        NO_HANDLE:             "No sync file selected. Pick one in Profile → Settings.",
         CORRUPT_FILE:          "Sync file is corrupt or not valid JSON. Re-export from another device.",
         SYNC_SCHEMA_OUTDATED:  "Sync file was written by an older version of RITMOL. Re-export it from an up-to-date device.",
         SYNC_FILE_TOO_LARGE:   "Sync file exceeds 10 MB — this is unexpected. Check the file.",
@@ -348,8 +249,6 @@ export function useSync({ latestStateRef, rehydrate, showBanner }) {
       if (e.message === "DROPBOX_TOKEN_EXPIRED") {
         clearTokens();
         setDropboxConnected(false);
-        setSyncFileConnected(false);
-        setTransport("download");
         setSyncStatus("idle");
       }
       const safeMsg = (e.message || "")
@@ -360,38 +259,7 @@ export function useSync({ latestStateRef, rehydrate, showBanner }) {
     } finally {
       if (!_willReload) isPullingRef.current = false;
     }
-    // On success, isPullingRef stays true until reload clears the page.
   }, [rehydrate, showBanner]);
-
-  // ── Pick file ─────────────────────────────────────────────
-  const pickSyncFile = useCallback(async () => {
-    try {
-      await SyncManager.pickFile();
-      setSyncFileConnected(true);
-      let persisted = true;
-      try {
-        persisted = await SyncManager.isHandlePersisted();
-      } catch {
-        persisted = false;
-      }
-      if (!persisted) {
-        showBanner("Sync file linked for this session only — browser storage restrictions prevent persisting the link.", "alert");
-      } else {
-        showBanner("Sync file linked. Push or Pull to sync.", "success");
-      }
-    } catch (e) {
-      if (e.name !== "AbortError") showBanner("Could not pick file.", "alert");
-    }
-  }, [showBanner]);
-
-  // ── Forget file (double-confirm) ──────────────────────────
-  const [confirmForgetSync, setConfirmForgetSync] = useState(false);
-  const confirmTimerRef = useRef(null);
-
-  // Cleanup confirm timer on unmount
-  useEffect(() => () => {
-    if (confirmTimerRef.current) clearTimeout(confirmTimerRef.current);
-  }, []);
 
   const connectDropbox = useCallback(() => {
     try {
@@ -421,7 +289,6 @@ export function useSync({ latestStateRef, rehydrate, showBanner }) {
       await handleOAuthCallback(code);
       setTransport("dropbox");
       setDropboxConnected(true);
-      setSyncFileConnected(true);
       try {
         await ensureFreshToken();
         isPullingRef.current = true;
@@ -451,12 +318,8 @@ export function useSync({ latestStateRef, rehydrate, showBanner }) {
             }
           }
           if (!navigated) {
-            // Navigation was fully blocked — release mutex so future Pulls can run.
             isPullingRef.current = false;
           }
-          // Safety release: if the page was not unloaded within 3 s (navigation blocked
-          // silently without throwing), release the mutex. Only schedule this timer when
-          // navigation was attempted — if navigation was blocked above we already released.
           if (navigated) {
             setTimeout(() => {
               isPullingRef.current = false;
@@ -481,44 +344,16 @@ export function useSync({ latestStateRef, rehydrate, showBanner }) {
 
   const disconnectDropbox = useCallback(() => {
     clearTokens();
-    setTransport("download");
     setDropboxConnected(false);
-    setSyncFileConnected(false);
     showBanner("Dropbox disconnected.", "info");
   }, [showBanner]);
 
-  const forgetSyncFile = useCallback(async () => {
-    if (!confirmForgetSync) {
-      setConfirmForgetSync(true);
-      confirmTimerRef.current = setTimeout(() => setConfirmForgetSync(false), 4000);
-      return;
-    }
-    clearTimeout(confirmTimerRef.current);
-    setConfirmForgetSync(false);
-    if (debounceTimerRef.current) {
-      clearTimeout(debounceTimerRef.current);
-      debounceTimerRef.current = null;
-    }
-    try {
-      await SyncManager.forget();
-      setSyncFileConnected(false);
-      setSyncStatus("idle");
-      showBanner("Sync file unlinked.", "success");
-    } catch {
-      showBanner("Could not unlink sync file. Try again.", "alert");
-    }
-  }, [confirmForgetSync, showBanner]);
-
   return {
-    syncFileConnected,
     dropboxConnected,
     syncStatus,
     lastSynced,
-    confirmForgetSync,
     syncPush,
     syncPull,
-    pickSyncFile,
-    forgetSyncFile,
     connectDropbox,
     handleDropboxCallback,
     disconnectDropbox,

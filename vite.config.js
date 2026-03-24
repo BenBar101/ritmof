@@ -19,9 +19,8 @@ import { resolve } from 'path';
 // the plugin function (server-side only) and never pass the value into `define`.
 // ─────────────────────────────────────────────────────────────────────────────
 
-// GitHub Pages: set VITE_BASE_PATH to your repo name with slashes, e.g. /my-repo/
-// Leave unset for local dev or custom domain (defaults to /).
-const base = process.env.VITE_BASE_PATH || '/';
+// Cloudflare Pages: VITE_BASE_URL. GitHub Pages: VITE_BASE_PATH (repo subpath).
+const base = (process.env.VITE_BASE_URL ?? process.env.VITE_BASE_PATH) || "/";
 const CACHE_VERSION = `v${Date.now()}`;
 
 export default defineConfig({

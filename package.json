@@ -12,19 +12,28 @@
     "ci:local": "npm run lint && npm run test:e2e"
   },
   "dependencies": {
+    "@capacitor/android": "^8.2.0",
+    "@capacitor/app": "^8.0.1",
+    "@capacitor/browser": "^8.0.2",
+    "@capacitor/cli": "^8.2.0",
+    "@capacitor/core": "^8.2.0",
+    "@capacitor/ios": "^8.2.0",
+    "@capacitor/local-notifications": "^8.0.2",
+    "capacitor-secure-storage-plugin": "^0.13.0",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
     "tinybase": "^8.0.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {
-    "@playwright/test": "^1.49.0",
     "@eslint/js": "^9.15.0",
+    "@playwright/test": "^1.49.0",
     "@vitejs/plugin-react": "^4.2.0",
     "eslint": "^9.15.0",
     "eslint-plugin-react": "^7.37.0",
     "eslint-plugin-react-hooks": "^5.0.0",
     "globals": "^15.12.0",
+    "typescript": "^6.0.2",
     "vite": "^7.3.1"
   }
 }

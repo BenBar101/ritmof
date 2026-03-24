@@ -22,10 +22,12 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { useState, useCallback, useRef, useEffect } from "react";
-import { storageKey } from "../utils/db";
-import { idbSet } from "../utils/db";
+import { storageKey, idbSet, localDateFromUTC } from "../utils/db";
 import { initState } from "../utils/state";
 import { DEFAULT_XP_PER_LEVEL, DEFAULT_GACHA_COST, DEFAULT_STREAK_SHIELD_COST } from "../constants";
+import { WIDGET_UPDATE_DEBOUNCE_MS } from "../config.js";
+import { getLevel, getRank } from "../utils/xp";
+import { RitmolWidget } from "../plugins/RitmolWidget.js";
 
 let _persistErrorCount = 0;
 
@@ -75,6 +77,12 @@ function persistState(s) {
     idbSet(storageKey("jv_last_shield_use_date"), s.lastShieldUseDate ?? null);
     idbSet(storageKey("jv_last_shield_buy_date"), s.lastShieldBuyDate ?? null);
     idbSet(storageKey("jv_tutorial_done"), s.tutorialDone ?? false);
+    idbSet(storageKey("jv_healthkit_enabled"), s.healthKitEnabled ?? false);
+    idbSet(storageKey("jv_google_auth_connected"), s.googleAuthConnected ?? false);
+    idbSet(storageKey("jv_notifications_enabled"), s.notificationsEnabled ?? false);
+    idbSet(storageKey("jv_last_ai_notif_batch"), s.lastAiNotificationBatch ?? null);
+    idbSet(storageKey("jv_ai_notif_log"), s.aiNotificationLog ?? {});
+    idbSet(storageKey("jv_lecture_quick_log_pending"), s.lectureQuickLogPending ?? {});
     _persistErrorCount = 0;
   } catch (e) {
     _persistErrorCount += 1;
@@ -96,6 +104,11 @@ export function useAppState() {
   const [idbReady, setIdbReady] = useState(false);
   const [rehydrateCount, setRehydrateCount] = useState(0);
   const latestStateRef = useRef(null);
+  const widgetDebounceRef = useRef(null);
+
+  useEffect(() => () => {
+    if (widgetDebounceRef.current) clearTimeout(widgetDebounceRef.current);
+  }, []);
 
   // ── Async boot: initState ──
   useEffect(() => {
@@ -141,6 +154,13 @@ export function useAppState() {
             },
             lastShieldUseDate: null,
             lastShieldBuyDate: null,
+            tutorialDone: false,
+            healthKitEnabled: false,
+            googleAuthConnected: false,
+            notificationsEnabled: false,
+            lastAiNotificationBatch: null,
+            aiNotificationLog: {},
+            lectureQuickLogPending: {},
           };
           latestStateRef.current = emergency;
           _setState(emergency);
@@ -160,6 +180,39 @@ export function useAppState() {
       latestStateRef.current = next;
       // Write-through: persist immediately so sync push always reads fresh data.
       persistState(next);
+      if (widgetDebounceRef.current) clearTimeout(widgetDebounceRef.current);
+      widgetDebounceRef.current = setTimeout(() => {
+        try {
+          const s = latestStateRef.current;
+          if (!s) return;
+          const xpPerLevel = s.dynamicCosts?.xpPerLevel ?? DEFAULT_XP_PER_LEVEL;
+          const level = getLevel(s.xp, xpPerLevel);
+          const rankLabel = getRank(level)?.label ?? "Novice";
+          const today = localDateFromUTC();
+          const [ty, tm, td] = today.split("-").map((x) => parseInt(x, 10));
+          const tnext = new Date(ty, tm - 1, td);
+          tnext.setDate(tnext.getDate() + 1);
+          const tomorrow = `${tnext.getFullYear()}-${String(tnext.getMonth() + 1).padStart(2, "0")}-${String(tnext.getDate()).padStart(2, "0")}`;
+          const nextLecture = (s.calendarEvents ?? [])
+            .filter((e) => e.type === "lecture" && e.start && new Date(e.start) > new Date())
+            .sort((a, b) => new Date(a.start) - new Date(b.start))[0] ?? null;
+          const dueTasks = (s.tasks ?? [])
+            .filter((t) => !t.done && t.due && t.due <= tomorrow)
+            .slice(0, 2)
+            .map((t) => ({ text: (t.text ?? "").slice(0, 40) }));
+          RitmolWidget.updateWidgetData({
+            streak: s.streak ?? 0,
+            xp: s.xp ?? 0,
+            xpPerLevel,
+            rankLabel,
+            level,
+            nextLecture: nextLecture
+              ? { title: (nextLecture.title ?? "").slice(0, 40), startTime: nextLecture.start }
+              : null,
+            dueTasks,
+          }).catch(() => {});
+        } catch { /* widget writes are never fatal */ }
+      }, WIDGET_UPDATE_DEBOUNCE_MS);
       return next;
     });
   }, []);
