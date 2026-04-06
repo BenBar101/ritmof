@@ -84,17 +84,36 @@ export const APP_ICON_URL = (() => {
 const DB_NAME = IS_DEV ? 'ritmol_tb_dev' : 'ritmol_tb'
 const OLD_IDB_NAME = IS_DEV ? 'ritmol_dev' : 'ritmol' // legacy idb.js store for migration reads
 
-// ── Gemini key (sessionStorage only — never in IDB or state) ──
-const GEMINI_SESSION_KEY = IS_DEV ? 'ritmol_dev_gemini_key' : 'ritmol_gemini_key'
-export const getGeminiApiKey = () => {
-  try { return sessionStorage.getItem(GEMINI_SESSION_KEY) || '' } catch { return '' }
+// ── AI API key (sessionStorage only — never in IDB or state) ──
+// Primary key name is provider-neutral; legacy "gemini" keys are migrated on read.
+const AI_SESSION_KEY = IS_DEV ? 'ritmol_dev_ai_api_key' : 'ritmol_ai_api_key'
+const LEGACY_GEMINI_SESSION_KEY = IS_DEV ? 'ritmol_dev_gemini_key' : 'ritmol_gemini_key'
+
+export function getAiApiKey() {
+  try {
+    let v = sessionStorage.getItem(AI_SESSION_KEY) || ''
+    if (!v) {
+      v = sessionStorage.getItem(LEGACY_GEMINI_SESSION_KEY) || ''
+      if (v) {
+        sessionStorage.setItem(AI_SESSION_KEY, v.trim())
+        sessionStorage.removeItem(LEGACY_GEMINI_SESSION_KEY)
+      }
+    }
+    return v
+  } catch {
+    return ''
+  }
 }
-export const setGeminiApiKey = (key) => {
+
+export function setAiApiKey(key) {
   try {
     if (key && typeof key === 'string' && key.trim()) {
-      sessionStorage.setItem(GEMINI_SESSION_KEY, key.trim())
+      const t = key.trim()
+      sessionStorage.setItem(AI_SESSION_KEY, t)
+      sessionStorage.removeItem(LEGACY_GEMINI_SESSION_KEY)
     } else {
-      sessionStorage.removeItem(GEMINI_SESSION_KEY)
+      sessionStorage.removeItem(AI_SESSION_KEY)
+      sessionStorage.removeItem(LEGACY_GEMINI_SESSION_KEY)
     }
   } catch { /* sessionStorage unavailable */ }
 }

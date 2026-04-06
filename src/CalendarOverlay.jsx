@@ -5,7 +5,7 @@
 // ═══════════════════════════════════════════════════════════════
 import React, { useState, useRef } from "react";
 import { useAppContext } from "./context/AppContext";
-import { fetchGCalEvents, fetchCalendarList, loadGoogleGIS, GCAL_SCOPE } from "./api/gcal";
+import { fetchGCalEvents, fetchCalendarList, requestGcalAccessToken } from "./api/gcal";
 import { sanitizeForPrompt } from "./api/systemPrompt";
 import { primaryBtn } from "./Onboarding";
 
@@ -180,14 +180,8 @@ export default function CalendarOverlay({ onClose, theme = "dark" }) {
     }
     setGCalLoading(true);
     try {
-      await loadGoogleGIS();
-      const tokenResponse = await new Promise((resolve, reject) => {
-        const tokenClient = window.google.accounts.oauth2.initTokenClient({
-          client_id: clientId,
-          scope: GCAL_SCOPE,
-          callback: (resp) => { if (resp.error) reject(new Error(resp.error)); else resolve(resp); },
-        });
-        tokenClient.requestAccessToken({ prompt: state.gCalConnected ? "" : "consent" });
+      const tokenResponse = await requestGcalAccessToken(clientId, {
+        promptConsent: !state.gCalConnected,
       });
       const accessToken = tokenResponse.access_token;
       if (!accessToken) throw new Error("No access token");

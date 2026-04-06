@@ -47,6 +47,29 @@
 	</array>
 	<key>UIViewControllerBasedStatusBarAppearance</key>
 	<true/>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLName</key>
+			<string>Google Sign-In</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>com.googleusercontent.apps.255682800609-ald04rlsnids0em19r2q5nbir3g1atag</string>
+			</array>
+		</dict>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLName</key>
+			<string>com.ritmol.app.oauth</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>ritmol</string>
+			</array>
+		</dict>
+	</array>
 	<key>NSHealthShareUsageDescription</key>
 	<string>RITMOL reads your sleep data to log rest quality. No data leaves your device.</string>
 	<key>UIBackgroundModes</key>

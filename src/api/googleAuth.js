@@ -1,16 +1,18 @@
 // ═══════════════════════════════════════════════════════════════
-// Google OAuth (PKCE) for Generative Language API
+// Google OAuth for Generative Language API
+// - Web: PKCE + redirect to /google-callback
+// - Native (iOS/Android): Google Sign-In via @capgo/capacitor-social-login
 // ═══════════════════════════════════════════════════════════════
 
 import { Capacitor } from "@capacitor/core";
-import { Browser } from "@capacitor/browser";
 import { SecureStoragePlugin } from "capacitor-secure-storage-plugin";
 import {
+  GCAL_SCOPE,
   GOOGLE_AUTH_SCOPE_GEMINI,
-  OAUTH_REDIRECT_SCHEME,
   GOOGLE_OAUTH_TOKEN_URL,
 } from "../config.js";
-import { getGeminiApiKey } from "../utils/db";
+import { getAiApiKey } from "../utils/db";
+import { ensureSocialLoginPluginsInitialized } from "./socialLoginNative.js";
 
 const SS_GOOGLE_ACCESS_TOKEN = "ritmol_google_access_token";
 const SS_GOOGLE_TOKEN_EXPIRY = "ritmol_google_token_expiry";
@@ -20,8 +22,70 @@ const LS_GOOGLE_REFRESH_TOKEN = "ritmol_google_refresh_token";
 
 const REFRESH_KEY_NATIVE = "ritmol_google_refresh";
 
+/** Web OAuth client ID (same as PKCE + Android SocialLogin + iOS serverClientId). */
+function webClientIdFromEnv() {
+  return (typeof import.meta !== "undefined" && import.meta.env?.VITE_GOOGLE_CLIENT_ID || "").trim();
+}
+
+/** iOS-only OAuth client (type iOS in Google Cloud Console, bundle ID com.ritmol.app). */
+function iosClientIdFromEnv() {
+  return (typeof import.meta !== "undefined" && import.meta.env?.VITE_GOOGLE_IOS_CLIENT_ID || "").trim();
+}
+
 function isNative() {
   return typeof window !== "undefined" && Capacitor.isNativePlatform();
+}
+
+async function ensureSocialLoginInitialized() {
+  if (!isNative()) return;
+  await ensureSocialLoginPluginsInitialized();
+  const webId = webClientIdFromEnv();
+  if (!webId) throw new Error("GOOGLE_AUTH_NO_CLIENT_ID");
+  if (Capacitor.getPlatform() === "ios" && !iosClientIdFromEnv()) {
+    throw new Error("GOOGLE_AUTH_NO_IOS_CLIENT_ID");
+  }
+}
+
+async function applyNativeGoogleLoginResult(result) {
+  if (result?.responseType === "offline") {
+    throw new Error("GOOGLE_AUTH_NATIVE_UNEXPECTED_OFFLINE");
+  }
+  const at = result?.accessToken;
+  const token = at?.token;
+  if (!token) throw new Error("GOOGLE_AUTH_NATIVE_NO_TOKEN");
+
+  const refreshToken = at?.refreshToken || null;
+  const expiresIn = Number(at?.expiresIn) || 3600;
+
+  sessionStorage.setItem(SS_GOOGLE_ACCESS_TOKEN, token);
+  sessionStorage.setItem(SS_GOOGLE_TOKEN_EXPIRY, String(Date.now() + expiresIn * 1000));
+  if (refreshToken) {
+    await secureSetRefresh(refreshToken);
+  }
+}
+
+async function startNativeGoogleSignIn() {
+  await ensureSocialLoginInitialized();
+  const { SocialLogin } = await import("@capgo/capacitor-social-login");
+  const scopes = [
+    GOOGLE_AUTH_SCOPE_GEMINI,
+    GCAL_SCOPE,
+    "openid",
+    "email",
+    "https://www.googleapis.com/auth/userinfo.email",
+    "https://www.googleapis.com/auth/userinfo.profile",
+  ];
+  const platform = Capacitor.getPlatform();
+  const loginOpts = {
+    scopes,
+    ...(platform === "android" ? { forceRefreshToken: true } : {}),
+  };
+  const res = await SocialLogin.login({
+    provider: "google",
+    options: loginOpts,
+  });
+  if (res.provider !== "google") throw new Error("GOOGLE_AUTH_NATIVE_PROVIDER_MISMATCH");
+  await applyNativeGoogleLoginResult(res.result);
 }
 
 async function secureSetRefresh(value) {
@@ -82,9 +146,6 @@ export function isGoogleAuthConnected() {
   try {
     if (localStorage.getItem(LS_GOOGLE_REFRESH_TOKEN)) return true;
   } catch { /* ignore */ }
-  if (isNative()) {
-    // async check skipped — best-effort sync path assumes disconnected until refresh
-  }
   return false;
 }
 
@@ -93,10 +154,31 @@ function redirectUriWeb() {
   return `${window.location.origin}${base}/google-callback`;
 }
 
-export function startGoogleOAuthFlow(clientId) {
-  if (!clientId || typeof clientId !== "string") {
-    throw new Error("GOOGLE_AUTH_NO_CLIENT_ID");
+/**
+ * Resolve the web OAuth client ID used for Google AI + Calendar (env or override).
+ * @param {string} [clientIdOverride] — from profile / onboarding when env is empty
+ */
+function resolveWebClientId(clientIdOverride) {
+  const o = (clientIdOverride || "").trim();
+  return o || webClientIdFromEnv();
+}
+
+/**
+ * Start Google sign-in for AI + Calendar (shared OAuth session).
+ * @param {string} [clientIdOverride] — optional; defaults to VITE_GOOGLE_CLIENT_ID
+ */
+export async function startGoogleOAuthFlow(clientIdOverride) {
+  const webId = resolveWebClientId(clientIdOverride);
+  if (!webId) throw new Error("GOOGLE_AUTH_NO_CLIENT_ID");
+
+  if (isNative()) {
+    if (Capacitor.getPlatform() === "ios" && !iosClientIdFromEnv()) {
+      throw new Error("GOOGLE_AUTH_NO_IOS_CLIENT_ID");
+    }
+    await startNativeGoogleSignIn();
+    return;
   }
+
   const verifier = generateCodeVerifier();
   sessionStorage.setItem(SS_PKCE_VERIFIER, verifier);
   const rawNonce = new Uint8Array(32);
@@ -107,29 +189,21 @@ export function startGoogleOAuthFlow(clientId) {
     .replace(/=/g, "");
   sessionStorage.setItem(SS_OAUTH_STATE, oauthState);
 
-  const redirect = isNative()
-    ? `${OAUTH_REDIRECT_SCHEME}://auth/google`
-    : redirectUriWeb();
-
-  generateCodeChallenge(verifier).then((challenge) => {
-    const params = new URLSearchParams({
-      client_id: clientId,
-      redirect_uri: redirect,
-      response_type: "code",
-      scope: `${GOOGLE_AUTH_SCOPE_GEMINI} openid email`,
-      code_challenge: challenge,
-      code_challenge_method: "S256",
-      state: oauthState,
-      access_type: "offline",
-      prompt: "consent",
-    });
-    const url = `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
-    if (isNative()) {
-      Browser.open({ url }).catch(() => { window.location.href = url; });
-    } else {
-      window.location.href = url;
-    }
+  const redirect = redirectUriWeb();
+  const challenge = await generateCodeChallenge(verifier);
+  const params = new URLSearchParams({
+    client_id: webId,
+    redirect_uri: redirect,
+    response_type: "code",
+    scope: `${GOOGLE_AUTH_SCOPE_GEMINI} ${GCAL_SCOPE} openid email`,
+    code_challenge: challenge,
+    code_challenge_method: "S256",
+    state: oauthState,
+    access_type: "offline",
+    prompt: "consent",
   });
+  const url = `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
+  window.location.href = url;
 }
 
 export async function handleGoogleOAuthCallback(code, state) {
@@ -141,10 +215,8 @@ export async function handleGoogleOAuthCallback(code, state) {
   const verifier = sessionStorage.getItem(SS_PKCE_VERIFIER);
   if (!verifier) throw new Error("GOOGLE_AUTH_CODE_EXCHANGE_FAILED");
 
-  const clientId = (import.meta.env.VITE_GOOGLE_CLIENT_ID || "").trim();
-  const redirect = isNative()
-    ? `${OAUTH_REDIRECT_SCHEME}://auth/google`
-    : redirectUriWeb();
+  const clientId = webClientIdFromEnv();
+  const redirect = redirectUriWeb();
 
   const body = new URLSearchParams({
     code,
@@ -174,8 +246,33 @@ export async function handleGoogleOAuthCallback(code, state) {
   try { sessionStorage.removeItem(SS_PKCE_VERIFIER); } catch { /* ignore */ }
 }
 
+async function refreshGoogleTokenNative() {
+  await ensureSocialLoginInitialized();
+  const { SocialLogin } = await import("@capgo/capacitor-social-login");
+  try {
+    await SocialLogin.refresh({ provider: "google", options: {} });
+  } catch {
+    /* fall through to HTTP refresh */
+  }
+  const auth = await SocialLogin.getAuthorizationCode({ provider: "google" });
+  const at = auth?.accessToken;
+  if (!at) throw new Error("GOOGLE_AUTH_REFRESH_FAILED");
+  sessionStorage.setItem(SS_GOOGLE_ACCESS_TOKEN, at);
+  sessionStorage.setItem(SS_GOOGLE_TOKEN_EXPIRY, String(Date.now() + 60 * 60 * 1000));
+  return at;
+}
+
 export async function refreshGoogleToken(clientId) {
   if (!clientId) throw new Error("GOOGLE_AUTH_REFRESH_FAILED");
+
+  if (isNative()) {
+    try {
+      return await refreshGoogleTokenNative();
+    } catch {
+      /* fall through */
+    }
+  }
+
   const refreshToken = await secureGetRefresh();
   if (!refreshToken) throw new Error("GOOGLE_AUTH_REFRESH_FAILED");
 
@@ -213,7 +310,14 @@ export function getGoogleAccessToken() {
   return null;
 }
 
-export function revokeGoogleAuth() {
+export async function revokeGoogleAuth() {
+  if (isNative()) {
+    try {
+      await ensureSocialLoginInitialized();
+      const { SocialLogin } = await import("@capgo/capacitor-social-login");
+      await SocialLogin.logout({ provider: "google" });
+    } catch { /* ignore */ }
+  }
   try {
     sessionStorage.removeItem(SS_GOOGLE_ACCESS_TOKEN);
     sessionStorage.removeItem(SS_GOOGLE_TOKEN_EXPIRY);
@@ -233,7 +337,7 @@ export async function ensureFreshGoogleToken(clientId) {
   return refreshGoogleToken(clientId);
 }
 
-/** Resolves OAuth token or raw AIza key for Gemini calls. */
+/** Resolves OAuth access token or a raw API key for AI calls. */
 export async function getActiveAiToken(googleAuthConnected, clientId) {
   if (googleAuthConnected && clientId) {
     try {
@@ -245,7 +349,7 @@ export async function getActiveAiToken(googleAuthConnected, clientId) {
       }
     }
   }
-  const key = getGeminiApiKey();
+  const key = getAiApiKey();
   if (key && String(key).trim()) return String(key).trim();
   return null;
 }

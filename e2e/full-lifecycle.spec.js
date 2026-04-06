@@ -4,15 +4,16 @@ import { test, expect } from '@playwright/test';
 test('FULL LIFECYCLE (real persistence + sync + attack)', async ({ page }) => {
   // Onboarding validates the key format locally (no network ping).
   // Gemini endpoint is mocked below, so this is only for syntactic validity.
-  const GEMINI_TEST_API_KEY = process.env.GEMINI_TEST_API_KEY || `AIza${'A'.repeat(32)}`;
+  const TEST_AI_API_KEY =
+    process.env.AI_TEST_API_KEY || process.env.GEMINI_TEST_API_KEY || `AIza${'A'.repeat(32)}`;
 
   const prohibited429Patterns = [
     /Gemini 429/i,
     /RESOURCE_EXHAUSTED/i,
     /RATE_LIMIT_EXCEEDED/i,
-    /Daily Gemini quota used up/i,
-    /Gemini RPM limit hit/i,
-    /Gemini rate limit hit/i,
+    /Daily (Gemini|AI) quota used up/i,
+    /(Gemini|AI) RPM limit hit/i,
+    /(Gemini|AI) rate limit hit/i,
     /Rate cap reached/i,
     /Invalid API key/i,
     /No Gemini API key configured/i,
@@ -117,8 +118,8 @@ test('FULL LIFECYCLE (real persistence + sync + attack)', async ({ page }) => {
 
   const apiKeyInput = page.locator('[data-testid="api-key"]');
   await expect(apiKeyInput).toBeVisible({ timeout: 5000 });
-  await apiKeyInput.fill(GEMINI_TEST_API_KEY);
-  await page.locator('[data-testid="save-gemini"]').click();
+  await apiKeyInput.fill(TEST_AI_API_KEY);
+  await page.locator('[data-testid="save-ai-api-key"]').click();
 
   const skipCalendar = page.locator('[data-testid="skip-calendar"]');
   if (await skipCalendar.isVisible()) await skipCalendar.click();
@@ -215,8 +216,11 @@ test('FULL LIFECYCLE (real persistence + sync + attack)', async ({ page }) => {
     'RESOURCE_EXHAUSTED',
     'RATE_LIMIT_EXCEEDED',
     'Daily Gemini quota used up',
+    'Daily AI quota used up',
     'Gemini RPM limit hit',
+    'AI RPM limit hit',
     'Gemini rate limit hit',
+    'AI rate limit hit',
     'Rate cap reached',
     'AI LOCKED',
     'Invalid API key',

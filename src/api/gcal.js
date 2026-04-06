@@ -2,7 +2,8 @@
 // GOOGLE CALENDAR (GIS TokenClient + REST — no deprecated gapi.client)
 // ═══════════════════════════════════════════════════════════════
 
-import { GCAL_API_BASE_URL } from "../config.js";
+import { GCAL_API_BASE_URL, GCAL_SCOPE } from "../config.js";
+import { ensureFreshGoogleToken, isGoogleAuthConnected } from "./googleAuth.js";
 
 export { GCAL_SCOPE } from "../config.js";
 
@@ -146,6 +147,58 @@ export function detectEventType(title) {
   if (t.includes("hw") || t.includes("homework") || t.includes("assignment") || t.includes("due")) return "homework";
   if (t.includes("tirgul") || t.includes("tutorial") || t.includes("recitation")) return "tirgul";
   return "other";
+}
+
+/** True if Google's tokeninfo says this access token includes Calendar read scope. */
+async function accessTokenHasGcalScope(accessToken) {
+  if (!accessToken || typeof accessToken !== "string") return false;
+  try {
+    const res = await fetch(
+      `https://www.googleapis.com/oauth2/v1/tokeninfo?access_token=${encodeURIComponent(accessToken)}`
+    );
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return false;
+    const scopeStr = typeof data.scope === "string" ? data.scope : "";
+    return scopeStr.includes("calendar.readonly");
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Access token for Google Calendar API: uses the same OAuth session as Gemini when
+ * that session already includes Calendar; otherwise GIS TokenClient (API-key-only users).
+ * @param {string} clientId
+ * @param {{ promptConsent?: boolean }} [options] — false = silent GIS re-auth (e.g. daily sync)
+ */
+export async function requestGcalAccessToken(clientId, options = {}) {
+  const { promptConsent = true } = options;
+  const id = (clientId || "").trim();
+  if (!id) throw new Error("GCAL_NO_CLIENT_ID");
+
+  if (isGoogleAuthConnected()) {
+    try {
+      const tok = await ensureFreshGoogleToken(id);
+      if (tok && await accessTokenHasGcalScope(tok)) {
+        return { access_token: tok };
+      }
+    } catch {
+      /* fall through to GIS */
+    }
+  }
+
+  await loadGoogleGIS();
+  return new Promise((resolve, reject) => {
+    const tokenClient = window.google.accounts.oauth2.initTokenClient({
+      client_id: id,
+      scope: GCAL_SCOPE,
+      callback: (resp) => {
+        if (resp.error) reject(new Error(resp.error));
+        else resolve(resp);
+      },
+    });
+    tokenClient.requestAccessToken({ prompt: promptConsent ? "consent" : "" });
+  });
 }
 
 // Used for Google Calendar OAuth (GIS TokenClient).

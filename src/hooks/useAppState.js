@@ -36,7 +36,7 @@ function persistState(s) {
   try {
     if (s.profile) {
       // eslint-disable-next-line no-unused-vars
-      const { geminiKey: _g, ...rest } = s.profile;
+      const { geminiKey: _gk, aiApiKey: _ak, ...rest } = s.profile;
       idbSet(storageKey("jv_profile"), rest);
     }
     idbSet(storageKey("jv_xp"),                 s.xp);

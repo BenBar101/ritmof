@@ -62,7 +62,7 @@
   </script>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=IM+Fell+English:ital@0;1&family=Special+Elite&family=Courier+Prime:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=Share+Tech+Mono&family=IM+Fell+English:ital@0;1&family=Special+Elite&family=Courier+Prime:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet" />
   <script>
     (function() {
       try {
@@ -78,6 +78,8 @@
     html, body, #root { height: 100%; width: 100%; overflow: hidden; }
     /* Theme: default dark (overridden by [data-theme] from JS) */
     :root, [data-theme="dark"] {
+      --font-ui: "DM Sans", system-ui, sans-serif;
+      --font-system: "Share Tech Mono", ui-monospace, monospace;
       --bg: #0a0a0a;
       --text: #e8e8e8;
       --surface: #111;
@@ -91,6 +93,8 @@
       --scroll-thumb: #444;
     }
     [data-theme="light"] {
+      --font-ui: "DM Sans", system-ui, sans-serif;
+      --font-system: "Share Tech Mono", ui-monospace, monospace;
       --bg: #f0f0f0;
       --text: #1a1a1a;
       --surface: #fff;
@@ -106,7 +110,7 @@
     body {
       background: var(--bg);
       color: var(--text);
-      font-family: 'Share Tech Mono', monospace;
+      font-family: var(--font-ui);
       -webkit-font-smoothing: antialiased;
       overscroll-behavior: none;
     }

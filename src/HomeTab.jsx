@@ -3,20 +3,14 @@ import { useAppContext } from "./context/AppContext";
 import { localDateFromUTC, nowHour, sanitizeForDisplay } from "./utils/db";
 
 // ── HUD panel wrapper ──────────────────────────────────────────
-// Full 8-corner notch per design.md spec.
-// The .system-frame class (injected by GlobalStyles Task 1) provides:
-//   - 2px solid border
-//   - the ::after inner ring (1px solid, inset 4px)
-//   - clip-path with 10px notches on all 8 corners
-// The accent prop widens the border to match the emphasis variant.
+// Primary panel: .system-frame (1px border). accent → chamfered corners only.
 function HudPanel({ children, style = {}, accent = false }) {
   return (
     <div
-      className="system-frame"
+      className={accent ? "system-frame system-frame--cut" : "system-frame"}
       style={{
         padding: "14px 16px",
         marginBottom: 0,
-        ...(accent ? { border: "2px solid #fff" } : {}),
         ...style,
       }}
     >
@@ -26,7 +20,7 @@ function HudPanel({ children, style = {}, accent = false }) {
 }
 
 // ── Section label ──────────────────────────────────────────────
-// Renders as a .system-header row with a .system-divider line and terminal diamond.
+// .system-header + .system-divider (sleek sans + thin rule + diamond).
 function SectionLabel({ children }) {
   return (
     <div className="system-header" style={{ fontSize: "11px", marginBottom: "8px" }}>
@@ -92,9 +86,8 @@ export default function HomeTab() {
 
       {/* ── IDENTITY PANEL ──────────────────────────────────── */}
       <div style={{
-        borderBottom: `2px solid ${borderAccent}`,
+        borderBottom: `1px solid ${borderAccent}`,
         paddingBottom: "14px",
-        fontFamily: "'Share Tech Mono', monospace",
       }}>
         <div style={{ fontSize: "10px", letterSpacing: "3px", color: textDim, marginBottom: "4px" }}>
           {greeting}
@@ -116,10 +109,10 @@ export default function HomeTab() {
         return (
           <HudPanel key={exam.id} accent>
             <SectionLabel>⚠ EXAM WARNING</SectionLabel>
-            <div style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: "15px", fontWeight: "bold", color: textPrimary }}>
+            <div style={{ fontSize: "15px", fontWeight: "700", color: textPrimary, letterSpacing: "0.02em" }}>
               {safeTitle}
             </div>
-            <div style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: "12px", color: textDim, marginTop: "3px" }}>
+            <div style={{ fontSize: "12px", color: textDim, marginTop: "3px" }}>
               T-{days} days · Prepare accordingly
             </div>
           </HudPanel>
@@ -136,11 +129,10 @@ export default function HomeTab() {
         ].map((s) => (
           <div key={s.label} className="system-frame" style={{
             padding: "10px 6px", textAlign: "center",
-            fontFamily: "'Share Tech Mono', monospace",
             position: "relative",
             marginBottom: 0,
           }}>
-            <div style={{ fontSize: "20px", fontWeight: "bold", color: textPrimary }}>{s.value}</div>
+            <div className="type-system" style={{ fontSize: "20px", fontWeight: "bold", color: textPrimary }}>{s.value}</div>
             <div style={{ fontSize: "9px", color: textDim, letterSpacing: "1.5px", marginTop: "2px" }}>{s.label}</div>
           </div>
         ))}
@@ -161,21 +153,24 @@ export default function HomeTab() {
           textAlign: "left", width: "100%",
         }}
       >
-        <div style={{
-          width: "36px", height: "36px", flexShrink: 0,
-          border: `2px solid ${logCtaFrame}`,
-          display: "flex", alignItems: "center", justifyContent: "center",
-          fontFamily: "'Share Tech Mono', monospace", fontSize: "18px",
-          background: logCtaIconBg,
-          clipPath: "polygon(0 0, calc(100% - 6px) 0, 100% 6px, 100% 100%, 0 100%)",
-        }}>
+        <div
+          className="type-system"
+          style={{
+            width: "36px", height: "36px", flexShrink: 0,
+            border: `2px solid ${logCtaFrame}`,
+            display: "flex", alignItems: "center", justifyContent: "center",
+            fontSize: "18px",
+            background: logCtaIconBg,
+            clipPath: "polygon(0 0, calc(100% - 6px) 0, 100% 6px, 100% 100%, 0 100%)",
+          }}
+        >
           <span style={{ color: logCtaIconFg }}>▶</span>
         </div>
         <div>
-          <div style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: "13px", fontWeight: "bold", letterSpacing: "1.5px", color: logCtaText }}>
+          <div style={{ fontSize: "13px", fontWeight: "700", letterSpacing: "0.1em", color: logCtaText }}>
             LOG STUDY SESSION
           </div>
-          <div style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: "11px", color: logCtaDim, marginTop: "2px" }}>
+          <div style={{ fontSize: "11px", color: logCtaDim, marginTop: "2px", opacity: 0.9 }}>
             Lecture · Tirgul · Homework · Prep → earn XP
           </div>
         </div>
@@ -203,7 +198,7 @@ export default function HomeTab() {
                   width: "8px", height: "8px", border: `1.5px solid ${borderAccent}`,
                   flexShrink: 0, background: "transparent",
                 }} />
-                <div style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: "13px", color: textPrimary, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                <div style={{ fontSize: "13px", color: textPrimary, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                   {sanitizeForDisplay(t.title ?? t.text ?? "", 80)}
                 </div>
                 {t.due && (() => {
@@ -216,14 +211,15 @@ export default function HomeTab() {
                     </span>
                   );
                 })()}
-                <div style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: "10px", color: textDim, flexShrink: 0 }}>›</div>
+                <div className="type-system" style={{ fontSize: "10px", color: textDim, flexShrink: 0 }}>›</div>
               </button>
             ))}
             {pendingTasks.length > 3 && (
               <button type="button" onClick={() => setTab("tasks")} style={{
-                fontFamily: "'Share Tech Mono', monospace", fontSize: "11px",
-                color: textDim, letterSpacing: "2px", background: "none",
+                fontSize: "11px",
+                color: textDim, letterSpacing: "0.12em", background: "none",
                 border: "none", cursor: "pointer", textAlign: "left", padding: "4px 2px",
+                fontWeight: 600,
               }}>
                 +{pendingTasks.length - 3} MORE  →
               </button>
@@ -238,16 +234,16 @@ export default function HomeTab() {
         <HudPanel accent>
           <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
             <HabitRing done={doneHabits} total={totalHabits} theme={theme} />
-            <div style={{ fontFamily: "'Share Tech Mono', monospace" }}>
-              <div style={{ fontSize: "24px", fontWeight: "bold", color: textPrimary }}>{doneHabits} / {totalHabits}</div>
+            <div>
+              <div className="type-system" style={{ fontSize: "24px", fontWeight: "bold", color: textPrimary }}>{doneHabits} / {totalHabits}</div>
               <div style={{ fontSize: "11px", color: textDim, marginTop: "2px" }}>
                 {totalHabits - doneHabits > 0 ? `${totalHabits - doneHabits} remaining` : "All complete ✓"}
               </div>
             </div>
             <button type="button" onClick={() => setTab("habits")} style={{
-              marginLeft: "auto", fontFamily: "'Share Tech Mono', monospace",
+              marginLeft: "auto",
               fontSize: "11px", color: textDim, background: "none", border: "none",
-              cursor: "pointer", letterSpacing: "1px",
+              cursor: "pointer", letterSpacing: "0.1em", fontWeight: 600,
             }}>
               VIEW ALL ›
             </button>
@@ -259,7 +255,7 @@ export default function HomeTab() {
       {state.dailyGoal && (
         <HudPanel>
           <SectionLabel>DAILY OBJECTIVE</SectionLabel>
-          <div style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: "13px", color: textPrimary, lineHeight: "1.6" }}>
+          <div style={{ fontSize: "13px", color: textPrimary, lineHeight: "1.65" }}>
             {sanitizeForDisplay(state.dailyGoal ?? "", 200)}
           </div>
         </HudPanel>
@@ -307,7 +303,9 @@ function HabitRing({ done, total, theme }) {
         strokeLinecap="butt" transform="rotate(-90 40 40)"
       />
       <text x="40" y="46" textAnchor="middle" fill={textColor}
-        style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: "18px", fontWeight: "bold" }}>
+        className="type-system"
+        style={{ fontSize: "18px", fontWeight: "bold" }}
+      >
         {Math.round(pct * 100)}%
       </text>
     </svg>
@@ -345,7 +343,7 @@ function CountdownTimer({ timer, onExpire, textPrimary = "#fff", borderMid = "rg
   const mins = Math.floor(remaining / 60000);
   const secs = Math.floor((remaining % 60000) / 1000);
   return (
-    <div style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: "13px", padding: "9px 0", display: "flex", justifyContent: "space-between", borderBottom: `1px solid ${borderMid}` }}>
+    <div className="type-system" style={{ fontSize: "13px", padding: "9px 0", display: "flex", justifyContent: "space-between", borderBottom: `1px solid ${borderMid}` }}>
       <span style={{ color: textPrimary }}>{sanitizeForDisplay(timer.emoji ?? "", 2)} {sanitizeForDisplay(timer.label ?? "", 200)}</span>
       <span style={{ color: textPrimary, fontWeight: "bold" }}>{mins}:{secs.toString().padStart(2, "0")}</span>
     </div>

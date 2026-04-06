@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useRef } from "react";
 import { useAppContext } from "./context/AppContext";
-import { todayUTC, localDateFromUTC, getGeminiApiKey } from "./utils/db";
+import { todayUTC, localDateFromUTC, getAiApiKey } from "./utils/db";
 import { ACHIEVEMENT_RARITIES, STYLE_CSS, RANKS, sampleGachaRarity } from "./constants";
-import { GEMINI_DAILY_TOKEN_LIMIT } from "./config.js";
+import { AI_DAILY_TOKEN_LIMIT } from "./config.js";
 import { getLevelProgress } from "./utils/xp";
 import { callGemini, RateLimitedError } from "./api/gemini";
-import { fetchGCalEvents, fetchCalendarList, loadGoogleGIS, GCAL_SCOPE } from "./api/gcal";
+import { fetchGCalEvents, fetchCalendarList, requestGcalAccessToken } from "./api/gcal";
 import { isSafeSyncValue } from "./sync/SyncManager";
 import GeometricCorners from "./GeometricCorners";
 import { primaryBtn } from "./Onboarding";
@@ -31,23 +31,23 @@ export default function ProfileTab() {
     <div style={{ padding: "16px", display: "flex", flexDirection: "column", gap: "16px" }}>
       {/* XP card */}
       <div className="system-frame" style={{ padding: "24px", position: "relative" }}>
-        <div style={{ fontFamily: "'Share Tech Mono', monospace", textAlign: "center" }}>
+        <div style={{ textAlign: "center" }}>
           <div className="system-header" style={{ fontSize: "13px", justifyContent: "center", marginBottom: "8px" }}>
             <div className="system-divider" />
-            <span>[ HUNTER CARD ]</span>
+            <span>HUNTER CARD</span>
             <div className="system-divider" />
           </div>
           <div style={{ fontSize: "clamp(20px, 6vw, 32px)", fontWeight: "bold", margin: "8px 0", wordBreak: "break-word" }}>{profile?.name || "Hunter"}</div>
           <div style={{ fontSize: "16px", color: fg }}>{rank.decor} {rank.title}</div>
           <div style={{ fontSize: "16px", color: fg, marginTop: "4px" }}>{profile?.major ?? ""}</div>
-          <div style={{ margin: "20px 0 8px", fontSize: "14px", color: fg, display: "flex", justifyContent: "space-between", fontWeight: "bold" }}>
+          <div className="type-system" style={{ margin: "20px 0 8px", fontSize: "14px", color: fg, display: "flex", justifyContent: "space-between", fontWeight: "bold" }}>
             <span>LEVEL {level}</span><span>{getLevelProgress(state.xp, xpPerLevel)}/{xpPerLevel} XP</span>
           </div>
-          <div style={{ height: "2px", background: "#444" }}>
-            <div style={{ width: `${(getLevelProgress(state.xp, xpPerLevel) / xpPerLevel) * 100}%`, height: "100%", background: fg }} />
+          <div className="meter">
+            <div className="meter__fill" style={{ width: `${(getLevelProgress(state.xp, xpPerLevel) / xpPerLevel) * 100}%` }} />
           </div>
           <div style={{ fontSize: "28px", fontWeight: "bold", marginTop: "8px" }}>{rank.badge}</div>
-          <div style={{ fontSize: "28px", fontWeight: "bold", marginTop: "8px", letterSpacing: "-0.05em" }}>{state.xp} XP</div>
+          <div className="type-system" style={{ fontSize: "28px", fontWeight: "bold", marginTop: "8px", letterSpacing: "-0.03em" }}>{state.xp} XP</div>
         </div>
       </div>
 
@@ -58,7 +58,7 @@ export default function ProfileTab() {
             padding: "10px 18px", border: "2px solid #fff",
             background: section === s ? "#fff" : "transparent",
             color: section === s ? "#000" : fg,
-            fontFamily: "'Share Tech Mono', monospace", fontSize: "14px", letterSpacing: "1px", fontWeight: "bold",
+            fontSize: "14px", letterSpacing: "0.08em", fontWeight: "700",
             whiteSpace: "nowrap", flexShrink: 0, cursor: "pointer", minHeight: "48px",
           }}>
             {s.toUpperCase()}
@@ -164,7 +164,7 @@ function ProfileOverview({ state, setState, profile, level, streakShieldCost, ha
               showBanner("Google session expired. Reconnect in Settings → AI.", "alert");
               return;
             }
-            token = getGeminiApiKey();
+            token = getAiApiKey();
           }
           if (!token || !String(token).trim()) return;
           updateDynamicCosts(token, snapshotForApi, "streak_shield_buy", trackTokens)
@@ -197,7 +197,7 @@ function ProfileOverview({ state, setState, profile, level, streakShieldCost, ha
           { label: "SESSIONS", value: totalSessions },
           { label: "STUDY HRS", value: `${Math.round(studyHours / 60)}h` },
         ].map((s) => (
-          <div key={s.label} style={{ border: "2px solid #fff", padding: "14px", fontFamily: "'Share Tech Mono', monospace" }}>
+          <div key={s.label} style={{ border: "2px solid #fff", padding: "14px", fontFamily: "var(--font-system), ui-monospace, monospace" }}>
             <div style={{ fontSize: "18px", fontWeight: "bold" }}>{s.value}</div>
             <div style={{ fontSize: "16px", color: fg, letterSpacing: "2px", marginTop: "2px", fontWeight: "bold" }}>{s.label}</div>
           </div>
@@ -205,7 +205,7 @@ function ProfileOverview({ state, setState, profile, level, streakShieldCost, ha
       </div>
 
       {/* Buy streak shield — cost set by AI, one use per day when protecting streak */}
-      <div style={{ border: "2px solid #fff", padding: "14px", fontFamily: "'Share Tech Mono', monospace" }}>
+      <div style={{ border: "2px solid #fff", padding: "14px", fontFamily: "var(--font-system), ui-monospace, monospace" }}>
         <div style={{ fontSize: "16px", color: fg, letterSpacing: "2px", marginBottom: "8px", fontWeight: "bold" }}>[ STREAK SHIELD ]</div>
         <div style={{ fontSize: "16px", color: fg, marginBottom: "8px" }}>COST: {effectiveShieldCost} XP — MAX ONE PER DAY.</div>
         <button
@@ -214,7 +214,7 @@ function ProfileOverview({ state, setState, profile, level, streakShieldCost, ha
           disabled={!canBuyShield || !hasAiAuth || buyShieldInFlight || (typeof navigator !== "undefined" && navigator.onLine === false)}
           style={{
             padding: "12px 16px", border: canBuyShield && hasAiAuth ? "2px solid #fff" : "2px solid #444", background: canBuyShield && hasAiAuth ? "#fff" : bg,
-            color: canBuyShield && hasAiAuth ? "#000" : "#444", fontFamily: "'Share Tech Mono', monospace", fontSize: "16px", letterSpacing: "2px", cursor: canBuyShield && hasAiAuth ? "pointer" : "default",
+            color: canBuyShield && hasAiAuth ? "#000" : "#444", fontFamily: "var(--font-system), ui-monospace, monospace", fontSize: "16px", letterSpacing: "2px", cursor: canBuyShield && hasAiAuth ? "pointer" : "default",
             minHeight: "48px",
           }}
         >
@@ -224,12 +224,12 @@ function ProfileOverview({ state, setState, profile, level, streakShieldCost, ha
 
       {/* Rank ladder */}
       <div style={{ border: "2px solid #fff", padding: "14px" }}>
-        <div style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: "16px", color: fg, letterSpacing: "2px", marginBottom: "10px", fontWeight: "bold" }}>[ RANK LADDER ]</div>
+        <div style={{ fontFamily: "var(--font-system), ui-monospace, monospace", fontSize: "16px", color: fg, letterSpacing: "2px", marginBottom: "10px", fontWeight: "bold" }}>[ RANK LADDER ]</div>
         {RANKS.map((r) => (
           <div key={r.title} style={{
             display: "flex", alignItems: "center", justifyContent: "space-between",
             padding: "8px 0", borderBottom: "2px solid #fff",
-            fontFamily: "'Share Tech Mono', monospace", fontSize: "16px",
+            fontFamily: "var(--font-system), ui-monospace, monospace", fontSize: "16px",
             color: fg,
           }}>
             <span>{level >= r.min ? "✓" : "○"} {r.title}</span>
@@ -240,7 +240,7 @@ function ProfileOverview({ state, setState, profile, level, streakShieldCost, ha
 
       {/* Semester goal */}
       {profile.semesterGoal && (
-        <div style={{ border: "2px solid #fff", padding: "12px", fontFamily: "'Share Tech Mono', monospace" }}>
+        <div style={{ border: "2px solid #fff", padding: "12px", fontFamily: "var(--font-system), ui-monospace, monospace" }}>
           <div style={{ fontSize: "16px", color: fg, letterSpacing: "2px", marginBottom: "6px", fontWeight: "bold" }}>[ SEMESTER OBJECTIVE ]</div>
           <div style={{ fontSize: "16px", fontStyle: "italic", color: fg, fontFamily: "'IM Fell English', serif" }}>
             {/* Fix [PR-1]: strip Unicode BiDi override characters (U+202A–U+202E, U+2066–U+2069)
@@ -365,14 +365,8 @@ function CalendarSection({ state, setState, profile, hasAiAuth, showBanner, them
     }
     setGCalLoading(true);
     try {
-      await loadGoogleGIS();
-      const tokenResponse = await new Promise((resolve, reject) => {
-        const tokenClient = window.google.accounts.oauth2.initTokenClient({
-          client_id: clientId,
-          scope: GCAL_SCOPE,
-          callback: (resp) => { if (resp.error) reject(new Error(resp.error)); else resolve(resp); },
-        });
-        tokenClient.requestAccessToken({ prompt: state.gCalConnected ? "" : "consent" });
+      const tokenResponse = await requestGcalAccessToken(clientId, {
+        promptConsent: !state.gCalConnected,
       });
       const accessToken = tokenResponse.access_token;
       if (!accessToken) throw new Error("No access token");
@@ -412,7 +406,7 @@ function CalendarSection({ state, setState, profile, hasAiAuth, showBanner, them
         padding: "12px", border: "2px solid #fff",
         background: "transparent",
         color: fg,
-        fontFamily: "'Share Tech Mono', monospace", fontSize: "16px", letterSpacing: "1px",
+        fontFamily: "var(--font-system), ui-monospace, monospace", fontSize: "16px", letterSpacing: "1px",
         minHeight: "48px",
       }}>
         {gCalLoading ? "SYNCING..." : state.gCalConnected ? "✓ GOOGLE CALENDAR SYNCED" : "SYNC GOOGLE CALENDAR"}
@@ -425,7 +419,7 @@ function CalendarSection({ state, setState, profile, hasAiAuth, showBanner, them
           onClick={() => syncGoogleCalendar(true)}
           style={{
             padding: "10px", border: "1px solid #555", background: "transparent", color: "#aaa",
-            fontFamily: "'Share Tech Mono', monospace", fontSize: "13px", letterSpacing: "1px", cursor: "pointer",
+            fontFamily: "var(--font-system), ui-monospace, monospace", fontSize: "13px", letterSpacing: "1px", cursor: "pointer",
           }}>
           CHANGE CALENDARS ({(state.gCalSelectedIds || []).length} selected)
         </button>
@@ -452,18 +446,18 @@ function CalendarSection({ state, setState, profile, hasAiAuth, showBanner, them
 
       {/* Add manual event */}
       <div style={{ border: "2px solid #fff", padding: "12px", display: "flex", flexDirection: "column", gap: "8px" }}>
-        <div style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: "16px", color: fg, letterSpacing: "2px", fontWeight: "bold" }}>[ ADD EVENT ]</div>
+        <div style={{ fontFamily: "var(--font-system), ui-monospace, monospace", fontSize: "16px", color: fg, letterSpacing: "2px", fontWeight: "bold" }}>[ ADD EVENT ]</div>
         <input
           value={form.title}
           onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))}
           placeholder="Event title..."
-          style={{ background: bg, border: "2px solid #fff", color: fg, padding: "12px", fontFamily: "'Share Tech Mono', monospace", fontSize: "16px", outline: "none" }}
+          style={{ background: bg, border: "2px solid #fff", color: fg, padding: "12px", fontFamily: "var(--font-system), ui-monospace, monospace", fontSize: "16px", outline: "none" }}
         />
         <div style={{ display: "flex", gap: "6px" }}>
           <select
             value={form.type}
             onChange={(e) => setForm((f) => ({ ...f, type: e.target.value }))}
-            style={{ flex: 1, background: bg, border: "2px solid #fff", color: fg, padding: "12px", fontFamily: "'Share Tech Mono', monospace", fontSize: "16px", outline: "none" }}
+            style={{ flex: 1, background: bg, border: "2px solid #fff", color: fg, padding: "12px", fontFamily: "var(--font-system), ui-monospace, monospace", fontSize: "16px", outline: "none" }}
           >
             <option value="exam">EXAM</option>
             <option value="lecture">LECTURE</option>
@@ -475,7 +469,7 @@ function CalendarSection({ state, setState, profile, hasAiAuth, showBanner, them
             type="datetime-local"
             value={form.start}
             onChange={(e) => setForm((f) => ({ ...f, start: e.target.value }))}
-            style={{ flex: 2, background: bg, border: "2px solid #fff", color: fg, padding: "12px", fontFamily: "'Share Tech Mono', monospace", fontSize: "16px", outline: "none" }}
+            style={{ flex: 2, background: bg, border: "2px solid #fff", color: fg, padding: "12px", fontFamily: "var(--font-system), ui-monospace, monospace", fontSize: "16px", outline: "none" }}
           />
         </div>
         <button type="button" onClick={addEvent} style={primaryBtn}>ADD EVENT</button>
@@ -487,7 +481,7 @@ function CalendarSection({ state, setState, profile, hasAiAuth, showBanner, them
           onClick={clearPastEvents}
           style={{
             padding: "10px", border: "1px solid #555", background: "transparent", color: "#aaa",
-            fontFamily: "'Share Tech Mono', monospace", fontSize: "13px", letterSpacing: "1px", cursor: "pointer",
+            fontFamily: "var(--font-system), ui-monospace, monospace", fontSize: "13px", letterSpacing: "1px", cursor: "pointer",
           }}>
           CLEAR {pastEvents.length} PAST EVENT{pastEvents.length !== 1 ? "S" : ""}
         </button>
@@ -496,7 +490,7 @@ function CalendarSection({ state, setState, profile, hasAiAuth, showBanner, them
       {/* Events list */}
       <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
         {events.length === 0 && (
-          <div style={{ border: "2px solid #fff", padding: "16px", textAlign: "center", fontFamily: "'Share Tech Mono', monospace", fontSize: "16px", color: fg }}>
+          <div style={{ border: "2px solid #fff", padding: "16px", textAlign: "center", fontFamily: "var(--font-system), ui-monospace, monospace", fontSize: "16px", color: fg }}>
             No events. Sync calendar or add manually.
           </div>
         )}
@@ -508,7 +502,7 @@ function CalendarSection({ state, setState, profile, hasAiAuth, showBanner, them
           return (
             <div key={ev.id} style={{
               border: "2px solid #fff", padding: "12px",
-              fontFamily: "'Share Tech Mono', monospace",
+              fontFamily: "var(--font-system), ui-monospace, monospace",
               display: "flex", justifyContent: "space-between", alignItems: "center",
             }}>
               <div>
@@ -543,7 +537,7 @@ function CalendarPicker({ calendars, initialSelected, onConfirm, onCancel, theme
     });
   }
 
-  const mono = { fontFamily: "'Share Tech Mono', monospace" };
+  const mono = { fontFamily: "var(--font-system), ui-monospace, monospace" };
 
   return (
     <div style={{ border: "2px solid #fff", padding: "12px", display: "flex", flexDirection: "column", gap: "10px" }}>
@@ -626,7 +620,7 @@ function GachaSection({ state, setState, profile, apiKey, getAiToken, hasAiAuth,
   const canAfford = state.xp >= gachaCost;
   // Check if daily token budget is depleted
   const tokenUsage = state.tokenUsage;
-  const tokensExhausted = !!(tokenUsage && tokenUsage.date === todayUTC() && tokenUsage.tokens >= GEMINI_DAILY_TOKEN_LIMIT);
+  const tokensExhausted = !!(tokenUsage && tokenUsage.date === todayUTC() && tokenUsage.tokens >= AI_DAILY_TOKEN_LIMIT);
   // Abort controller so unmounting mid-pull cancels the Gemini request and prevents
   // trackTokens / setState firing against an unmounted component.
   const gachaAbortRef = useRef(null);
@@ -649,11 +643,11 @@ function GachaSection({ state, setState, profile, apiKey, getAiToken, hasAiAuth,
     const liveCanAfford = liveXp >= liveCost;
     if (pullingRef.current || !liveCanAfford || pulling || !hasAiAuth) {
       if (!liveCanAfford) showBanner(`Insufficient XP. Need ${liveCost} XP to pull.`, "alert");
-      if (!hasAiAuth) showBanner("No AI connection. Connect Google or add an API key in Settings.", "alert");
+      if (!hasAiAuth) showBanner("No AI connection. Sign in with Google (Settings → AI) or add an API key.", "alert");
       return;
     }
     const usage = latestStateRef?.current?.tokenUsage ?? state.tokenUsage;
-    if (usage && usage.date === todayUTC() && usage.tokens >= GEMINI_DAILY_TOKEN_LIMIT) {
+    if (usage && usage.date === todayUTC() && usage.tokens >= AI_DAILY_TOKEN_LIMIT) {
       showBanner("SYSTEM: Neural energy depleted. AI functions offline until tomorrow.", "alert");
       return;
     }
@@ -978,8 +972,8 @@ Reply with ONLY this JSON:
       if (err?.isGemini429) {
         const secsLeft = err.retryAfterMs ? Math.ceil(err.retryAfterMs / 1000) : 60;
         const msg = err.message?.includes("RESOURCE_EXHAUSTED")
-          ? "Daily Gemini quota used up — gacha unavailable until tomorrow."
-          : `Gemini RPM limit hit. Wait ~${secsLeft}s and try again.`;
+          ? "Daily AI quota used up — gacha unavailable until tomorrow."
+          : `AI RPM limit hit. Wait ~${secsLeft}s and try again.`;
         if (mountedRef.current) {
           showBanner(msg, "alert");
           setPulling(false);
@@ -1008,12 +1002,12 @@ Reply with ONLY this JSON:
       <div style={{
         border: "2px solid #fff", padding: "24px", textAlign: "center",
         background: "repeating-linear-gradient(0deg, transparent, transparent 19px, #111 19px, #111 20px)",
-        fontFamily: "'Share Tech Mono', monospace", position: "relative",
+        fontFamily: "var(--font-system), ui-monospace, monospace", position: "relative",
       }}>
         <GeometricCorners style="geometric" />
-        <div style={{ fontSize: "16px", color: fg, letterSpacing: "3px", fontFamily: "'Share Tech Mono', monospace", fontWeight: "bold" }}>[ CHRONICLE ENGINE ]</div>
+        <div style={{ fontSize: "16px", color: fg, letterSpacing: "3px", fontFamily: "var(--font-system), ui-monospace, monospace", fontWeight: "bold" }}>[ CHRONICLE ENGINE ]</div>
         <div style={{ fontSize: "40px", margin: "16px 0" }}>◈</div>
-        <div style={{ fontSize: "16px", color: fg, marginBottom: "16px", fontFamily: "'Share Tech Mono', monospace" }}>
+        <div style={{ fontSize: "16px", color: fg, marginBottom: "16px", fontFamily: "var(--font-system), ui-monospace, monospace" }}>
           {tokensExhausted
             ? "NEURAL ENERGY DEPLETED"
             : canAfford ? `${gachaCost} XP per pull` : `Need ${gachaCost - state.xp} more XP`}
@@ -1021,7 +1015,7 @@ Reply with ONLY this JSON:
         {tokensExhausted && (
           <div style={{
             border: "2px solid #fff", padding: "10px 14px", marginBottom: "12px",
-            fontFamily: "'Share Tech Mono', monospace", fontSize: "14px", color: fg,
+            fontFamily: "var(--font-system), ui-monospace, monospace", fontSize: "14px", color: fg,
             letterSpacing: "1px", lineHeight: "1.5",
           }}>
             ⚡ DAILY TOKEN BUDGET EXHAUSTED<br />
@@ -1036,14 +1030,14 @@ Reply with ONLY this JSON:
             width: "100%", padding: "14px",
             background: canAfford && !pulling && !tokensExhausted && hasAiAuth ? "#fff" : bg,
             color: canAfford && !pulling && !tokensExhausted && hasAiAuth ? "#000" : fg,
-            fontFamily: "'Share Tech Mono', monospace", fontSize: "16px", letterSpacing: "2px",
+            fontFamily: "var(--font-system), ui-monospace, monospace", fontSize: "16px", letterSpacing: "2px",
             border: "none", cursor: canAfford && !pulling && !tokensExhausted && hasAiAuth ? "pointer" : "default",
             opacity: tokensExhausted ? 0.5 : 1,
           }}
         >
           {pulling ? "PULLING..." : tokensExhausted ? "NO NEURAL ENERGY" : `PULL — ${gachaCost} XP`}
         </button>
-        <div style={{ fontSize: "16px", color: fg, marginTop: "8px", fontFamily: "'Share Tech Mono', monospace" }}>
+        <div style={{ fontSize: "16px", color: fg, marginTop: "8px", fontFamily: "var(--font-system), ui-monospace, monospace" }}>
           {collection.length} cards collected
         </div>
       </div>
@@ -1054,7 +1048,7 @@ Reply with ONLY this JSON:
       {/* Collection toggle */}
         <button type="button" onClick={() => setShowCollection(!showCollection)} style={{
         padding: "12px", border: "2px solid #fff", background: "transparent",
-        color: fg, fontFamily: "'Share Tech Mono', monospace", fontSize: "16px",
+        color: fg, fontFamily: "var(--font-system), ui-monospace, monospace", fontSize: "16px",
       }}>
         {showCollection ? "HIDE COLLECTION" : `VIEW COLLECTION (${collection.length})`}
       </button>
@@ -1062,7 +1056,7 @@ Reply with ONLY this JSON:
       {showCollection && (
         <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
           {collection.length === 0 && (
-            <div style={{ border: "2px solid #fff", padding: "20px", textAlign: "center", fontFamily: "'Share Tech Mono', monospace", fontSize: "16px", color: fg }}>
+            <div style={{ border: "2px solid #fff", padding: "20px", textAlign: "center", fontFamily: "var(--font-system), ui-monospace, monospace", fontSize: "16px", color: fg }}>
               No cards yet. Pull to collect.
             </div>
           )}
@@ -1089,7 +1083,7 @@ Reply with ONLY this JSON:
                         border: safePage === 0 ? "2px solid #444" : "2px solid #fff",
                         background: safePage === 0 ? "#000" : "transparent",
                         color: safePage === 0 ? "#444" : fg,
-                        fontFamily: "'Share Tech Mono', monospace",
+                        fontFamily: "var(--font-system), ui-monospace, monospace",
                         fontSize: "16px",
                         cursor: safePage === 0 ? "default" : "pointer",
                         minHeight: "48px",
@@ -1097,7 +1091,7 @@ Reply with ONLY this JSON:
                     >
                       ◀ PREV
                     </button>
-                    <span style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: "14px", color: fg }}>
+                    <span style={{ fontFamily: "var(--font-system), ui-monospace, monospace", fontSize: "14px", color: fg }}>
                       {safePage + 1} / {pageCount}
                     </span>
                     <button
@@ -1109,7 +1103,7 @@ Reply with ONLY this JSON:
                         border: safePage === pageCount - 1 ? "2px solid #444" : "2px solid #fff",
                         background: safePage === pageCount - 1 ? "#000" : "transparent",
                         color: safePage === pageCount - 1 ? "#444" : fg,
-                        fontFamily: "'Share Tech Mono', monospace",
+                        fontFamily: "var(--font-system), ui-monospace, monospace",
                         fontSize: "16px",
                         cursor: safePage === pageCount - 1 ? "default" : "pointer",
                         minHeight: "48px",
@@ -1157,12 +1151,12 @@ function GachaCard({ card, compact, theme }) {
     }} onClick={() => compact && setExpanded(!expanded)}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
         <div>
-          <div style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: "16px", fontWeight: "bold" }}>{safeRenderStr(card.title)}</div>
-          <div style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: "14px", color: fg, marginTop: "4px", fontWeight: "bold" }}>
+          <div style={{ fontFamily: "var(--font-system), ui-monospace, monospace", fontSize: "16px", fontWeight: "bold" }}>{safeRenderStr(card.title)}</div>
+          <div style={{ fontFamily: "var(--font-system), ui-monospace, monospace", fontSize: "14px", color: fg, marginTop: "4px", fontWeight: "bold" }}>
             {card.type === "chronicle" ? `CHRONICLE · ${safeRenderStr(card.source)}` : "RANK TITLE"} · {r.label}
           </div>
         </div>
-        {compact && <span style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: "16px", color: fg }}>{expanded ? "[ ▲ ]" : "[ ▼ ]"}</span>}
+        {compact && <span style={{ fontFamily: "var(--font-system), ui-monospace, monospace", fontSize: "16px", color: fg }}>{expanded ? "[ ▲ ]" : "[ ▼ ]"}</span>}
       </div>
 
       {expanded && (
@@ -1172,8 +1166,8 @@ function GachaCard({ card, compact, theme }) {
               borderTop: "2px solid #fff", borderBottom: "2px solid #fff",
               padding: "16px 0", margin: "12px 0", textAlign: "center",
             }}>
-              <div style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: "11px", letterSpacing: "4px", color: "#aaa", marginBottom: "8px" }}>— HUNTER EPITHET —</div>
-              <div style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: "22px", fontWeight: "bold", color: fg, letterSpacing: "2px" }}>
+              <div style={{ fontFamily: "var(--font-system), ui-monospace, monospace", fontSize: "11px", letterSpacing: "4px", color: "#aaa", marginBottom: "8px" }}>— HUNTER EPITHET —</div>
+              <div style={{ fontFamily: "var(--font-system), ui-monospace, monospace", fontSize: "22px", fontWeight: "bold", color: fg, letterSpacing: "2px" }}>
                 {safeRenderStr(card.title)}
               </div>
             </div>

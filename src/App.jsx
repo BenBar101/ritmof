@@ -14,12 +14,12 @@ import { useHealthKit } from "./hooks/useHealthKit";
 import { AppContext } from "./context/AppContext";
 
 // Utils
-import { LS, storageKey, IS_DEV, getGeminiApiKey, setGeminiApiKey, todayUTC, localDateFromUTC, APP_ICON_URL } from "./utils/db";
+import { LS, storageKey, IS_DEV, getAiApiKey, setAiApiKey, todayUTC, localDateFromUTC, APP_ICON_URL } from "./utils/db";
 import { getLevel, getRank, getXpPerLevel, getGachaCost, getStreakShieldCost, calcSessionXP } from "./utils/xp";
 import { THEME_KEY, SESSION_TYPES, DEFAULT_XP_PER_LEVEL, DEFAULT_GACHA_COST, DEFAULT_STREAK_SHIELD_COST } from "./constants";
-import { GEMINI_DAILY_TOKEN_LIMIT, OAUTH_REDIRECT_SCHEME } from "./config.js";
+import { AI_DAILY_TOKEN_LIMIT, OAUTH_REDIRECT_SCHEME } from "./config.js";
 import { buildSystemPrompt } from "./api/systemPrompt";
-import { fetchGCalEvents, loadGoogleGIS, GCAL_SCOPE } from "./api/gcal";
+import { fetchGCalEvents, requestGcalAccessToken } from "./api/gcal";
 import { callGemini, RateLimitedError, clearRateLimitWindow } from "./api/gemini";
 import { isSafeSyncValue } from "./sync/SyncManager";
 import { verifyOAuthState } from "./api/dropbox";
@@ -129,7 +129,7 @@ async function generateAiMissions(apiKey, profile, period, trackTokens, signal) 
 }
 
 // Components
-import Onboarding, { GeminiKeySetupScreen } from "./Onboarding";
+import Onboarding, { AiApiKeySetupScreen } from "./Onboarding";
 import { TopBar, BottomNav, Banner } from "./Layout";
 import { GlobalStyles, ErrorBoundary } from "./GlobalStyles";
 import {
@@ -152,16 +152,16 @@ import CalendarOverlay from "./CalendarOverlay";
 // ─────────────────────────────────────────────────────────────
 // KeysConfigGate is intentionally removed.
 // Missing-key handling is done inline in the main App render (after hooks run)
-// so it has access to connectDropbox, syncPull, pickSyncFile, setShowGeminiKeySetup, etc.
+// so it has access to connectDropbox, syncPull, pickSyncFile, setShowAiApiKeySetup, etc.
 
 // ─────────────────────────────────────────────────────────────
 // MISSING KEY GATE
-// Shown when there is no Gemini API key in sessionStorage.
+// Shown when there is no AI API key in sessionStorage.
 // Rendered inside the main App (after hooks run) so it has access
 // to connectDropbox, syncPull, pickSyncFile, etc.
 // ─────────────────────────────────────────────────────────────
-function MissingKeyGate({ connectDropbox, dropboxConnected, onGeminiKeySaved }) {
-  const [mode, setMode]           = useState("choose"); // "choose" | "gemini" | "import"
+function MissingKeyGate({ connectDropbox, dropboxConnected, onAiApiKeySaved }) {
+  const [mode, setMode]           = useState("choose"); // "choose" | "apiKey" | "import"
   const importInputRef = useRef(null);
   const [syncError, setSyncError]           = useState("");
   const [dropboxError, setDropboxError]     = useState("");
@@ -191,7 +191,7 @@ function MissingKeyGate({ connectDropbox, dropboxConnected, onGeminiKeySaved }) 
       connectDropbox();
     } catch (e) {
       if (e?.message === "DROPBOX_NOT_CONFIGURED") {
-        setDropboxError("Dropbox is not configured in this build. Enter your Gemini key manually instead.");
+        setDropboxError("Dropbox is not configured in this build. Enter your API key manually instead.");
       } else {
         setDropboxError("Could not start Dropbox connection. Try again.");
       }
@@ -253,8 +253,8 @@ function MissingKeyGate({ connectDropbox, dropboxConnected, onGeminiKeySaved }) 
             </div>
           )}
           <div style={{ height: "1px", background: "#333" }} />
-          <button type="button" onClick={() => setMode("gemini")} style={{ ...btnSecondary, marginBottom: 0, fontSize: "13px" }}>
-            ENTER GEMINI KEY MANUALLY
+          <button type="button" onClick={() => setMode("apiKey")} style={{ ...btnSecondary, marginBottom: 0, fontSize: "13px" }}>
+            ENTER API KEY MANUALLY
           </button>
           <input ref={importInputRef} type="file" accept=".json,application/json" style={{ display: "none" }} onChange={handleImportFile} />
           <button type="button" onClick={() => importInputRef.current?.click()} style={{ ...btnSecondary, marginBottom: 0, fontSize: "13px" }}>
@@ -278,12 +278,12 @@ function MissingKeyGate({ connectDropbox, dropboxConnected, onGeminiKeySaved }) 
       <img src={APP_ICON_URL} alt="" style={{ width: 44, height: 44, marginBottom: "20px", marginTop: "24px" }} onError={(e) => { e.currentTarget.style.display = "none"; }} />
       <div style={{ fontSize: "16px", color: "#fff", letterSpacing: "3px", marginBottom: "6px", fontFamily: "'Share Tech Mono', monospace", fontWeight: "bold" }}>[ RITMOL ]</div>
       <div style={{ fontSize: "20px", fontWeight: "bold", letterSpacing: "1px", marginBottom: "6px" }}>
-        {mode === "gemini" ? "GEMINI API KEY" : mode === "import" ? "IMPORT FILE" : "SETUP REQUIRED"}
+        {mode === "apiKey" ? "AI API KEY" : mode === "import" ? "IMPORT FILE" : "SETUP REQUIRED"}
       </div>
       <div style={{ fontSize: "16px", color: "#fff", marginBottom: "28px", fontFamily: "'Share Tech Mono', monospace" }}>
-        {mode === "gemini"   ? "Enter your key to enable AI features." :
+        {mode === "apiKey"   ? "Enter your key to enable AI features." :
          mode === "import" ? "Import a ritmol-data.json backup." :
-         "A Gemini API key is needed to continue."}
+         "An AI API key is needed to continue."}
       </div>
 
       <div style={{ width: "100%", maxWidth: "360px" }}>
@@ -310,16 +310,16 @@ function MissingKeyGate({ connectDropbox, dropboxConnected, onGeminiKeySaved }) 
             <div style={{ fontSize: "13px", color: "#fff", letterSpacing: "2px", marginBottom: "10px", fontWeight: "bold" }}>
               NEW USER? ENTER KEY MANUALLY
             </div>
-            <button type="button" onClick={() => setMode("gemini")} style={btnPrimary}>
-              ENTER GEMINI API KEY
+            <button type="button" onClick={() => setMode("apiKey")} style={btnPrimary}>
+              ENTER AI API KEY
             </button>
           </>
         )}
 
-        {/* ── Gemini key entry ── */}
-        {mode === "gemini" && (
+        {/* ── API key entry ── */}
+        {mode === "apiKey" && (
           <>
-            <GeminiKeySetupScreen onSave={onGeminiKeySaved} />
+            <AiApiKeySetupScreen onSave={onAiApiKeySaved} />
             <button type="button" onClick={() => setMode("choose")} style={{ ...btnSecondary, marginTop: "12px" }}>
               ← BACK
             </button>
@@ -330,7 +330,7 @@ function MissingKeyGate({ connectDropbox, dropboxConnected, onGeminiKeySaved }) 
         {mode === "import" && (
           <>
             <div style={{ fontSize: "16px", color: "#fff", lineHeight: "1.8", marginBottom: "16px", fontFamily: "'Share Tech Mono', monospace" }}>
-              Select a <code>ritmol-data.json</code> export to restore your data and Gemini key (if present in the file).
+              Select a <code>ritmol-data.json</code> export to restore your data and API key (if present in the file).
             </div>
             <input ref={importInputRef} type="file" accept=".json,application/json" style={{ display: "none" }} onChange={handleImportFile} />
             <button type="button" onClick={() => importInputRef.current?.click()} style={btnPrimary}>
@@ -398,7 +398,7 @@ export default function App() {
   const [calendarOpen, setCalendarOpen] = useState(false);
   const [theme, setThemeState]      = useState(() => LS.get(storageKey(THEME_KEY), "dark"));
   const [showOnboarding, setShowOnboarding] = useState(false);
-  const [showGeminiKeySetup, setShowGeminiKeySetup] = useState(false);
+  const [showAiApiKeySetup, setShowAiApiKeySetup] = useState(false);
   const setTheme = useCallback((t) => { LS.set(storageKey(THEME_KEY), t); setThemeState(t); }, []);
 
   const { modal, setModal, toast, setToast, banner, setBanner, levelUpData, setLevelUpData, showToast, showBanner } = useUI();
@@ -408,7 +408,7 @@ export default function App() {
   // writes a new key into sessionStorage, rehydrate() triggers a re-render and
   // this call observes the updated value — there is at most a single render
   // where the old key remains in scope.
-  const apiKey           = getGeminiApiKey();
+  const apiKey           = getAiApiKey();
   const googleClientId   = (import.meta.env.VITE_GOOGLE_CLIENT_ID || "").trim();
   const getAiToken = useCallback(async () => {
     try {
@@ -417,7 +417,7 @@ export default function App() {
     } catch (e) {
       if (e?.message === "GOOGLE_AUTH_REFRESH_FAILED" || e?.message === "GOOGLE_AUTH_NO_REFRESH_TOKEN") {
         showBanner("Google session expired. Reconnect in Settings → AI Connection.", "alert");
-        const k = getGeminiApiKey();
+        const k = getAiApiKey();
         return k && String(k).trim() ? k : null;
       }
       throw e;
@@ -496,9 +496,9 @@ export default function App() {
         return;
       }
       handleDropboxCallback(code, {
-        // If onboarding is active, let its own Gemini step handle key entry
+        // If onboarding is active, let its own AI step handle key entry
         // rather than showing the standalone key setup screen on top of it.
-        onNeedsGeminiKey: () => { if (!showOnboarding) setShowGeminiKeySetup(true); },
+        onNeedsAiApiKey: () => { if (!showOnboarding) setShowAiApiKeySetup(true); },
       });
     }
   }, [handleDropboxCallback, showBanner, showOnboarding]);
@@ -553,7 +553,7 @@ export default function App() {
             const st = u.searchParams.get("state");
             if (c && st && verifyOAuthState(st)) {
               handleDropboxCallback(c, {
-                onNeedsGeminiKey: () => { if (!showOnboarding) setShowGeminiKeySetup(true); },
+                onNeedsAiApiKey: () => { if (!showOnboarding) setShowAiApiKeySetup(true); },
               });
             }
           }
@@ -595,13 +595,13 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!profile?.geminiKey) return;
+    if (!profile?.geminiKey && !profile?.aiApiKey) return;
     setState((s) => {
       // eslint-disable-next-line no-unused-vars
-      const { geminiKey: _g, ...rest } = s.profile || {};
+      const { geminiKey: _g, aiApiKey: _a, ...rest } = s.profile || {};
       return { ...s, profile: rest };
     });
-  }, [profile?.geminiKey, setState]);
+  }, [profile?.geminiKey, profile?.aiApiKey, setState]);
 
   useEffect(() => {
     if (!profile) return;
@@ -655,7 +655,7 @@ export default function App() {
 
       // Skip if token budget exhausted
       const usage = state?.tokenUsage;
-      if (usage && usage.date === todayUTC() && usage.tokens >= GEMINI_DAILY_TOKEN_LIMIT) return;
+      if (usage && usage.date === todayUTC() && usage.tokens >= AI_DAILY_TOKEN_LIMIT) return;
 
       // Mark attempted immediately — before the async call — so no re-render can sneak in a second call.
       // Also persist to sessionStorage so a page reload within the same session doesn't re-fire.
@@ -759,17 +759,7 @@ export default function App() {
 
     (async () => {
       try {
-        await loadGoogleGIS();
-        const tokenResponse = await new Promise((resolve, reject) => {
-          const tokenClient = window.google.accounts.oauth2.initTokenClient({
-            client_id: clientId,
-            scope: GCAL_SCOPE,
-            // Empty prompt = silent re-auth using existing Google session.
-            // If the session has expired this will reject and we skip silently.
-            callback: (resp) => { if (resp.error) reject(new Error(resp.error)); else resolve(resp); },
-          });
-          tokenClient.requestAccessToken({ prompt: "" });
-        });
+        const tokenResponse = await requestGcalAccessToken(clientId, { promptConsent: false });
 
         const accessToken = tokenResponse?.access_token;
         if (!accessToken) return;
@@ -824,7 +814,7 @@ export default function App() {
 
 
   // Onboarding must be checked BEFORE the !apiKey gate.
-  // New users hit onboarding first (which has its own Dropbox → Gemini → profile
+  // New users hit onboarding first (which has its own Dropbox → AI key → profile
   // flow). The !apiKey gate is only for returning users whose sessionStorage
   // was cleared (e.g. new browser tab) without a sync file to pull from.
   if (showOnboarding) {
@@ -840,16 +830,11 @@ export default function App() {
             // during onboarding (habit init, costs) don't eat into the new
             // user's first interactive session slots.
             clearRateLimitWindow();
-            // Push immediately so the Gemini key (in sessionStorage) and the
+            // Push immediately so the AI API key (in sessionStorage) and the
             // new profile are written to Dropbox in one shot. Without this,
             // a fresh tab after onboarding shows MissingKeyGate because the
             // key never made it into the sync file.
             try { await syncPush(); } catch { /* non-fatal — user can push manually */ }
-          }}
-          onGeminiKeySaved={async (key, profile) => {
-            setGeminiApiKey(key);
-            if (profile) setState((s) => ({ ...s, profile }));
-            await syncPush();
           }}
           connectDropbox={connectDropbox}
         />
@@ -857,7 +842,7 @@ export default function App() {
     );
   }
 
-  if (showGeminiKeySetup) {
+  if (showAiApiKeySetup) {
     return (
       <ErrorBoundary>
         <div style={{
@@ -873,13 +858,13 @@ export default function App() {
               CONFIGURE AI
             </div>
             <div style={{ fontSize: "22px", fontWeight: "bold", marginBottom: "18px", letterSpacing: "1px" }}>
-              GEMINI API KEY
+              AI API KEY
             </div>
-            <GeminiKeySetupScreen
+            <AiApiKeySetupScreen
               onSave={async (key) => {
-                setGeminiApiKey(key);
+                setAiApiKey(key);
                 await syncPush();
-                setShowGeminiKeySetup(false);
+                setShowAiApiKeySetup(false);
               }}
             />
           </div>
@@ -903,8 +888,8 @@ export default function App() {
         <MissingKeyGate
           connectDropbox={connectDropbox}
           dropboxConnected={dropboxConnected}
-          onGeminiKeySaved={async (key) => {
-            setGeminiApiKey(key);
+          onAiApiKeySaved={async (key) => {
+            setAiApiKey(key);
             await syncPush();
           }}
         />

@@ -206,11 +206,52 @@ function sleep(ms, signal) {
   });
 }
 
+/** Upper bound for a single response — sanity cap only (not a quota). */
+const MAX_REASONABLE_USAGE_TOKENS = 10_000_000;
+
+/**
+ * Reads token counts from Gemini `generateContent` JSON. Units match Google's
+ * `usageMetadata` (what this API reports — not interchangeable with other vendors).
+ * @returns {number|null} Positive count, or null if nothing reliable.
+ */
+function parseGeminiUsageTokens(data) {
+  const u = data?.usageMetadata;
+  if (!u || typeof u !== "object") return null;
+
+  const total = u.totalTokenCount;
+  if (typeof total === "number" && Number.isFinite(total) && total > 0) {
+    return Math.min(Math.round(total), MAX_REASONABLE_USAGE_TOKENS);
+  }
+
+  const pos = (x) => (typeof x === "number" && Number.isFinite(x) && x > 0 ? x : 0);
+  const sum =
+    pos(u.promptTokenCount) +
+    pos(u.candidatesTokenCount) +
+    pos(u.thoughtsTokenCount);
+  if (sum > 0) return Math.min(Math.round(sum), MAX_REASONABLE_USAGE_TOKENS);
+
+  return null;
+}
+
+/** When the API omits usageMetadata — rough UTF-8 / 4 heuristic (not billing-accurate). */
+function estimateTokensFallback(bodyObj, responseText) {
+  const enc = new TextEncoder();
+  const reqBytes = enc.encode(JSON.stringify(bodyObj)).length;
+  const outBytes = enc.encode(responseText || "").length;
+  return Math.max(1, Math.ceil((reqBytes + outBytes) / 4));
+}
+
+function resolveGeminiUsageTokens(data, bodyObj, responseText) {
+  const fromApi = parseGeminiUsageTokens(data);
+  if (fromApi != null) return fromApi;
+  return estimateTokensFallback(bodyObj, responseText);
+}
+
 export async function callGemini(apiKey, messages, systemPrompt, jsonMode = false, signal = undefined, maxOutputTokens = 1024, background = false) {
   // Fix #10: guard against null/undefined/empty key so callers get a clear error
   // instead of a cryptic 400 from the API with "x-goog-api-key: null".
   if (!apiKey || typeof apiKey !== "string" || !apiKey.trim()) {
-    throw new Error("Gemini API key is missing or empty.");
+    throw new Error("AI API key is missing or empty.");
   }
   // Always work with the trimmed key so whitespace from paste/storage never causes 403.
   apiKey = apiKey.trim();
@@ -416,11 +457,7 @@ export async function callGemini(apiKey, messages, systemPrompt, jsonMode = fals
           }
         }
 
-        const enc = new TextEncoder();
-        const tokensUsed = data.usageMetadata
-          ? (data.usageMetadata.totalTokenCount ||
-             (data.usageMetadata.promptTokenCount || 0) + (data.usageMetadata.candidatesTokenCount || 0))
-          : Math.ceil((enc.encode(JSON.stringify(body)).length + enc.encode(text).length) / 4);
+        const tokensUsed = resolveGeminiUsageTokens(data, body, text);
 
         return { text, tokensUsed };
       }

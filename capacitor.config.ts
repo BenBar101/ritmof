@@ -16,6 +16,14 @@ const config: CapacitorConfig = {
     Browser: {
       presentationStyle: "popover",
     },
+    SocialLogin: {
+      providers: {
+        google: true,
+        facebook: false,
+        apple: false,
+        twitter: false,
+      },
+    },
   },
 };
 

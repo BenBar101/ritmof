@@ -20,7 +20,7 @@ export function TopBar({ xp, xpPerLevel, level, rank, profile, syncStatus, lastS
     <div style={{
       flexShrink: 0,
       background: theme === "light" ? "#f0f0f0" : "#000",
-      borderBottom: `4px double ${fg}`,
+      borderBottom: `1px solid ${fg}`,
       paddingTop: "env(safe-area-inset-top, 0px)",
       paddingLeft: "10px", paddingRight: "10px", paddingBottom: "0px",
       height: "calc(56px + env(safe-area-inset-top, 0px))",
@@ -79,14 +79,14 @@ export function TopBar({ xp, xpPerLevel, level, rank, profile, syncStatus, lastS
 
       {/* XP bar — fills remaining space */}
       <div style={{ flex: 1, minWidth: 0, paddingBottom: "8px" }}>
-        <div style={{ display: "flex", alignItems: "baseline", gap: "6px", fontSize: "11px", color: fg, marginBottom: "2px", fontFamily: "'Share Tech Mono', monospace", fontWeight: 900, letterSpacing: "-0.02em", textTransform: "uppercase" }}>
+        <div className="type-system" style={{ display: "flex", alignItems: "baseline", gap: "6px", fontSize: "11px", color: fg, marginBottom: "2px", fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase" }}>
           <span style={{ flexShrink: 0 }}>LV.{level}</span>
           <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", textAlign: "center" }}>{rank.title}</span>
           <span style={{ flexShrink: 0 }} data-testid="xp">{xp} XP</span>
           <span style={{ flexShrink: 0 }}>{Math.round(pct)}%</span>
         </div>
-        <div style={{ height: "2px", background: theme === "light" ? "#bbb" : "#444", position: "relative" }}>
-          <div style={{ width: `${pct}%`, height: "100%", background: fg }} />
+        <div className="meter">
+          <div className="meter__fill" style={{ width: `${pct}%` }} />
         </div>
       </div>
 
@@ -96,12 +96,13 @@ export function TopBar({ xp, xpPerLevel, level, rank, profile, syncStatus, lastS
           <>
             <button
               type="button"
+              className="type-system"
               onClick={onPull}
               disabled={syncDisabled}
               data-testid="pull"
               title={`Pull ↓ · ${syncTitle}`}
               style={{
-                fontFamily: "'Share Tech Mono', monospace", fontSize: "15px",
+                fontSize: "15px",
                 color: syncColor,
                 background: "none", border: syncBorder,
                 cursor: syncDisabled ? "default" : "pointer",
@@ -113,12 +114,13 @@ export function TopBar({ xp, xpPerLevel, level, rank, profile, syncStatus, lastS
             </button>
             <button
               type="button"
+              className="type-system"
               onClick={onPush}
               disabled={syncDisabled}
               data-testid="push"
               title={`Push ↑ · ${syncTitle}`}
               style={{
-                fontFamily: "'Share Tech Mono', monospace", fontSize: "15px",
+                fontSize: "15px",
                 color: syncColor,
                 background: "none", border: syncBorder,
                 cursor: syncDisabled ? "default" : "pointer",
@@ -173,7 +175,8 @@ export function BottomNav({ tab, setTab, theme = "dark" }) {
             border: "none",
             borderTop: border,
             color: tab === t.id ? bg : fg,
-            fontFamily: "'Share Tech Mono', monospace",
+            fontWeight: 600,
+            letterSpacing: "0.06em",
             padding: "4px 0",
           }}
         >
@@ -200,7 +203,7 @@ export function Banner({ banner, onClose, theme = "dark" }) {
       position: "fixed", top: "calc(56px + env(safe-area-inset-top, 0px))", left: 0, right: 0, zIndex: 500,
       background: bg, borderBottom: `3px solid ${fg}`, borderTop: `3px solid ${fg}`,
       padding: "14px 16px", display: "flex", justifyContent: "space-between",
-      alignItems: "center", fontFamily: "'Share Tech Mono', monospace", fontSize: "16px", fontWeight: "bold",
+      alignItems: "center", fontSize: "16px", fontWeight: "bold",
     }}>
       <span style={{ color: fg, flex: 1 }}>{safeBannerText}</span>
       <button onClick={onClose} style={{ color: fg, fontSize: "24px", minHeight: "48px", minWidth: "48px", background: "none", border: "none" }}>×</button>

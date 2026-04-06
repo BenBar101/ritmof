@@ -7,13 +7,13 @@
 //   - Zod validation (SyncPayloadSchema): strips unknown keys, enforces shapes and bounds.
 //   - Prototype pollution guard: __proto__ / constructor / prototype rejected.
 //   - Payload size cap: >10 MB rejected before any write.
-//   - geminiKey and googleClientId are read from the file into sessionStorage
+//   - aiApiKey (legacy: geminiKey) and googleClientId are read from the file into sessionStorage
 //     but NEVER written back out on Push.
 //   - jv_last_shield_buy_date: on apply, local value is kept if more recent than
 //     incoming (prevents crafted sync from resetting once-per-day shield limit).
 // ═══════════════════════════════════════════════════════════════
 
-import { LS, storageKey, setGeminiApiKey, getGeminiApiKey, getMaxDateSeen } from "../utils/db";
+import { LS, storageKey, setAiApiKey, getAiApiKey, getMaxDateSeen } from "../utils/db";
 import { idbGet, idbSet, store } from "../utils/db";
 import { SyncPayloadSchema } from "../utils/schemas.js";
 import { SYNC_SCHEMA_VERSION, SYNC_FILE_MAX_BYTES } from "../config.js";
@@ -174,17 +174,19 @@ export function closeSyncChannel() {
 }
 
 // ── Build sync payload from IDB cache ───────────────────────────
-function buildPayload(includeGeminiKey = false) {
+function buildPayload(includeAiApiKey = false) {
   if (!isIdbReadyForSync()) throw new Error("IDB_NOT_READY");
   if (!store) throw new Error("IDB_NOT_READY");
   const payload = { _schemaVersion: SYNC_SCHEMA_VERSION };
-  if (includeGeminiKey) {
-    const key = getGeminiApiKey();
+  if (includeAiApiKey) {
+    const key = getAiApiKey();
     // Accept any AIza… key between 20 and 60 chars after the prefix so future
     // Google key format changes don't silently drop the key from the payload.
     // The strict 35–45 char window was causing valid keys to be omitted.
     if (key && typeof key === "string" && /^AIza[A-Za-z0-9_-]{20,60}$/.test(key.trim())) {
-      payload.geminiKey = key.trim();
+      const trimmed = key.trim();
+      payload.aiApiKey = trimmed;
+      payload.geminiKey = trimmed; // legacy field name for older app builds
     }
   }
   for (const key of SYNC_KEYS) {
@@ -201,7 +203,7 @@ function buildPayload(includeGeminiKey = false) {
     if (stored !== null && stored !== undefined) {
       if (key === "jv_profile" && stored && typeof stored === "object") {
         // eslint-disable-next-line no-unused-vars
-        const { geminiKey: _gk, googleClientId: _gc, ...safeProfile } = stored;
+        const { geminiKey: _gk, aiApiKey: _ak, googleClientId: _gc, ...safeProfile } = stored;
         stored = safeProfile;
       }
       payload[key] = stored;
@@ -217,7 +219,7 @@ function applyPayload(payload) {
     let val = payload[key];
     if (key === "jv_profile" && val && typeof val === "object") {
       // eslint-disable-next-line no-unused-vars
-      const { geminiKey: _gk, googleClientId: _gc, ...safeProfile } = val;
+      const { geminiKey: _gk, aiApiKey: _ak, googleClientId: _gc, ...safeProfile } = val;
       val = safeProfile;
     }
     if (key !== "jv_chat" && !isSafeSyncValue(val)) continue;
@@ -409,17 +411,17 @@ function parseAndValidate(text) {
   return result.data;
 }
 
-// ── Read geminiKey / googleClientId into sessionStorage ───────────
+// ── Read aiApiKey (legacy: geminiKey) into sessionStorage ─────────
 function extractSecretsFromPayload(payload) {
-  // Accept geminiKey only as an own, top-level property of the payload object.
-  // This prevents prototype-inherited keys from being read and keeps the config
-  // slot separate from any jv_profile fields (which are validated separately).
-  if (Object.prototype.hasOwnProperty.call(payload, "geminiKey") && typeof payload.geminiKey === "string") {
-    const trimmed = payload.geminiKey.trim();
-    if (trimmed) {
-      setGeminiApiKey(trimmed);
-    }
-  }
+  // Prefer aiApiKey; fall back to legacy geminiKey if the new field is absent or empty.
+  const fromNew = Object.prototype.hasOwnProperty.call(payload, "aiApiKey") && typeof payload.aiApiKey === "string"
+    ? payload.aiApiKey.trim()
+    : "";
+  const fromLegacy = Object.prototype.hasOwnProperty.call(payload, "geminiKey") && typeof payload.geminiKey === "string"
+    ? payload.geminiKey.trim()
+    : "";
+  const trimmed = fromNew || fromLegacy;
+  if (trimmed) setAiApiKey(trimmed);
   // googleClientId is intentionally not stored here — it would be
   // placed in a dedicated session key if implemented.
 }
@@ -448,7 +450,7 @@ export const SyncManager = {
         throw new Error("DROPBOX_OFFLINE");
       }
       await ensureFolderExists();
-      const payload = buildPayload(true);
+      const payload = buildPayload(true /* include AI API key for Dropbox backup */);
       const text = JSON.stringify(payload, null, 2);
       assertPayloadSize(text);
       const byteSize = new TextEncoder().encode(text).length;

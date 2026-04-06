@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useMemo } from "react";
 import { useAppContext } from "./context/AppContext";
 import { todayUTC, localDateFromUTC, LS, storageKey } from "./utils/db";
 import { DATA_DISCLOSURE_SEEN_KEY } from "./constants";
-import { GEMINI_DAILY_TOKEN_LIMIT } from "./config.js";
+import { AI_DAILY_TOKEN_LIMIT } from "./config.js";
 import { callGemini, RateLimitedError, RATE_LIMIT_WINDOW_MS, RATE_LIMIT_CAP } from "./api/gemini";
 import { isSafeSyncValue } from "./sync/SyncManager";
 
@@ -10,7 +10,7 @@ function NeuralEnergyBar({ usage, theme }) {
   if (!usage || typeof usage.date !== "string") return null;
   const isToday = usage.date === todayUTC();
   const tokens = isToday ? (usage.tokens || 0) : 0;
-  const pct = Math.min(100, (tokens / GEMINI_DAILY_TOKEN_LIMIT) * 100);
+  const pct = Math.min(100, (tokens / AI_DAILY_TOKEN_LIMIT) * 100);
   const pctDisplay = pct < 0.1 ? "<0.1" : pct.toFixed(1);
   const isLight = theme === "light";
   const textColor = isLight ? "#000" : "#fff";
@@ -114,7 +114,7 @@ export default function ChatTab() {
     }
     if (typeof navigator !== 'undefined' && navigator.onLine === false) { showBanner("SYSTEM: No network connection. AI offline.", "alert"); return; }
     const usage = latestStateRef?.current?.tokenUsage ?? state.tokenUsage;
-    if (usage && usage.date === todayUTC() && usage.tokens >= GEMINI_DAILY_TOKEN_LIMIT) {
+    if (usage && usage.date === todayUTC() && usage.tokens >= AI_DAILY_TOKEN_LIMIT) {
       showBanner("SYSTEM: Neural energy depleted. AI functions offline until tomorrow.", "alert");
       return;
     }
@@ -314,7 +314,7 @@ export default function ChatTab() {
         const secsLeft = Math.ceil(e.retryAfterMs / 1000);
         const rlMsg = {
           role: "assistant",
-          content: `⏳ SYSTEM: Gemini RPM limit hit. AI locked for ~${secsLeft}s. ` +
+          content: `⏳ SYSTEM: AI RPM limit hit. AI locked for ~${secsLeft}s. ` +
             `If this keeps happening, check for multiple open tabs — each tab counts separately against your API quota.`,
           ts: Date.now(),
           seq: ++_msgSeq,
@@ -346,25 +346,25 @@ export default function ChatTab() {
       // Order matters: check most-specific patterns first.
       let friendlyMsg;
       if (redactedMsg.includes("RESOURCE_EXHAUSTED")) {
-        friendlyMsg = "Daily Gemini quota used up — AI features will resume at Google's daily reset (~midnight Pacific). " +
+        friendlyMsg = "Daily AI quota used up — features will resume at Google's daily reset (~midnight Pacific). " +
           "Check Google Cloud Console → Generative Language API → Quotas if this seems wrong.";
       } else if (redactedMsg.includes("RATE_LIMIT_EXCEEDED")) {
-        friendlyMsg = "Gemini RPM limit hit — too many requests per minute. Wait ~60s and try again. " +
+        friendlyMsg = "AI RPM limit hit — too many requests per minute. Wait ~60s and try again. " +
           "If this keeps happening, check for multiple open tabs.";
       } else if (redactedMsg.includes("429")) {
-        friendlyMsg = "Gemini rate limit hit — wait a minute and try again.";
+        friendlyMsg = "AI rate limit hit — wait a minute and try again.";
       } else if (redactedMsg.includes("401") || redactedMsg.includes("403") || redactedMsg.toLowerCase().includes("api key")) {
-        friendlyMsg = "Invalid API key — check your Gemini key in Profile → Settings.";
+        friendlyMsg = "Invalid API key — check your AI API key in Profile → Settings.";
       } else if (redactedMsg.includes("400")) {
         friendlyMsg = "Bad request — the message couldn't be processed. Try rephrasing.";
       } else if (redactedMsg.toLowerCase().includes("blocked")) {
-        friendlyMsg = "Message blocked by Gemini safety filters. Try rephrasing.";
+        friendlyMsg = "Message blocked by content safety filters. Try rephrasing.";
       } else if (navigator.onLine === false || redactedMsg.toLowerCase().includes("network") || redactedMsg.toLowerCase().includes("failed to fetch")) {
         friendlyMsg = "No network connection — check your internet and try again.";
       } else if (redactedMsg.toLowerCase().includes("timeout") || redactedMsg.toLowerCase().includes("aborted")) {
-        friendlyMsg = "Request timed out — Gemini took too long. Try again.";
+        friendlyMsg = "Request timed out — the AI service took too long. Try again.";
       } else if (redactedMsg.toLowerCase().includes("retries")) {
-        friendlyMsg = "Gemini is busy right now. Wait a moment and try again.";
+        friendlyMsg = "The AI service is busy. Wait a moment and try again.";
       } else {
         friendlyMsg = "Something went wrong. Try again in a moment.";
       }
@@ -433,7 +433,7 @@ export default function ChatTab() {
           display: "flex", alignItems: "flex-start", gap: "12px", lineHeight: "1.6",
         }}>
           <span style={{ flex: 1 }}>
-            RITMOL sends your habits, tasks, goals, sleep, and calendar summary to Google&apos;s Gemini API to personalize responses. No data is stored by us beyond your chat history.
+            RITMOL sends your habits, tasks, goals, sleep, and calendar summary to the AI provider (Google Gemini) to personalize responses. No data is stored by us beyond your chat history.
           </span>
           <button
             type="button"

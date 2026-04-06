@@ -9,7 +9,7 @@ import {
   NOTIF_WAKING_START_HOUR,
   NOTIF_WAKING_END_HOUR,
   NOTIF_AI_INTERVAL_HOURS,
-  GEMINI_DAILY_TOKEN_LIMIT,
+  AI_DAILY_TOKEN_LIMIT,
   GEMINI_NOTIF_INPUT_TOKENS,
   GEMINI_NOTIF_OUTPUT_TOKENS,
   GEMINI_NOTIF_TOKEN_THRESHOLD,
@@ -42,7 +42,7 @@ async function shouldRun(state, getAiKey) {
   }
 
   const usage = state.tokenUsage;
-  const cap = GEMINI_DAILY_TOKEN_LIMIT * GEMINI_NOTIF_TOKEN_THRESHOLD;
+  const cap = AI_DAILY_TOKEN_LIMIT * GEMINI_NOTIF_TOKEN_THRESHOLD;
   if (usage && usage.tokens >= cap) return false;
 
   const key = await getAiKey().catch(() => null);

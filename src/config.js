@@ -25,20 +25,25 @@ export const GEMINI_REQUEST_TIMEOUT_MS = 30_000;
 // multi-tab headroom. Update if you upgrade to a paid tier.
 export const GEMINI_RATE_LIMIT_CAP = 12;
 export const GEMINI_RATE_LIMIT_WINDOW_MS = 60_000;
-// GEMINI_DAILY_TOKEN_LIMIT: Google free tier is ~1M TPM / 1500 RPD.
-// This is a soft client-side cap — raise it when Google raises quotas.
+// GEMINI_DAILY_TOKEN_LIMIT: soft client-side cap for "neural energy".
+// Counts **Gemini API usage tokens** (sum of usageMetadata totals per UTC day) — the
+// same units Google reports; not a generic cross-provider metric.
+// Google free tier is ~1M TPM / 1500 RPD; raise when you upgrade quotas.
 export const GEMINI_DAILY_TOKEN_LIMIT = 80_000;
+/** Daily budget for neural energy — same value and units as GEMINI_DAILY_TOKEN_LIMIT. */
+export const AI_DAILY_TOKEN_LIMIT = GEMINI_DAILY_TOKEN_LIMIT;
 export const GEMINI_AI_XP_LIMIT = 5_000;
 // Budget for AI notification generation calls (per call, not per day).
 export const GEMINI_NOTIF_INPUT_TOKENS = 300;
 export const GEMINI_NOTIF_OUTPUT_TOKENS = 200;
 // Suspend AI notification generation when daily tokens exceed this
-// fraction of GEMINI_DAILY_TOKEN_LIMIT (0.875 = 87.5%).
+// fraction of AI_DAILY_TOKEN_LIMIT (0.875 = 87.5%).
 export const GEMINI_NOTIF_TOKEN_THRESHOLD = 0.875;
 
 // ── Google OAuth ───────────────────────────────────────────────
-// These scopes are passed to both the GIS TokenClient (Calendar) and
-// the PKCE flow (Gemini). Update here if Google changes scope strings.
+// Gemini OAuth (PKCE + native) includes Calendar so one consent covers both.
+// GIS TokenClient remains a fallback when Calendar is used without Google-for-Gemini.
+// Update here if Google changes scope strings.
 export const GCAL_SCOPE = "https://www.googleapis.com/auth/calendar.readonly";
 export const GOOGLE_AUTH_SCOPE_GEMINI = "https://www.googleapis.com/auth/generative-language.retriever";
 

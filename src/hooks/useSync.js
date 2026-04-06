@@ -3,7 +3,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import { LS, storageKey, getGeminiApiKey } from "../utils/db";
+import { LS, storageKey, getAiApiKey } from "../utils/db";
 import { SyncManager, getTransport, setTransport } from "../sync/SyncManager";
 import {
   isAuthenticated,
@@ -38,7 +38,7 @@ export function useSync({ latestStateRef, rehydrate, showBanner }) {
   useEffect(() => {
     if (autoPullAttemptedRef.current) return;
     if (!isAuthenticated()) return;
-    if (getGeminiApiKey()) return;
+    if (getAiApiKey()) return;
     if (typeof navigator !== "undefined" && navigator.onLine === false) return;
     autoPullAttemptedRef.current = true;
     setSyncStatus("syncing");
@@ -261,18 +261,6 @@ export function useSync({ latestStateRef, rehydrate, showBanner }) {
     }
   }, [rehydrate, showBanner]);
 
-  const connectDropbox = useCallback(() => {
-    try {
-      startOAuthFlow();
-    } catch (e) {
-      if (e?.message === "DROPBOX_NOT_CONFIGURED") {
-        showBanner("Dropbox App Key is not configured. See .env.example and rebuild.", "alert");
-        return;
-      }
-      showBanner("Could not start Dropbox connection.", "alert");
-    }
-  }, [showBanner]);
-
   const dropboxErrorMsgs = {
     DROPBOX_AUTH_REQUIRED: "Connect Dropbox in Profile → Settings to sync.",
     DROPBOX_TOKEN_EXPIRED: "Dropbox session expired. Reconnect in Profile → Settings.",
@@ -284,9 +272,11 @@ export function useSync({ latestStateRef, rehydrate, showBanner }) {
   };
 
   const handleDropboxCallback = useCallback(async (code, opts = {}) => {
-    const { onNeedsGeminiKey } = opts;
+    const { onNeedsAiApiKey, tokensAlreadySet } = opts;
     try {
-      await handleOAuthCallback(code);
+      if (!tokensAlreadySet) {
+        await handleOAuthCallback(code);
+      }
       setTransport("dropbox");
       setDropboxConnected(true);
       try {
@@ -297,9 +287,9 @@ export function useSync({ latestStateRef, rehydrate, showBanner }) {
         LS.set(storageKey("jv_last_synced"), String(ts));
         setLastSynced(ts);
         setSyncStatus("synced");
-        if (!getGeminiApiKey()) {
+        if (!getAiApiKey()) {
           isPullingRef.current = false;
-          onNeedsGeminiKey?.();
+          onNeedsAiApiKey?.();
           return;
         }
         showBanner("Pulled data from Dropbox.", "success");
@@ -329,7 +319,7 @@ export function useSync({ latestStateRef, rehydrate, showBanner }) {
       } catch (pullErr) {
         isPullingRef.current = false;
         if (pullErr?.message === "DROPBOX_FILE_NOT_FOUND") {
-          onNeedsGeminiKey?.();
+          onNeedsAiApiKey?.();
           showBanner(dropboxErrorMsgs.DROPBOX_FILE_NOT_FOUND, "alert");
           return;
         }
@@ -341,6 +331,23 @@ export function useSync({ latestStateRef, rehydrate, showBanner }) {
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps -- dropboxErrorMsgs is stable
   }, [rehydrate, showBanner]);
+
+  const connectDropbox = useCallback(async () => {
+    try {
+      await startOAuthFlow();
+      const native =
+        typeof window !== "undefined" && window?.Capacitor?.isNativePlatform?.();
+      if (native && isAuthenticated()) {
+        await handleDropboxCallback(null, { tokensAlreadySet: true });
+      }
+    } catch (e) {
+      if (e?.message === "DROPBOX_NOT_CONFIGURED") {
+        showBanner("Dropbox App Key is not configured. See .env.example and rebuild.", "alert");
+        return;
+      }
+      showBanner("Could not start Dropbox connection.", "alert");
+    }
+  }, [showBanner, handleDropboxCallback]);
 
   const disconnectDropbox = useCallback(() => {
     clearTokens();

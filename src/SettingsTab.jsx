@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { Capacitor } from "@capacitor/core";
 import { useAppContext } from "./context/AppContext";
-import { getGeminiApiKey, setGeminiApiKey, getMaxDateSeen, IS_DEV } from "./utils/db";
+import { getAiApiKey, setAiApiKey, getMaxDateSeen, IS_DEV } from "./utils/db";
 import { DATA_DISCLOSURE_SEEN_KEY, THEME_KEY } from "./constants";
 import { clearRateLimitWindow } from "./api/gemini";
 import { SyncManager } from "./sync/SyncManager";
@@ -37,7 +37,7 @@ export default function SettingsTab() {
 
   const importRef = useRef(null);
   const [importLoading, setImportLoading] = useState(false);
-  const currentGeminiKey = getGeminiApiKey();
+  const currentAiApiKey = getAiApiKey();
   const googleClientId = (import.meta.env.VITE_GOOGLE_CLIENT_ID || "").trim();
 
   // ── PWA install prompt ────────────────────────────────────────
@@ -73,24 +73,24 @@ export default function SettingsTab() {
     if (confirmResetTimerRef.current) clearTimeout(confirmResetTimerRef.current);
   }, []);
 
-  async function handleChangeGeminiKey() {
+  async function handleChangeAiApiKey() {
     try {
       const next = window.prompt(
-        "Enter new Gemini API key (stored only in this browser tab):",
-        currentGeminiKey || "",
+        "Enter new AI API key (stored only in this browser tab):",
+        currentAiApiKey || "",
       );
       if (next == null) return;
       const trimmed = next.trim();
       if (!trimmed) {
-        showBanner("Gemini API key not changed.", "info");
+        showBanner("API key not changed.", "info");
         return;
       }
-      setGeminiApiKey(trimmed);
+      setAiApiKey(trimmed);
       clearRateLimitWindow();
       await rehydrate?.();
-      showBanner("Gemini API key updated for this session.", "success");
+      showBanner("AI API key updated for this session.", "success");
     } catch {
-      showBanner("Could not update Gemini API key.", "alert");
+      showBanner("Could not update API key.", "alert");
     }
   }
 
@@ -118,7 +118,7 @@ export default function SettingsTab() {
     }
     lsKeysToDelete.forEach((k) => localStorage.removeItem(k));
     await SyncManager.forget();
-    setGeminiApiKey("");
+    setAiApiKey("");
     window.location.reload();
   }
 
@@ -350,7 +350,7 @@ export default function SettingsTab() {
         {googleClientId ? (
           <>
             <div style={{ fontSize: "14px", color: dimColor, ...mono, lineHeight: "1.6" }}>
-              {state?.googleAuthConnected ? "Google account connected for Gemini." : "Connect Google for Gemini (OAuth)."}
+              {state?.googleAuthConnected ? "Google account connected for AI." : "Connect Google for AI (OAuth)."}
             </div>
             {state?.googleAuthConnected ? (
               <button type="button" onClick={() => { revokeGoogleAuth(); showBanner("Google disconnected.", "info"); }}
@@ -358,22 +358,22 @@ export default function SettingsTab() {
                 DISCONNECT GOOGLE
               </button>
             ) : (
-              <button type="button" onClick={() => { try { startGoogleOAuthFlow(googleClientId); } catch { showBanner("Could not start Google sign-in.", "alert"); } }}
+              <button type="button" onClick={() => { startGoogleOAuthFlow(googleClientId).catch(() => showBanner("Could not start Google sign-in.", "alert")); }}
                 style={{ padding: "12px", border, background: fg, color: bg, ...mono, fontSize: "16px", cursor: "pointer", minHeight: "48px" }}>
                 CONNECT GOOGLE
               </button>
             )}
           </>
         ) : (
-          <button type="button" onClick={handleChangeGeminiKey}
+          <button type="button" onClick={handleChangeAiApiKey}
             style={{ padding: "12px", border, background: "transparent", color: fg, ...mono, fontSize: "16px", letterSpacing: "1px", cursor: "pointer", minHeight: "48px" }}>
-            CHANGE GEMINI API KEY
+            CHANGE AI API KEY
           </button>
         )}
         {IS_DEV && (
           <div style={{ border: "2px dashed #555", padding: "10px 12px", fontSize: "12px", color: "#ccc", ...mono, lineHeight: "1.6", wordBreak: "break-all" }}>
-            <div style={{ fontSize: "11px", letterSpacing: "2px", marginBottom: "4px", fontWeight: "bold" }}>DEV ONLY — CURRENT GEMINI KEY</div>
-            <div>{currentGeminiKey || "(none set)"}</div>
+            <div style={{ fontSize: "11px", letterSpacing: "2px", marginBottom: "4px", fontWeight: "bold" }}>DEV ONLY — CURRENT AI API KEY</div>
+            <div>{currentAiApiKey || "(none set)"}</div>
           </div>
         )}
       </div>

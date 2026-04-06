@@ -19,11 +19,11 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { useCallback, useRef, useEffect } from "react";
-import { storageKey, todayUTC, localDateFromUTC, getMaxDateSeen, idbGet, getGeminiApiKey } from "../utils/db";
+import { storageKey, todayUTC, localDateFromUTC, getMaxDateSeen, idbGet, getAiApiKey } from "../utils/db";
 import { getLevel, getRank, getXpPerLevel } from "../utils/xp";
 import { updateDynamicCosts } from "../api/dynamicCosts";
 import { sanitizeForPrompt } from "../api/systemPrompt";
-import { GEMINI_DAILY_TOKEN_LIMIT, GEMINI_AI_XP_LIMIT, MAX_HABITS_TOTAL } from "../config.js";
+import { AI_DAILY_TOKEN_LIMIT, GEMINI_AI_XP_LIMIT, MAX_HABITS_TOTAL } from "../config.js";
 
 const TOKEN_WARN_THRESHOLDS = [0.5, 0.8, 0.99];
 const MAX_XP_PER_CMD        = 500;
@@ -55,7 +55,7 @@ function sanitizeStr(s, max = MAX_STR_LEN) {
   return s.replace(CTRL_RE, "").replace(BIDI_RE, "").replace(INJECT_RE, "").slice(0, max);
 }
 
-async function resolveGeminiKeyFromRef(getAiTokenRef) {
+async function resolveAiApiKeyFromRef(getAiTokenRef) {
   const fn = getAiTokenRef?.current;
   if (typeof fn === "function") {
     try {
@@ -63,7 +63,7 @@ async function resolveGeminiKeyFromRef(getAiTokenRef) {
       if (k && String(k).trim()) return String(k).trim();
     } catch { /* fall through to raw key */ }
   }
-  const g = getGeminiApiKey();
+  const g = getAiApiKey();
   return g && String(g).trim() ? String(g).trim() : "";
 }
 
@@ -83,7 +83,7 @@ export function useGameEngine({ setState, latestStateRef, showBanner, showToast,
   const _engineMountedRef = useRef(true);
   useEffect(() => { _engineMountedRef.current = true; return () => { _engineMountedRef.current = false; }; }, []);
 
-  // ── Token tracker ─────────────────────────────────────────
+  // ── Token tracker (amounts = Gemini usageMetadata totals from callGemini) ──
   const trackTokens = useCallback((amount) => {
     const safeAmount = typeof amount === "number" && isFinite(amount) && amount > 0
       ? Math.min(Math.round(amount), 1_000_000)
@@ -104,7 +104,7 @@ export function useGameEngine({ setState, latestStateRef, showBanner, showToast,
 
       TOKEN_WARN_THRESHOLDS.forEach((threshold) => {
         const pct = Math.round(threshold * 100);
-        if (!newWarned.includes(pct) && prevTokens < GEMINI_DAILY_TOKEN_LIMIT * threshold && newTokens >= GEMINI_DAILY_TOKEN_LIMIT * threshold) {
+        if (!newWarned.includes(pct) && prevTokens < AI_DAILY_TOKEN_LIMIT * threshold && newTokens >= AI_DAILY_TOKEN_LIMIT * threshold) {
           newWarned.push(pct);
           if (threshold >= 0.99) {
             setTimeout(() => showBanner("SYSTEM: Neural energy depleted. AI functions offline until tomorrow.", "alert"), 0);
@@ -201,7 +201,7 @@ export function useGameEngine({ setState, latestStateRef, showBanner, showToast,
           });
           if (typeof navigator === "undefined" || navigator.onLine !== false) {
             (async () => {
-              const key = await resolveGeminiKeyFromRef(getAiTokenRef);
+              const key = await resolveAiApiKeyFromRef(getAiTokenRef);
               if (!key) return;
               return updateDynamicCosts(key, snapshot, "level_up", trackTokensRef.current);
             })()
@@ -290,7 +290,7 @@ export function useGameEngine({ setState, latestStateRef, showBanner, showToast,
           });
           if (typeof navigator === "undefined" || navigator.onLine !== false) {
             (async () => {
-              const key = await resolveGeminiKeyFromRef(getAiTokenRef);
+              const key = await resolveAiApiKeyFromRef(getAiTokenRef);
               if (!key) return;
               return updateDynamicCosts(key, snapshot, "level_up", trackTokensRef.current);
             })()

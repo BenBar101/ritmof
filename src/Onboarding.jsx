@@ -1,9 +1,9 @@
 import { useState, useMemo, useEffect } from "react";
 import { STYLE_CSS } from "./constants";
 import { sanitizeForPrompt } from "./api/systemPrompt";
-import { getGeminiApiKey } from "./utils/db";
+import { getAiApiKey } from "./utils/db";
 import { isAuthenticated } from "./api/dropbox";
-import { loadGoogleGIS, GCAL_SCOPE } from "./api/gcal";
+import { requestGcalAccessToken } from "./api/gcal";
 import { isGoogleAuthConnected, startGoogleOAuthFlow } from "./api/googleAuth";
 import { RitmolHealth } from "./plugins/RitmolHealth.js";
 import GeometricCorners from "./GeometricCorners";
@@ -72,7 +72,7 @@ function DropboxOnboardingStep({ connectDropbox, onSkip, onAdvance }) {
     } catch (e) {
       setConnecting(false);
       if (e?.message === "DROPBOX_NOT_CONFIGURED") {
-        setConnectError("Dropbox is not configured in this build. Skip and enter your Gemini key manually.");
+        setConnectError("Dropbox is not configured in this build. Skip and enter your API key manually.");
       } else {
         setConnectError("Could not start Dropbox connection. Try again.");
       }
@@ -99,7 +99,7 @@ function DropboxOnboardingStep({ connectDropbox, onSkip, onAdvance }) {
     <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
       <div style={{ fontSize: "15px", color: "#fff", lineHeight: "1.7" }}>
         Connect Dropbox to sync your data across devices and back it up automatically.
-        Your Gemini API key will be stored securely in your Dropbox — configure once,
+        Your AI API key will be stored securely in your Dropbox — configure once,
         use everywhere.
       </div>
       <button
@@ -166,19 +166,7 @@ function GCalOnboardingStep({ onSkip, onAdvance, profile, onClientIdChange }) {
     setStatus("connecting");
     setError("");
     try {
-      await loadGoogleGIS();
-      await new Promise((resolve, reject) => {
-        const tokenClient = window.google.accounts.oauth2.initTokenClient({
-          client_id: id,
-          scope: GCAL_SCOPE,
-          callback: (resp) => {
-            if (resp.error) reject(new Error(resp.error));
-            else resolve(resp);
-          },
-        });
-        // Always use "consent" on first connect so the OAuth consent screen appears
-        tokenClient.requestAccessToken({ prompt: "consent" });
-      });
+      await requestGcalAccessToken(id, { promptConsent: true });
       setStatus("connected");
       // Auto-advance after briefly showing success
       setTimeout(() => onAdvance?.(), 1200);
@@ -272,7 +260,7 @@ function GCalOnboardingStep({ onSkip, onAdvance, profile, onClientIdChange }) {
 }
 
 
-export function GeminiKeySetupScreen({ onSave }) {
+export function AiApiKeySetupScreen({ onSave }) {
   const [key, setKey]           = useState("");
   const [showKey, setShowKey]   = useState(false);
   const [error, setError]       = useState("");
@@ -309,10 +297,10 @@ export function GeminiKeySetupScreen({ onSave }) {
       {/* ── Step-by-step guide ── */}
       <div style={{ border: "2px solid #fff", padding: "14px", display: "flex", flexDirection: "column", gap: "10px" }}>
         <div style={{ ...mono, fontSize: "11px", letterSpacing: "3px", color: "#fff", fontWeight: "bold", marginBottom: "2px" }}>
-          HOW TO GET YOUR FREE KEY
+          HOW TO GET A KEY
         </div>
         {[
-          ["1", "Open", "aistudio.google.com/apikey", "https://aistudio.google.com/apikey"],
+          ["1", "Open", "Google AI Studio (API keys)", "https://aistudio.google.com/apikey"],
           ["2", "Click", "Create API key", null],
           ["3", "Copy the key and paste it below", null, null],
         ].map(([num, prefix, label, href]) => (
@@ -380,7 +368,7 @@ export function GeminiKeySetupScreen({ onSave }) {
         </div>
         <InfoRow icon="▸" text="Stored in sessionStorage only — cleared when you close the tab." />
         <InfoRow icon="▸" text="Saved inside your own sync file (ritmol-data.json) on Dropbox or your local drive. Never on any RITMOL server — there is no server." />
-        <InfoRow icon="▸" text={'Sent only to generativelanguage.googleapis.com. You can verify this in DevTools → Network and filter by "generativelanguage".'} />
+        <InfoRow icon="▸" text={'RITMOL sends requests to Google Gemini (generativelanguage.googleapis.com) when using a Google-format key. Verify in DevTools → Network.'} />
         <InfoRow icon="▸" text="Never logged, never sent to analytics, never embedded in bug reports." />
       </div>
 
@@ -389,7 +377,7 @@ export function GeminiKeySetupScreen({ onSave }) {
         type="button"
         onClick={handleSave}
         disabled={!formatOk}
-        data-testid="save-gemini"
+        data-testid="save-ai-api-key"
         style={{
           ...mono, width: "100%", padding: "14px",
           border: "2px solid #fff",
@@ -449,19 +437,13 @@ function HealthKitOnboardingStep({ setState, onAdvance }) {
   );
 }
 
-function GeminiAiOnboardingStep({ onGeminiKeySaved, onAdvance }) {
-  const envClientId = (typeof import.meta !== "undefined" && import.meta.env?.VITE_GOOGLE_CLIENT_ID || "").trim();
+function GoogleOAuthAiStep({ onAdvance, onSkip }) {
+  const clientId = (typeof import.meta !== "undefined" && import.meta.env?.VITE_GOOGLE_CLIENT_ID || "").trim();
   const [oauthConnected, setOauthConnected] = useState(() => isGoogleAuthConnected());
-  const [connectErr, setConnectErr] = useState("");
-  // If no env client ID, let user enter their own
-  const [manualClientId, setManualClientId] = useState("");
-  // "oauth" (default) | "apikey" — tab switcher for power users
-  const [authMode, setAuthMode] = useState("oauth");
   const [oauthStarted, setOauthStarted] = useState(false);
+  const [connectErr, setConnectErr] = useState("");
 
   const mono = { fontFamily: "'Share Tech Mono', monospace" };
-
-  const activeClientId = envClientId || manualClientId.trim();
 
   useEffect(() => {
     const id = setInterval(() => {
@@ -477,31 +459,11 @@ function GeminiAiOnboardingStep({ onGeminiKeySaved, onAdvance }) {
     return () => clearTimeout(t);
   }, [oauthConnected, onAdvance]);
 
-  function handleOAuth() {
-    setConnectErr("");
-    const id = activeClientId;
-    if (!id) {
-      setConnectErr("Enter your Google Client ID above to continue.");
-      return;
-    }
-    if (!/^[\w.-]+\.apps\.googleusercontent\.com$/.test(id)) {
-      setConnectErr("Invalid format — must end in .apps.googleusercontent.com");
-      return;
-    }
-    try {
-      setOauthStarted(true);
-      startGoogleOAuthFlow(id);
-    } catch (e) {
-      setOauthStarted(false);
-      setConnectErr(e?.message || "Could not start Google sign-in.");
-    }
-  }
-
   if (oauthConnected) {
     return (
       <div style={{ display: "flex", flexDirection: "column", gap: "16px", alignItems: "center", padding: "8px 0" }}>
         <div style={{
-          width: "64px", height: "64px", borderRadius: "0",
+          width: "64px", height: "64px",
           border: "3px solid #fff", display: "flex", alignItems: "center", justifyContent: "center",
           fontSize: "32px", color: "#fff",
         }}>✓</div>
@@ -511,100 +473,71 @@ function GeminiAiOnboardingStep({ onGeminiKeySaved, onAdvance }) {
     );
   }
 
+  async function handleOAuth() {
+    setConnectErr("");
+    setOauthStarted(true);
+    try {
+      await startGoogleOAuthFlow(clientId);
+    } catch (e) {
+      setConnectErr(e?.message || "Could not start Google sign-in.");
+    } finally {
+      setOauthStarted(false);
+    }
+  }
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-      {/* Mode tabs */}
-      <div style={{ display: "flex", gap: "0", border: "2px solid #fff" }}>
-        {[["oauth", "SIGN IN WITH GOOGLE"], ["apikey", "RAW API KEY"]].map(([mode, label]) => (
-          <button
-            key={mode}
-            type="button"
-            onClick={() => { setAuthMode(mode); setConnectErr(""); }}
-            style={{
-              flex: 1, padding: "10px", border: "none",
-              background: authMode === mode ? "#fff" : "transparent",
-              color: authMode === mode ? "#000" : "#fff",
-              ...mono, fontSize: "11px", letterSpacing: "2px",
-              cursor: "pointer", fontWeight: "bold",
-            }}
-          >
-            {label}
-          </button>
-        ))}
+      <div style={{ fontSize: "14px", color: "#fff", lineHeight: "1.7", ...mono }}>
+        Sign in with Google for AI features (same OAuth as Calendar when configured). You can skip and connect later in Profile → Settings.
       </div>
 
-      {authMode === "oauth" ? (
-        <>
-          <div style={{ fontSize: "13px", color: "#fff", lineHeight: "1.7", ...mono }}>
-            Sign in with Google — no API key to copy/paste. Uses OAuth so your credentials are never stored in plain text.
-          </div>
+      <button
+        type="button"
+        onClick={handleOAuth}
+        disabled={oauthStarted}
+        style={{
+          width: "100%", padding: "14px", border: "2px solid #fff",
+          background: oauthStarted ? "transparent" : "#fff",
+          color: oauthStarted ? "#fff" : "#000",
+          ...mono, fontSize: "16px", letterSpacing: "2px",
+          cursor: oauthStarted ? "not-allowed" : "pointer",
+        }}
+      >
+        {oauthStarted ? "OPENING GOOGLE…" : "SIGN IN WITH GOOGLE"}
+      </button>
 
-          {/* Client ID input — only shown when not baked in at build time */}
-          {!envClientId && (
-            <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
-              <label style={{ ...mono, fontSize: "11px", letterSpacing: "3px", color: "#fff", fontWeight: "bold" }}>
-                GOOGLE CLIENT ID
-              </label>
-              <input
-                type="text"
-                value={manualClientId}
-                onChange={(e) => { setManualClientId(e.target.value); setConnectErr(""); }}
-                placeholder="xxxx.apps.googleusercontent.com"
-                style={{
-                  background: "#000", border: "2px solid #fff", color: "#fff",
-                  padding: "10px", fontSize: "13px", ...mono, outline: "none",
-                }}
-              />
-              <div style={{ ...mono, fontSize: "11px", color: "#aaa", lineHeight: "1.6" }}>
-                Get one free at{" "}
-                <a href="https://console.cloud.google.com/" target="_blank" rel="noopener noreferrer"
-                   style={{ color: "#fff" }}>console.cloud.google.com</a>
-                {" "}→ APIs &amp; Services → Credentials → Create OAuth 2.0 Client ID.
-              </div>
-            </div>
-          )}
-
-          <button
-            type="button"
-            onClick={handleOAuth}
-            disabled={oauthStarted}
-            style={{
-              width: "100%", padding: "14px", border: "2px solid #fff",
-              background: oauthStarted ? "transparent" : "#fff",
-              color: oauthStarted ? "#fff" : "#000",
-              ...mono, fontSize: "16px", letterSpacing: "2px",
-              cursor: oauthStarted ? "not-allowed" : "pointer",
-            }}
-          >
-            {oauthStarted ? "OPENING GOOGLE…" : "SIGN IN WITH GOOGLE"}
-          </button>
-
-          {!!getGeminiApiKey() && (
-            <button
-              type="button"
-              onClick={() => onAdvance?.()}
-              style={{
-                width: "100%", padding: "12px", border: "2px solid #555", background: "transparent", color: "#888",
-                ...mono, fontSize: "13px", letterSpacing: "1px", cursor: "pointer",
-              }}
-            >
-              Continue with existing API key from synced data
-            </button>
-          )}
-
-          {connectErr && (
-            <div style={{ color: "#fff", fontSize: "13px", ...mono, fontWeight: "bold", border: "2px solid #fff", padding: "10px" }}>
-              [ ERR ] {connectErr}
-            </div>
-          )}
-        </>
-      ) : (
-        <GeminiKeySetupScreen
-          onSave={(key) => {
-            onGeminiKeySaved(key, null);
-            onAdvance();
+      {!!getAiApiKey() && (
+        <button
+          type="button"
+          onClick={() => onAdvance?.()}
+          style={{
+            width: "100%", padding: "12px", border: "2px solid #555", background: "transparent", color: "#888",
+            ...mono, fontSize: "13px", letterSpacing: "1px", cursor: "pointer",
           }}
-        />
+        >
+          Continue with existing key from synced data
+        </button>
+      )}
+
+      <div style={{ height: "2px", background: "#fff" }} />
+
+      <button
+        type="button"
+        onClick={onSkip}
+        data-testid="skip-google-ai"
+        style={{
+          width: "100%", padding: "12px", border: "2px solid #fff", background: "transparent", color: "#fff",
+          ...mono, fontSize: "16px", letterSpacing: "1px", cursor: "pointer",
+          minHeight: "56px",
+        }}
+      >
+        SKIP FOR NOW
+      </button>
+
+      {connectErr && (
+        <div style={{ color: "#fff", fontSize: "13px", ...mono, fontWeight: "bold", border: "2px solid #fff", padding: "10px" }}>
+          [ ERR ] {connectErr}
+        </div>
       )}
     </div>
   );
@@ -614,15 +547,13 @@ const BASE_URL = (import.meta.env.BASE_URL || "/").replace(/\/$/, "") || "";
 const APP_ICON_URL = BASE_URL ? `${BASE_URL}/icon-192.png` : "/icon-192.png";
 
 // ── Main onboarding ───────────────────────────────────────────
-export default function Onboarding({ onComplete, onGeminiKeySaved, connectDropbox, setState, healthKitEnabled }) {
+export default function Onboarding({ onComplete, connectDropbox, setState, healthKitEnabled }) {
   // needsDropbox is snapshotted once — Dropbox auth navigates away and back,
   // so by the time we're here the auth state is already final.
   const needsDropbox = useMemo(() => !isAuthenticated(), []);
-  const envGoogleClientId = (typeof import.meta !== "undefined" && import.meta.env?.VITE_GOOGLE_CLIENT_ID || "").trim();
-  // needsGemini is reactive state so it updates when Dropbox connects and
-  // pulls the Gemini key into sessionStorage during the onboarding flow.
-  const [needsGemini, setNeedsGemini] = useState(() => {
-    if (getGeminiApiKey()) return false;
+  // needsAiApiKey updates when Dropbox pulls a key into sessionStorage mid-flow.
+  const [needsAiApiKey, setNeedsAiApiKey] = useState(() => {
+    if (getAiApiKey()) return false;
     if (isGoogleAuthConnected()) return false;
     return true;
   });
@@ -646,16 +577,14 @@ export default function Onboarding({ onComplete, onGeminiKeySaved, connectDropbo
       });
     }
 
-    if (needsGemini) {
+    if (needsAiApiKey) {
       list.push({
-        key: "_gemini",
-        title: envGoogleClientId ? "GOOGLE AI ACCESS" : "AI AUTHENTICATION",
-        subtitle: envGoogleClientId
-          ? "Sign in with Google for Gemini access — no API key needed."
-          : "Sign in with Google OAuth (recommended) or paste a raw Gemini API key.",
-        type: "_gemini",
+        key: "_ai",
+        title: "AI CONNECTION",
+        subtitle: "Optional: sign in with Google, or add an API key later in Settings.",
+        type: "_ai",
         style: "geometric",
-        optional: false,
+        optional: true,
       });
     }
 
@@ -721,7 +650,7 @@ export default function Onboarding({ onComplete, onGeminiKeySaved, connectDropbo
     }
 
     return list;
-  }, [needsDropbox, needsGemini, envGoogleClientId, healthKitEnabled]);
+  }, [needsDropbox, needsAiApiKey, healthKitEnabled]);
 
   const current = steps[step];
 
@@ -757,16 +686,12 @@ export default function Onboarding({ onComplete, onGeminiKeySaved, connectDropbo
 
   function advance() {
     setError("");
-    // Re-check whether we still need the Gemini step — Dropbox may have
-    // pulled the key into sessionStorage while the user was on that step.
-    // setNeedsGemini(false) will cause steps to rebuild (shorter list) on
-    // the next render, so we read the key first before calling setStep.
-    const keyNowPresent = !!getGeminiApiKey();
+    // Re-check whether we still need the AI step — Dropbox may have pulled
+    // a key into sessionStorage while the user was on that step.
+    const keyNowPresent = !!getAiApiKey();
     const googleConnected = isGoogleAuthConnected();
-    if (keyNowPresent || googleConnected) setNeedsGemini(false);
-    // Calculate next step against the list length that will exist after the
-    // rebuild: if the Gemini step is being dropped, the list shrinks by 1.
-    const nextListLength = steps.length - ((keyNowPresent || googleConnected) && needsGemini ? 1 : 0);
+    if (keyNowPresent || googleConnected) setNeedsAiApiKey(false);
+    const nextListLength = steps.length - ((keyNowPresent || googleConnected) && needsAiApiKey ? 1 : 0);
     if (step < nextListLength - 1) {
       setStep(step + 1);
     } else {
@@ -775,7 +700,7 @@ export default function Onboarding({ onComplete, onGeminiKeySaved, connectDropbo
   }
 
   function handleNext() {
-    if (current.type === "_dropbox" || current.type === "_gemini" || current.type === "_gcal" || current.type === "_healthkit") {
+    if (current.type === "_dropbox" || current.type === "_ai" || current.type === "_gcal" || current.type === "_healthkit") {
       advance();
       return;
     }
@@ -841,8 +766,8 @@ export default function Onboarding({ onComplete, onGeminiKeySaved, connectDropbo
           />
         )}
 
-        {current.type === "_gemini" && (
-          <GeminiAiOnboardingStep onGeminiKeySaved={onGeminiKeySaved} onAdvance={advance} />
+        {current.type === "_ai" && (
+          <GoogleOAuthAiStep onAdvance={advance} onSkip={advance} />
         )}
 
         {current.type === "_gcal" && (
@@ -858,7 +783,7 @@ export default function Onboarding({ onComplete, onGeminiKeySaved, connectDropbo
           <HealthKitOnboardingStep setState={setState} onAdvance={advance} />
         )}
 
-        {current.type !== "_dropbox" && current.type !== "_gemini" && current.type !== "_gcal" && current.type !== "_healthkit" && (
+        {current.type !== "_dropbox" && current.type !== "_ai" && current.type !== "_gcal" && current.type !== "_healthkit" && (
           <>
             <label style={{ fontSize: "16px", color: "#fff", letterSpacing: "2px", display: "block", marginBottom: "6px", marginTop: "0", fontFamily: "'Share Tech Mono', monospace", fontWeight: "bold" }}>
               {current.label}

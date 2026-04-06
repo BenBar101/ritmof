@@ -12,7 +12,7 @@
 import { useEffect, useRef } from "react";
 import { localDateFromUTC, getMaxDateSeen, updateMaxDateSeen } from "../utils/db";
 import { getLevel, getRank, getXpPerLevel } from "../utils/xp";
-import { getGeminiApiKey } from "../utils/db";
+import { getAiApiKey } from "../utils/db";
 import { updateDynamicCosts } from "../api/dynamicCosts";
 
 export function useDailyLogin({ profile, setState, setModal, setLevelUpData, showBanner, trackTokens, lastLevelUpXpRef }) {
@@ -143,7 +143,7 @@ export function useDailyLogin({ profile, setState, setModal, setLevelUpData, sho
         const { level, rank, snapshot } = pendingData.levelUp;
         setLevelUpData((prev) => prev && prev.level >= level ? prev : { level, rank });
         if (typeof navigator === "undefined" || navigator.onLine !== false) {
-          updateDynamicCosts(getGeminiApiKey(), snapshot, "level_up", trackTokens)
+          updateDynamicCosts(getAiApiKey(), snapshot, "level_up", trackTokens)
             .then((costs) => {
               if (costs && Object.keys(costs).length) {
                 setState((prev) => ({ ...prev, dynamicCosts: { ...prev.dynamicCosts, ...costs } }));
@@ -160,7 +160,7 @@ export function useDailyLogin({ profile, setState, setModal, setLevelUpData, sho
         const { newShields, lastShieldUseDate } = pendingData.shieldUpdate;
         if (typeof navigator === "undefined" || navigator.onLine !== false) {
           const shieldSnapshot = pendingData.fullSnapshot ?? { streakShields: newShields, lastShieldUseDate };
-          updateDynamicCosts(getGeminiApiKey(), shieldSnapshot, "streak_shield_use", trackTokens)
+          updateDynamicCosts(getAiApiKey(), shieldSnapshot, "streak_shield_use", trackTokens)
             .then((costs) => {
               if (costs && Object.keys(costs).length) {
                 setState((prev) => ({ ...prev, dynamicCosts: { ...prev.dynamicCosts, ...costs } }));

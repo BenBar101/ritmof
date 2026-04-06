@@ -2,7 +2,7 @@ import { callGemini, RateLimitedError } from "./gemini";
 import { storageKey, todayUTC } from "../utils/db";
 import { idbGet } from "../utils/db";
 import { DEFAULT_XP_PER_LEVEL, DEFAULT_GACHA_COST, DEFAULT_STREAK_SHIELD_COST } from "../constants";
-import { GEMINI_DAILY_TOKEN_LIMIT } from "../config.js";
+import { AI_DAILY_TOKEN_LIMIT } from "../config.js";
 import { getLevel } from "../utils/xp";
 import { isSafeSyncValue } from "../sync/SyncManager.js";
 
@@ -43,7 +43,7 @@ export async function updateDynamicCosts(apiKey, state, event, onTokensUsed) {
     if (typeof navigator !== 'undefined' && navigator.onLine === false) return {};
     // Honour the daily token budget.
     const storedUsage = idbGet(storageKey("jv_token_usage"), null);
-    if (storedUsage && storedUsage.date === todayUTC() && storedUsage.tokens >= GEMINI_DAILY_TOKEN_LIMIT) return {};
+    if (storedUsage && storedUsage.date === todayUTC() && storedUsage.tokens >= AI_DAILY_TOKEN_LIMIT) return {};
     const d = state.dynamicCosts || {};
     const xpPerLevel = Math.floor(
       Math.max(200, Math.min(10000, Number(d.xpPerLevel ?? DEFAULT_XP_PER_LEVEL) || DEFAULT_XP_PER_LEVEL)),

@@ -2,8 +2,9 @@
 // DROPBOX API — OAuth PKCE flow + upload/download transport
 // ═══════════════════════════════════════════════════════════════
 // Requires VITE_DROPBOX_APP_KEY in .env (create an app at dropbox.com/developers/apps).
-// REDIRECT_URI must exactly match the Redirect URI registered in the Dropbox app console
-// (e.g. https://your-domain.com/dropbox-callback or http://localhost:5173/dropbox-callback).
+// REDIRECT_URI must exactly match the Redirect URI registered in the Dropbox app console.
+// Web: https://your-domain.com/dropbox-callback (or localhost for dev).
+// Native (Capacitor): ritmol://auth/dropbox — add both in the Dropbox app settings.
 // ═══════════════════════════════════════════════════════════════
 //
 // SECURITY NOTE: VITE_DROPBOX_APP_KEY is inlined into the production bundle by Vite
@@ -38,6 +39,7 @@ import {
   DROPBOX_CREATE_FOLDER_URL,
   OAUTH_REDIRECT_SCHEME,
 } from "../config.js";
+import { ensureSocialLoginPluginsInitialized } from "./socialLoginNative.js";
 
 const DROPBOX_CLIENT_ID = import.meta.env.VITE_DROPBOX_APP_KEY;
 
@@ -239,14 +241,46 @@ export function isAuthenticated() {
   return hasRefreshToken();
 }
 
-export function startOAuthFlow() {
+async function startNativeDropboxOAuthFlow() {
+  await ensureSocialLoginPluginsInitialized();
+  const { SocialLogin } = await import("@capgo/capacitor-social-login");
+  const res = await SocialLogin.login({
+    provider: "oauth2",
+    options: { providerId: "dropbox" },
+  });
+  if (res.provider !== "oauth2") throw new Error("DROPBOX_AUTH_REQUIRED");
+  const r = res.result;
+  const token = r.accessToken?.token;
+  if (!token) throw new Error("DROPBOX_AUTH_REQUIRED");
+  const refreshToken = r.refreshToken ?? r.accessToken?.refreshToken ?? null;
+  const expiresIn =
+    typeof r.expiresIn === "number"
+      ? r.expiresIn
+      : (typeof r.accessToken?.expiresIn === "number" ? r.accessToken.expiresIn : 14_400);
+  setTokens({
+    access_token: token,
+    refresh_token: refreshToken,
+    expires_in: expiresIn,
+  });
+}
+
+/**
+ * Start Dropbox OAuth (web: full-page redirect; native: in-app browser / ASWebAuthenticationSession).
+ */
+export async function startOAuthFlow() {
   if (!DROPBOX_CLIENT_ID || DROPBOX_CLIENT_ID === "undefined") {
     throw new Error("DROPBOX_NOT_CONFIGURED");
   }
+  const isNative =
+    typeof window !== "undefined" && window?.Capacitor?.isNativePlatform?.();
+  if (isNative) {
+    await startNativeDropboxOAuthFlow();
+    return;
+  }
+
   const verifier = generateCodeVerifier();
   sessionStorage.setItem(SS_CODE_VERIFIER, verifier);
 
-  // Generate a random CSRF nonce and persist it so the callback can verify it.
   const rawNonce = new Uint8Array(32);
   crypto.getRandomValues(rawNonce);
   const oauthState = btoa(String.fromCharCode(...rawNonce))
@@ -255,19 +289,18 @@ export function startOAuthFlow() {
     .replace(/=/g, "");
   sessionStorage.setItem(SS_OAUTH_STATE, oauthState);
 
-  generateCodeChallenge(verifier).then((challenge) => {
-    const redirectUri = getDropboxRedirectUri();
-    const params = new URLSearchParams({
-      client_id: DROPBOX_CLIENT_ID,
-      redirect_uri: redirectUri,
-      response_type: "code",
-      code_challenge: challenge,
-      code_challenge_method: "S256",
-      token_access_type: "offline",
-      state: oauthState,
-    });
-    window.location.href = `${DROPBOX_OAUTH_URL}?${params.toString()}`;
+  const challenge = await generateCodeChallenge(verifier);
+  const redirectUri = getDropboxRedirectUri();
+  const params = new URLSearchParams({
+    client_id: DROPBOX_CLIENT_ID,
+    redirect_uri: redirectUri,
+    response_type: "code",
+    code_challenge: challenge,
+    code_challenge_method: "S256",
+    token_access_type: "offline",
+    state: oauthState,
   });
+  window.location.href = `${DROPBOX_OAUTH_URL}?${params.toString()}`;
 }
 
 export function verifyOAuthState(returnedState) {

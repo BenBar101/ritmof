@@ -24,5 +24,6 @@ jobs:
 
       - name: Run e2e tests
         env:
+          AI_TEST_API_KEY: ${{ secrets.AI_TEST_API_KEY || '' }}
           GEMINI_TEST_API_KEY: ${{ secrets.GEMINI_TEST_API_KEY || '' }}
         run: npm run test:e2e

@@ -22,6 +22,32 @@ const GLOBAL_CSS = `
   [data-eink-border] { border: 3px solid #000 !important; }
   *, *::before, *::after { box-sizing: border-box; }
 
+  /* ── Design tokens (manhwa “system” UI — minimal, not terminal-dense) ─ */
+  html {
+    --font-ui: "DM Sans", system-ui, sans-serif;
+    --font-system: "Share Tech Mono", ui-monospace, monospace;
+    --rpg-fg: #fff;
+    --rpg-bg: #000;
+    --rpg-muted: #888;
+    --rpg-line: #fff;
+    --rpg-line-dim: #444;
+    --rpg-panel-pad: 1.25rem;
+    --rpg-radius-chamfer: 8px;
+  }
+  html[data-theme="light"] {
+    --rpg-fg: #000;
+    --rpg-bg: #f0f0f0;
+    --rpg-muted: #555;
+    --rpg-line: #000;
+    --rpg-line-dim: #bbb;
+  }
+
+  /* Monospace only for HUD numbers, timers, sync glyphs — not full UI */
+  .type-system {
+    font-family: var(--font-system);
+    font-variant-numeric: tabular-nums;
+  }
+
   /* ── Viewport height fix for iOS Safari browser mode ────────
      Safari in browser mode (not PWA) has TWO viewport height bugs:
      1. 100vh = the height INCLUDING the hidden-behind-chrome area,
@@ -61,7 +87,7 @@ const GLOBAL_CSS = `
     background: #000;
     color: #fff;
     font-size: 16px;
-    font-family: 'Share Tech Mono', monospace;
+    font-family: var(--font-ui);
   }
 
   #root {
@@ -259,50 +285,39 @@ const GLOBAL_CSS = `
   img, video, canvas, svg { max-width: 100%; }
   pre { overflow-x: auto; }
 
-  /* ── RPG System Frame ─────────────────────────────────────────
-     Apply class="system-frame" to any primary card/section.
-     The ::after ring gives the inner double-border effect from design.md.
-     clip-path is set on the element itself via inline style because
-     React components need to vary notch depth; ::after inherits it.
-  ── */
+  /* ── RPG System Frame — single clean panel (manhwa status window) ─ */
   .system-frame {
     position: relative;
-    border: 2px solid #fff;
+    border: 1px solid #fff;
     background-color: #000;
-    padding: 1.5rem;
-    margin-bottom: 1.5rem;
-    clip-path: polygon(
-      0% 10px, 10px 0%,
-      calc(100% - 10px) 0%, 100% 10px,
-      100% calc(100% - 10px), calc(100% - 10px) 100%,
-      10px 100%, 0% calc(100% - 10px)
-    );
+    padding: var(--rpg-panel-pad);
+    margin-bottom: 1.25rem;
   }
   html[data-theme="light"] .system-frame {
     border-color: #000 !important;
     background-color: #f0f0f0 !important;
   }
-  .system-frame::after {
-    content: "";
-    position: absolute;
-    top: 4px; left: 4px; right: 4px; bottom: 4px;
-    border: 1px solid #fff;
-    pointer-events: none;
-    clip-path: inherit;
-  }
-  html[data-theme="light"] .system-frame::after {
-    border-color: #000;
+
+  /* Optional chamfer: add .system-frame--cut; default stays rectangular & calm */
+  .system-frame.system-frame--cut {
+    clip-path: polygon(
+      0% var(--rpg-radius-chamfer), var(--rpg-radius-chamfer) 0%,
+      calc(100% - var(--rpg-radius-chamfer)) 0%, 100% var(--rpg-radius-chamfer),
+      100% calc(100% - var(--rpg-radius-chamfer)), calc(100% - var(--rpg-radius-chamfer)) 100%,
+      var(--rpg-radius-chamfer) 100%, 0% calc(100% - var(--rpg-radius-chamfer))
+    );
   }
 
-  /* ── RPG System Header ──────────────────────────────────────── */
+  /* ── RPG System Header — sleek sans labels + divider line ─ */
   .system-header {
-    font-family: 'Share Tech Mono', monospace;
+    font-family: var(--font-ui);
     text-transform: uppercase;
-    font-weight: 900;
-    letter-spacing: -0.05em;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    font-size: 0.6875rem;
     display: flex;
     align-items: center;
-    gap: 1rem;
+    gap: 0.75rem;
     color: #fff;
     margin-bottom: 0.75rem;
   }
@@ -312,10 +327,11 @@ const GLOBAL_CSS = `
 
   /* ── RPG System Divider ─────────────────────────────────────── */
   .system-divider {
-    height: 2px;
+    height: 1px;
     background-color: #fff !important;
     flex-grow: 1;
     position: relative;
+    opacity: 0.85;
   }
   html[data-theme="light"] .system-divider {
     background-color: #000 !important;
@@ -323,10 +339,10 @@ const GLOBAL_CSS = `
   .system-divider::after {
     content: "";
     position: absolute;
-    right: -8px;
-    top: -3px;
-    width: 8px;
-    height: 8px;
+    right: -6px;
+    top: -2px;
+    width: 5px;
+    height: 5px;
     background-color: #fff !important;
     transform: rotate(45deg);
   }
@@ -334,15 +350,33 @@ const GLOBAL_CSS = `
     background-color: #000 !important;
   }
 
+  /* Progress meter — one bar style app-wide */
+  .meter {
+    height: 2px;
+    background: var(--rpg-line-dim);
+    position: relative;
+    width: 100%;
+  }
+  .meter__fill {
+    height: 100%;
+    background: var(--rpg-fg);
+  }
+  html[data-theme="light"] .meter {
+    background: var(--rpg-line-dim);
+  }
+  html[data-theme="light"] .meter__fill {
+    background: var(--rpg-fg);
+  }
+
   /* ── RPG Status Badge ───────────────────────────────────────── */
   .status-badge {
-    font-size: 0.7rem;
-    padding: 2px 8px;
+    font-size: 0.65rem;
+    padding: 3px 8px;
     border: 1px solid #fff;
-    font-weight: bold;
-    font-family: 'Share Tech Mono', monospace;
+    font-weight: 700;
+    font-family: var(--font-ui);
     text-transform: uppercase;
-    letter-spacing: 1px;
+    letter-spacing: 0.08em;
     color: #fff;
     background: transparent;
   }
@@ -369,7 +403,7 @@ const GLOBAL_CSS = `
     align-items: center;
     border-bottom: 1px solid #fff;
     padding: 1rem 0.5rem;
-    font-family: 'Share Tech Mono', monospace;
+    font-family: var(--font-ui);
     color: #fff;
   }
   html[data-theme="light"] .task-row {
@@ -523,7 +557,7 @@ export class ErrorBoundary extends React.Component {
       return (
         <div style={{
           minHeight: "calc(var(--vh, 1vh) * 100)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
-          background: "#000", color: "#fff", fontFamily: "'Share Tech Mono', monospace", padding: "24px", textAlign: "center",
+          background: "#000", color: "#fff", fontFamily: "var(--font-ui), system-ui, sans-serif", padding: "24px", textAlign: "center",
         }}>
           <div style={{ fontSize: "15px", color: "#ccc", letterSpacing: "2px", marginBottom: "20px", fontWeight: "bold" }}>RITMOL — ERROR</div>
           <div style={{ fontSize: "16px", color: "#fff", maxWidth: "380px", lineHeight: "1.6", marginBottom: "28px" }}>

@@ -34,14 +34,15 @@ const ProfileSchemaBase = z.object({
   // Timezone fields added in Task 1
   utcOffsetMinutes: z.number().int().min(-840).max(840).optional(),
   timezoneLabel:    z.string().max(80).optional(),
-  // geminiKey must never appear in sync payload
+  // API keys must never appear in persisted profile (sync uses top-level fields)
   geminiKey:        z.undefined(),
+  aiApiKey:         z.undefined(),
   googleClientId:   z.undefined(),
 })
 
 // .omit() is called on the raw ZodObject, THEN .strip().nullable()
 export const SafeProfileSchema = ProfileSchemaBase
-  .omit({ geminiKey: true, googleClientId: true })
+  .omit({ geminiKey: true, aiApiKey: true, googleClientId: true })
   .strip()
   .nullable()
 
@@ -244,8 +245,9 @@ export const SyncPayloadSchema = z.object({
   jv_dynamic_costs:         DynamicCostsSchema.optional(),
   jv_last_shield_use_date:  nullOrDate.optional(),
   jv_last_shield_buy_date:  nullOrDate.optional(),
-  // geminiKey is allowed in the payload for reading (extracted to sessionStorage)
-  // but is never written back out on push
+  // aiApiKey / geminiKey: read into sessionStorage on Pull; stripped from profile.
+  // Legacy sync files may only have geminiKey; we still write both on Push for older clients.
+  aiApiKey:                 z.string().max(64).regex(/^AIza[A-Za-z0-9_-]{20,60}$/).optional(),
   geminiKey:                z.string().max(64).regex(/^AIza[A-Za-z0-9_-]{20,60}$/).optional(),
   // v2 fields — optional for v1 sync files
   jv_healthkit_enabled: z.boolean().optional(),

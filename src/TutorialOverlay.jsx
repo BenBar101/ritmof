@@ -27,7 +27,7 @@ const STEPS = [
   {
     id: "chat",
     title: "[ AI ADVISOR ]",
-    body: "Chat with your AI companion. Ask for study advice, task breakdowns, or motivation. Uses your Gemini key — token budget is shared across the day.",
+    body: "Chat with your AI companion. Ask for study advice, task breakdowns, or motivation. Uses your AI API key — token budget is shared across the day.",
     spotlight: { top: "auto", bottom: 0, left: "60%", width: "20%", height: "calc(60px + env(safe-area-inset-bottom, 0px))" },
     tooltipPosition: "above-nav",
   },
