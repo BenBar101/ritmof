@@ -1,41 +1,34 @@
 import { useState, useEffect } from "react";
 
-const NAV_TAB_ORDER = ["home", "habits", "tasks", "chat", "profile"];
+const NAV_TAB_ORDER = ["home", "habits", "tasks", "profile"];
 
 const STEPS = [
   {
     id: "home",
     title: "[ HOME BASE ]",
     body: "Your command centre. Check your rank, daily missions, active streak, and upcoming tasks at a glance. Complete missions to earn XP.",
-    spotlight: { top: "auto", bottom: 0, left: "0%", width: "20%", height: "calc(60px + env(safe-area-inset-bottom, 0px))" },
+    spotlight: { top: "auto", bottom: 0, left: "0%", width: "25%", height: "calc(60px + env(safe-area-inset-bottom, 0px))" },
     tooltipPosition: "above-nav",
   },
   {
     id: "habits",
     title: "[ HABITS ]",
     body: "Log daily habits to keep your streak alive. Each check earns XP. Miss a day and your streak resets — unless you use a Streak Shield.",
-    spotlight: { top: "auto", bottom: 0, left: "20%", width: "20%", height: "calc(60px + env(safe-area-inset-bottom, 0px))" },
+    spotlight: { top: "auto", bottom: 0, left: "25%", width: "25%", height: "calc(60px + env(safe-area-inset-bottom, 0px))" },
     tooltipPosition: "above-nav",
   },
   {
     id: "tasks",
     title: "[ TASKS ]",
     body: "Add one-off tasks with optional due dates. Completing tasks awards XP. Overdue tasks are flagged automatically.",
-    spotlight: { top: "auto", bottom: 0, left: "40%", width: "20%", height: "calc(60px + env(safe-area-inset-bottom, 0px))" },
-    tooltipPosition: "above-nav",
-  },
-  {
-    id: "chat",
-    title: "[ AI ADVISOR ]",
-    body: "Chat with your AI companion. Ask for study advice, task breakdowns, or motivation. Uses your AI API key — token budget is shared across the day.",
-    spotlight: { top: "auto", bottom: 0, left: "60%", width: "20%", height: "calc(60px + env(safe-area-inset-bottom, 0px))" },
+    spotlight: { top: "auto", bottom: 0, left: "50%", width: "25%", height: "calc(60px + env(safe-area-inset-bottom, 0px))" },
     tooltipPosition: "above-nav",
   },
   {
     id: "profile",
     title: "[ PROFILE & GACHA ]",
-    body: "Track achievements, roll the Gacha for personalised rewards, and connect Google Calendar. Spend XP to roll — higher rarity means a rarer drop.",
-    spotlight: { top: "auto", bottom: 0, left: "80%", width: "20%", height: "calc(60px + env(safe-area-inset-bottom, 0px))" },
+    body: "Track achievements, roll the Gacha for rewards, and connect Google Calendar. Spend XP to roll — higher rarity means a rarer drop.",
+    spotlight: { top: "auto", bottom: 0, left: "75%", width: "25%", height: "calc(60px + env(safe-area-inset-bottom, 0px))" },
     tooltipPosition: "above-nav",
   },
   {
@@ -132,7 +125,7 @@ export default function TutorialOverlay({ onDone, tab, setTab }) {
   const isLast = step === STEPS.length - 1;
 
   useEffect(() => {
-    if (step === 5) return;
+    if (step >= 4) return;
     const idx = NAV_TAB_ORDER.indexOf(tab);
     if (idx === -1) return;
     if (idx !== step) setStep(idx);
@@ -145,7 +138,7 @@ export default function TutorialOverlay({ onDone, tab, setTab }) {
     }
     const next = step + 1;
     setStep(next);
-    if (next < 5) setTab(STEPS[next].id);
+    if (next < 4) setTab(STEPS[next].id);
   }
 
   const tooltipStyle =

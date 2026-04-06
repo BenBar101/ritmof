@@ -84,7 +84,7 @@ export const APP_ICON_URL = (() => {
 const DB_NAME = IS_DEV ? 'ritmol_tb_dev' : 'ritmol_tb'
 const OLD_IDB_NAME = IS_DEV ? 'ritmol_dev' : 'ritmol' // legacy idb.js store for migration reads
 
-// ── AI API key (sessionStorage only — never in IDB or state) ──
+// ── Optional Gemini session key (sessionStorage only — never in IDB or state) ──
 // Primary key name is provider-neutral; legacy "gemini" keys are migrated on read.
 const AI_SESSION_KEY = IS_DEV ? 'ritmol_dev_ai_api_key' : 'ritmol_ai_api_key'
 const LEGACY_GEMINI_SESSION_KEY = IS_DEV ? 'ritmol_dev_gemini_key' : 'ritmol_gemini_key'

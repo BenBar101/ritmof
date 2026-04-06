@@ -71,7 +71,8 @@ export const SYNC_KEYS = [
   "jv_weekly_missions", "jv_weekly_mission_date",
   "jv_monthly_missions", "jv_monthly_mission_date",
   "jv_healthkit_enabled", "jv_google_auth_connected", "jv_notifications_enabled",
-  "jv_last_ai_notif_batch", "jv_ai_notif_log", "jv_lecture_quick_log_pending",
+  "jv_last_ai_notif_batch", "jv_ai_notif_log",   "jv_lecture_quick_log_pending",
+  "jv_game_meta",
 ];
 
 // ── Helpers (used by sanitizeChatMessages and isSafeSyncValue) ─────
@@ -335,6 +336,7 @@ function applyPayload(payload) {
 //   4. Update SyncPayloadSchema _schemaVersion .max() in schemas.js to match
 const COMPLETED_MIGRATIONS = new Set([
   1,
+  2,
 ]);
 
 // ── Schema migration (V1 → V2, etc.) ─────────────────────────────
@@ -362,6 +364,12 @@ function migratePayload(p) {
     out._schemaVersion = fromVersion + 1;
     if (fromVersion === 1) {
       // V1 → V2: new optional IDB keys (health, OAuth, notifications, AI log) default on read.
+    }
+    if (fromVersion === 2) {
+      // V2 → V3: optional mechanics metadata (offline achievements inspector / future flags).
+      if (!out.jv_game_meta || typeof out.jv_game_meta !== "object") {
+        out = { ...out, jv_game_meta: { staticContentVersion: 1, lastEvaluatedAchievementIds: [], lastEvaluatedAt: null } };
+      }
     }
     // Add further 'if (fromVersion === N)' blocks for each future version step.
   }
@@ -450,7 +458,7 @@ export const SyncManager = {
         throw new Error("DROPBOX_OFFLINE");
       }
       await ensureFolderExists();
-      const payload = buildPayload(true /* include AI API key for Dropbox backup */);
+      const payload = buildPayload(true /* include legacy Gemini session key for Dropbox backup */);
       const text = JSON.stringify(payload, null, 2);
       assertPayloadSize(text);
       const byteSize = new TextEncoder().encode(text).length;

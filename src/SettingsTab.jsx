@@ -1,14 +1,14 @@
 import React, { useState, useEffect, useRef } from "react";
 import { Capacitor } from "@capacitor/core";
 import { useAppContext } from "./context/AppContext";
-import { getAiApiKey, setAiApiKey, getMaxDateSeen, IS_DEV } from "./utils/db";
+import { setAiApiKey, getMaxDateSeen } from "./utils/db";
 import { DATA_DISCLOSURE_SEEN_KEY, THEME_KEY } from "./constants";
-import { clearRateLimitWindow } from "./api/gemini";
 import { SyncManager } from "./sync/SyncManager";
 import { LocalNotifications } from "@capacitor/local-notifications";
 import { startGoogleOAuthFlow, revokeGoogleAuth } from "./api/googleAuth";
 import { idbClearAll, idbSet } from "./utils/db";
 import { RitmolHealth } from "./plugins/RitmolHealth.js";
+import { ACHIEVEMENT_CATALOG } from "./game/achievementCatalog.js";
 
 // Keys belonging to this app but not starting with "jv_" — must be wiped on full reset.
 const APP_CONSTANT_KEYS = new Set([DATA_DISCLOSURE_SEEN_KEY, THEME_KEY, "jv_last_synced"]);
@@ -25,7 +25,6 @@ const HEALTHKIT_SETTINGS =
 
 export default function SettingsTab() {
   const {
-    rehydrate,
     showBanner,
     state, setState,
     syncStatus, lastSynced, dropboxConnected,
@@ -37,7 +36,6 @@ export default function SettingsTab() {
 
   const importRef = useRef(null);
   const [importLoading, setImportLoading] = useState(false);
-  const currentAiApiKey = getAiApiKey();
   const googleClientId = (import.meta.env.VITE_GOOGLE_CLIENT_ID || "").trim();
 
   // ── PWA install prompt ────────────────────────────────────────
@@ -72,27 +70,6 @@ export default function SettingsTab() {
   useEffect(() => () => {
     if (confirmResetTimerRef.current) clearTimeout(confirmResetTimerRef.current);
   }, []);
-
-  async function handleChangeAiApiKey() {
-    try {
-      const next = window.prompt(
-        "Enter new AI API key (stored only in this browser tab):",
-        currentAiApiKey || "",
-      );
-      if (next == null) return;
-      const trimmed = next.trim();
-      if (!trimmed) {
-        showBanner("API key not changed.", "info");
-        return;
-      }
-      setAiApiKey(trimmed);
-      clearRateLimitWindow();
-      await rehydrate?.();
-      showBanner("AI API key updated for this session.", "success");
-    } catch {
-      showBanner("Could not update API key.", "alert");
-    }
-  }
 
   async function resetAll() {
     if (!confirmReset) {
@@ -235,6 +212,41 @@ export default function SettingsTab() {
 
       {divider}
 
+      {import.meta.env.DEV && (
+        <>
+          <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+            {sectionHeader("[ DEV — MECHANICS ]")}
+            <div style={{ fontSize: "13px", color: dimColor, ...mono, lineHeight: "1.6" }}>
+              Static catalog vs unlocked rows. Meta v{state.gameMeta?.staticContentVersion ?? 1}
+              {state.gameMeta?.lastEvaluatedAt
+                ? ` · last check ${state.gameMeta.lastEvaluatedAt}`
+                : ""}
+            </div>
+            <div style={{
+              display: "flex", flexDirection: "column", gap: "6px", maxHeight: "260px", overflowY: "auto",
+              border, padding: "10px", fontSize: "12px", ...mono,
+            }}>
+              {ACHIEVEMENT_CATALOG.map((def) => {
+                const have = (state.achievements || []).some((a) => a.id === def.id);
+                return (
+                  <div
+                    key={def.id}
+                    style={{
+                      color: have ? fg : dimColor,
+                      opacity: def.hidden && !have ? 0.55 : 1,
+                    }}
+                  >
+                    {have ? "✓" : "○"} {def.id}
+                    {def.hidden ? " · hidden" : ""}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+          {divider}
+        </>
+      )}
+
       {/* ── INSTALL APP ── */}
       {!isStandalone && (
         <>
@@ -344,13 +356,13 @@ export default function SettingsTab() {
 
       {divider}
 
-      {/* ── AI CONFIG ── */}
-      <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
-        {sectionHeader("[ AI CONFIG ]")}
-        {googleClientId ? (
-          <>
+      {/* ── GOOGLE (Calendar sync) ── */}
+      {googleClientId ? (
+        <>
+          <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+            {sectionHeader("[ GOOGLE ]")}
             <div style={{ fontSize: "14px", color: dimColor, ...mono, lineHeight: "1.6" }}>
-              {state?.googleAuthConnected ? "Google account connected for AI." : "Connect Google for AI (OAuth)."}
+              {state?.googleAuthConnected ? "Google connected — use Profile → Calendar to sync." : "OAuth for Google Calendar (optional)."}
             </div>
             {state?.googleAuthConnected ? (
               <button type="button" onClick={() => { revokeGoogleAuth(); showBanner("Google disconnected.", "info"); }}
@@ -363,22 +375,10 @@ export default function SettingsTab() {
                 CONNECT GOOGLE
               </button>
             )}
-          </>
-        ) : (
-          <button type="button" onClick={handleChangeAiApiKey}
-            style={{ padding: "12px", border, background: "transparent", color: fg, ...mono, fontSize: "16px", letterSpacing: "1px", cursor: "pointer", minHeight: "48px" }}>
-            CHANGE AI API KEY
-          </button>
-        )}
-        {IS_DEV && (
-          <div style={{ border: "2px dashed #555", padding: "10px 12px", fontSize: "12px", color: "#ccc", ...mono, lineHeight: "1.6", wordBreak: "break-all" }}>
-            <div style={{ fontSize: "11px", letterSpacing: "2px", marginBottom: "4px", fontWeight: "bold" }}>DEV ONLY — CURRENT AI API KEY</div>
-            <div>{currentAiApiKey || "(none set)"}</div>
           </div>
-        )}
-      </div>
-
-      {divider}
+          {divider}
+        </>
+      ) : null}
 
       {/* ── HEALTH (iOS native) ── */}
       {HEALTHKIT_SETTINGS && (

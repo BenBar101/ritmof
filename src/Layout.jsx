@@ -145,7 +145,6 @@ export function BottomNav({ tab, setTab, theme = "dark" }) {
     { id: "home", icon: "⌂", label: "HOME" },
     { id: "habits", icon: "◉", label: "HABITS" },
     { id: "tasks", icon: "▣", label: "TASKS" },
-    { id: "chat", icon: "◈", label: "AI" },
     { id: "profile", icon: "§", label: "PROFILE" },
   ];
 

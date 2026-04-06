@@ -1,10 +1,8 @@
 import { useState, useMemo, useEffect } from "react";
 import { STYLE_CSS } from "./constants";
 import { sanitizeForPrompt } from "./api/systemPrompt";
-import { getAiApiKey } from "./utils/db";
 import { isAuthenticated } from "./api/dropbox";
 import { requestGcalAccessToken } from "./api/gcal";
-import { isGoogleAuthConnected, startGoogleOAuthFlow } from "./api/googleAuth";
 import { RitmolHealth } from "./plugins/RitmolHealth.js";
 import GeometricCorners from "./GeometricCorners";
 
@@ -72,7 +70,7 @@ function DropboxOnboardingStep({ connectDropbox, onSkip, onAdvance }) {
     } catch (e) {
       setConnecting(false);
       if (e?.message === "DROPBOX_NOT_CONFIGURED") {
-        setConnectError("Dropbox is not configured in this build. Skip and enter your API key manually.");
+        setConnectError("Dropbox is not configured in this build. You can skip and sync manually later.");
       } else {
         setConnectError("Could not start Dropbox connection. Try again.");
       }
@@ -99,8 +97,7 @@ function DropboxOnboardingStep({ connectDropbox, onSkip, onAdvance }) {
     <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
       <div style={{ fontSize: "15px", color: "#fff", lineHeight: "1.7" }}>
         Connect Dropbox to sync your data across devices and back it up automatically.
-        Your AI API key will be stored securely in your Dropbox — configure once,
-        use everywhere.
+        Your progress stays in your own file — configure once, use everywhere.
       </div>
       <button
         type="button"
@@ -259,149 +256,6 @@ function GCalOnboardingStep({ onSkip, onAdvance, profile, onClientIdChange }) {
   );
 }
 
-
-export function AiApiKeySetupScreen({ onSave }) {
-  const [key, setKey]           = useState("");
-  const [showKey, setShowKey]   = useState(false);
-  const [error, setError]       = useState("");
-
-  const mono = { fontFamily: "'Share Tech Mono', monospace" };
-
-  // Format-only validation — no network ping needed.
-  // The key will be tested naturally on first real AI use.
-  const formatOk = /^AIza[A-Za-z0-9_-]{20,60}$/.test(key.trim());
-
-  function handleSave() {
-    const trimmed = key.trim();
-    if (!formatOk) {
-      setError("Key must start with AIza and be 24–64 characters.");
-      return;
-    }
-    setError("");
-    onSave(trimmed);
-  }
-
-  // Row helper for the "where it goes" disclosure table
-  function InfoRow({ icon, text }) {
-    return (
-      <div style={{ display: "flex", gap: "10px", alignItems: "flex-start" }}>
-        <span style={{ ...mono, fontSize: "14px", color: "#fff", flexShrink: 0, lineHeight: "1.6" }}>{icon}</span>
-        <span style={{ ...mono, fontSize: "13px", color: "#fff", lineHeight: "1.6" }}>{text}</span>
-      </div>
-    );
-  }
-
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
-
-      {/* ── Step-by-step guide ── */}
-      <div style={{ border: "2px solid #fff", padding: "14px", display: "flex", flexDirection: "column", gap: "10px" }}>
-        <div style={{ ...mono, fontSize: "11px", letterSpacing: "3px", color: "#fff", fontWeight: "bold", marginBottom: "2px" }}>
-          HOW TO GET A KEY
-        </div>
-        {[
-          ["1", "Open", "Google AI Studio (API keys)", "https://aistudio.google.com/apikey"],
-          ["2", "Click", "Create API key", null],
-          ["3", "Copy the key and paste it below", null, null],
-        ].map(([num, prefix, label, href]) => (
-          <div key={num} style={{ display: "flex", gap: "10px", alignItems: "center" }}>
-            <span style={{
-              ...mono, fontSize: "11px", fontWeight: "bold", color: "#000",
-              background: "#fff", width: "20px", height: "20px",
-              display: "flex", alignItems: "center", justifyContent: "center",
-              flexShrink: 0,
-            }}>{num}</span>
-            <span style={{ ...mono, fontSize: "13px", color: "#fff", lineHeight: "1.5" }}>
-              {prefix}{" "}
-              {href
-                ? <a href={href} target="_blank" rel="noopener noreferrer"
-                     style={{ color: "#fff", textDecoration: "underline" }}>{label}</a>
-                : <strong>{label}</strong>
-              }
-            </span>
-          </div>
-        ))}
-      </div>
-
-      {/* ── Key input ── */}
-      <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-        <label style={{ ...mono, fontSize: "11px", letterSpacing: "3px", color: "#fff", fontWeight: "bold" }}>
-          YOUR API KEY
-        </label>
-        <div style={{ display: "flex", gap: "0", border: "2px solid #fff" }}>
-          <input
-            type={showKey ? "text" : "password"}
-            value={key}
-            onChange={(e) => { setKey(e.target.value); setError(""); }}
-            placeholder="AIza..."
-            maxLength={64}
-            autoComplete="off"
-            spellCheck={false}
-            data-testid="api-key"
-            style={{
-              flex: 1, padding: "12px", background: "#000",
-              color: "#fff", fontSize: "15px", ...mono,
-              outline: "none", border: "none",
-              // Mask placeholder dots for password type
-              letterSpacing: showKey ? "0.5px" : "2px",
-            }}
-          />
-          <button
-            type="button"
-            onClick={() => setShowKey((v) => !v)}
-            title={showKey ? "Hide key" : "Show key"}
-            style={{
-              ...mono, fontSize: "13px", padding: "0 12px",
-              background: "none", border: "none", borderLeft: "2px solid #fff",
-              color: "#fff", cursor: "pointer", minWidth: "52px",
-            }}
-          >
-            {showKey ? "HIDE" : "SHOW"}
-          </button>
-        </div>
-      </div>
-
-      {/* ── Transparency disclosure ── */}
-      <div style={{ border: "2px solid #555", padding: "14px", display: "flex", flexDirection: "column", gap: "8px" }}>
-        <div style={{ ...mono, fontSize: "11px", letterSpacing: "3px", color: "#fff", fontWeight: "bold", marginBottom: "2px" }}>
-          WHERE YOUR KEY GOES
-        </div>
-        <InfoRow icon="▸" text="Stored in sessionStorage only — cleared when you close the tab." />
-        <InfoRow icon="▸" text="Saved inside your own sync file (ritmol-data.json) on Dropbox or your local drive. Never on any RITMOL server — there is no server." />
-        <InfoRow icon="▸" text={'RITMOL sends requests to Google Gemini (generativelanguage.googleapis.com) when using a Google-format key. Verify in DevTools → Network.'} />
-        <InfoRow icon="▸" text="Never logged, never sent to analytics, never embedded in bug reports." />
-      </div>
-
-      {/* ── Save button ── */}
-      <button
-        type="button"
-        onClick={handleSave}
-        disabled={!formatOk}
-        data-testid="save-ai-api-key"
-        style={{
-          ...mono, width: "100%", padding: "14px",
-          border: "2px solid #fff",
-          background: !formatOk ? "transparent" : "#fff",
-          color: !formatOk ? "#555" : "#000",
-          fontSize: "15px", letterSpacing: "2px",
-          cursor: !formatOk ? "not-allowed" : "pointer",
-          fontWeight: "bold",
-        }}
-      >
-        SAVE &amp; CONTINUE ›
-      </button>
-
-      {/* ── Error ── */}
-      {error && (
-        <div style={{ ...mono, color: "#fff", fontSize: "14px", fontWeight: "bold", border: "2px solid #fff", padding: "10px" }}>
-          [ ERR ] {error}
-        </div>
-      )}
-
-    </div>
-  );
-}
-
 function HealthKitOnboardingStep({ setState, onAdvance }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
@@ -437,112 +291,6 @@ function HealthKitOnboardingStep({ setState, onAdvance }) {
   );
 }
 
-function GoogleOAuthAiStep({ onAdvance, onSkip }) {
-  const clientId = (typeof import.meta !== "undefined" && import.meta.env?.VITE_GOOGLE_CLIENT_ID || "").trim();
-  const [oauthConnected, setOauthConnected] = useState(() => isGoogleAuthConnected());
-  const [oauthStarted, setOauthStarted] = useState(false);
-  const [connectErr, setConnectErr] = useState("");
-
-  const mono = { fontFamily: "'Share Tech Mono', monospace" };
-
-  useEffect(() => {
-    const id = setInterval(() => {
-      if (isGoogleAuthConnected()) setOauthConnected(true);
-    }, 400);
-    return () => clearInterval(id);
-  }, []);
-
-  // Auto-advance once OAuth is confirmed
-  useEffect(() => {
-    if (!oauthConnected) return;
-    const t = setTimeout(() => onAdvance?.(), 1000);
-    return () => clearTimeout(t);
-  }, [oauthConnected, onAdvance]);
-
-  if (oauthConnected) {
-    return (
-      <div style={{ display: "flex", flexDirection: "column", gap: "16px", alignItems: "center", padding: "8px 0" }}>
-        <div style={{
-          width: "64px", height: "64px",
-          border: "3px solid #fff", display: "flex", alignItems: "center", justifyContent: "center",
-          fontSize: "32px", color: "#fff",
-        }}>✓</div>
-        <div style={{ fontSize: "18px", color: "#fff", letterSpacing: "2px", fontWeight: "bold", ...mono }}>[ GOOGLE CONNECTED ]</div>
-        <div style={{ fontSize: "16px", color: "#fff", textAlign: "center", ...mono }}>CONTINUING…</div>
-      </div>
-    );
-  }
-
-  async function handleOAuth() {
-    setConnectErr("");
-    setOauthStarted(true);
-    try {
-      await startGoogleOAuthFlow(clientId);
-    } catch (e) {
-      setConnectErr(e?.message || "Could not start Google sign-in.");
-    } finally {
-      setOauthStarted(false);
-    }
-  }
-
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-      <div style={{ fontSize: "14px", color: "#fff", lineHeight: "1.7", ...mono }}>
-        Sign in with Google for AI features (same OAuth as Calendar when configured). You can skip and connect later in Profile → Settings.
-      </div>
-
-      <button
-        type="button"
-        onClick={handleOAuth}
-        disabled={oauthStarted}
-        style={{
-          width: "100%", padding: "14px", border: "2px solid #fff",
-          background: oauthStarted ? "transparent" : "#fff",
-          color: oauthStarted ? "#fff" : "#000",
-          ...mono, fontSize: "16px", letterSpacing: "2px",
-          cursor: oauthStarted ? "not-allowed" : "pointer",
-        }}
-      >
-        {oauthStarted ? "OPENING GOOGLE…" : "SIGN IN WITH GOOGLE"}
-      </button>
-
-      {!!getAiApiKey() && (
-        <button
-          type="button"
-          onClick={() => onAdvance?.()}
-          style={{
-            width: "100%", padding: "12px", border: "2px solid #555", background: "transparent", color: "#888",
-            ...mono, fontSize: "13px", letterSpacing: "1px", cursor: "pointer",
-          }}
-        >
-          Continue with existing key from synced data
-        </button>
-      )}
-
-      <div style={{ height: "2px", background: "#fff" }} />
-
-      <button
-        type="button"
-        onClick={onSkip}
-        data-testid="skip-google-ai"
-        style={{
-          width: "100%", padding: "12px", border: "2px solid #fff", background: "transparent", color: "#fff",
-          ...mono, fontSize: "16px", letterSpacing: "1px", cursor: "pointer",
-          minHeight: "56px",
-        }}
-      >
-        SKIP FOR NOW
-      </button>
-
-      {connectErr && (
-        <div style={{ color: "#fff", fontSize: "13px", ...mono, fontWeight: "bold", border: "2px solid #fff", padding: "10px" }}>
-          [ ERR ] {connectErr}
-        </div>
-      )}
-    </div>
-  );
-}
-
 const BASE_URL = (import.meta.env.BASE_URL || "/").replace(/\/$/, "") || "";
 const APP_ICON_URL = BASE_URL ? `${BASE_URL}/icon-192.png` : "/icon-192.png";
 
@@ -551,12 +299,6 @@ export default function Onboarding({ onComplete, connectDropbox, setState, healt
   // needsDropbox is snapshotted once — Dropbox auth navigates away and back,
   // so by the time we're here the auth state is already final.
   const needsDropbox = useMemo(() => !isAuthenticated(), []);
-  // needsAiApiKey updates when Dropbox pulls a key into sessionStorage mid-flow.
-  const [needsAiApiKey, setNeedsAiApiKey] = useState(() => {
-    if (getAiApiKey()) return false;
-    if (isGoogleAuthConnected()) return false;
-    return true;
-  });
 
   const [step, setStep] = useState(0);
   const [form, setForm] = useState({ name: "", major: "", interests: "", semesterGoal: "", gcalClientId: "" });
@@ -573,17 +315,6 @@ export default function Onboarding({ onComplete, connectDropbox, setState, healt
         subtitle: "Connect Dropbox to back up and sync your data across devices.",
         type: "_dropbox",
         style: "ascii",
-        optional: true,
-      });
-    }
-
-    if (needsAiApiKey) {
-      list.push({
-        key: "_ai",
-        title: "AI CONNECTION",
-        subtitle: "Optional: sign in with Google, or add an API key later in Settings.",
-        type: "_ai",
-        style: "geometric",
         optional: true,
       });
     }
@@ -650,7 +381,7 @@ export default function Onboarding({ onComplete, connectDropbox, setState, healt
     }
 
     return list;
-  }, [needsDropbox, needsAiApiKey, healthKitEnabled]);
+  }, [needsDropbox, healthKitEnabled]);
 
   const current = steps[step];
 
@@ -686,13 +417,7 @@ export default function Onboarding({ onComplete, connectDropbox, setState, healt
 
   function advance() {
     setError("");
-    // Re-check whether we still need the AI step — Dropbox may have pulled
-    // a key into sessionStorage while the user was on that step.
-    const keyNowPresent = !!getAiApiKey();
-    const googleConnected = isGoogleAuthConnected();
-    if (keyNowPresent || googleConnected) setNeedsAiApiKey(false);
-    const nextListLength = steps.length - ((keyNowPresent || googleConnected) && needsAiApiKey ? 1 : 0);
-    if (step < nextListLength - 1) {
+    if (step < steps.length - 1) {
       setStep(step + 1);
     } else {
       onComplete(sanitizeForm(form));
@@ -700,7 +425,7 @@ export default function Onboarding({ onComplete, connectDropbox, setState, healt
   }
 
   function handleNext() {
-    if (current.type === "_dropbox" || current.type === "_ai" || current.type === "_gcal" || current.type === "_healthkit") {
+    if (current.type === "_dropbox" || current.type === "_gcal" || current.type === "_healthkit") {
       advance();
       return;
     }
@@ -766,10 +491,6 @@ export default function Onboarding({ onComplete, connectDropbox, setState, healt
           />
         )}
 
-        {current.type === "_ai" && (
-          <GoogleOAuthAiStep onAdvance={advance} onSkip={advance} />
-        )}
-
         {current.type === "_gcal" && (
           <GCalOnboardingStep
             profile={null}
@@ -783,7 +504,7 @@ export default function Onboarding({ onComplete, connectDropbox, setState, healt
           <HealthKitOnboardingStep setState={setState} onAdvance={advance} />
         )}
 
-        {current.type !== "_dropbox" && current.type !== "_ai" && current.type !== "_gcal" && current.type !== "_healthkit" && (
+        {current.type !== "_dropbox" && current.type !== "_gcal" && current.type !== "_healthkit" && (
           <>
             <label style={{ fontSize: "16px", color: "#fff", letterSpacing: "2px", display: "block", marginBottom: "6px", marginTop: "0", fontFamily: "'Share Tech Mono', monospace", fontWeight: "bold" }}>
               {current.label}

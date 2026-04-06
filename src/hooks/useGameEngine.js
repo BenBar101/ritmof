@@ -19,11 +19,19 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { useCallback, useRef, useEffect } from "react";
-import { storageKey, todayUTC, localDateFromUTC, getMaxDateSeen, idbGet, getAiApiKey } from "../utils/db";
+import { storageKey, todayUTC, localDateFromUTC, getMaxDateSeen, idbGet } from "../utils/db";
 import { getLevel, getRank, getXpPerLevel } from "../utils/xp";
-import { updateDynamicCosts } from "../api/dynamicCosts";
 import { sanitizeForPrompt } from "../api/systemPrompt";
 import { AI_DAILY_TOKEN_LIMIT, GEMINI_AI_XP_LIMIT, MAX_HABITS_TOTAL } from "../config.js";
+import { DEFAULT_GAME_META } from "../constants";
+import {
+  localWeekKey,
+  localMonthKey,
+  localWeekStartDateStr,
+  localMonthStartDateStr,
+  missionProgressInRange,
+} from "../utils/missionPeriod.js";
+import { evaluateAchievementCatalog, getAchievementDef } from "../game/achievementCatalog.js";
 
 const TOKEN_WARN_THRESHOLDS = [0.5, 0.8, 0.99];
 const MAX_XP_PER_CMD        = 500;
@@ -55,23 +63,8 @@ function sanitizeStr(s, max = MAX_STR_LEN) {
   return s.replace(CTRL_RE, "").replace(BIDI_RE, "").replace(INJECT_RE, "").slice(0, max);
 }
 
-async function resolveAiApiKeyFromRef(getAiTokenRef) {
-  const fn = getAiTokenRef?.current;
-  if (typeof fn === "function") {
-    try {
-      const k = await fn();
-      if (k && String(k).trim()) return String(k).trim();
-    } catch { /* fall through to raw key */ }
-  }
-  const g = getAiApiKey();
-  return g && String(g).trim() ? String(g).trim() : "";
-}
-
 // ─────────────────────────────────────────────────────────────
-export function useGameEngine({ setState, latestStateRef, showBanner, showToast, setLevelUpData, getAiToken }) {
-  const getAiTokenRef = useRef(getAiToken);
-  useEffect(() => { getAiTokenRef.current = getAiToken; }, [getAiToken]);
-
+export function useGameEngine({ setState, latestStateRef, showBanner, showToast, setLevelUpData }) {
   // ── Refs that must survive render cycles ─────────────────
   // aiXpTodayRef: updated synchronously so concurrent executeCommands
   // calls in the same event loop all see the accumulated total [Fix #5]
@@ -80,6 +73,7 @@ export function useGameEngine({ setState, latestStateRef, showBanner, showToast,
   const lastLevelUpXpRef = useRef(-1);
   // Action debounce map (habitId → locked)
   const actionLocksRef   = useRef(new Set());
+  const tryStaticAchievementsRef = useRef(() => {});
   const _engineMountedRef = useRef(true);
   useEffect(() => { _engineMountedRef.current = true; return () => { _engineMountedRef.current = false; }; }, []);
 
@@ -106,17 +100,12 @@ export function useGameEngine({ setState, latestStateRef, showBanner, showToast,
         const pct = Math.round(threshold * 100);
         if (!newWarned.includes(pct) && prevTokens < AI_DAILY_TOKEN_LIMIT * threshold && newTokens >= AI_DAILY_TOKEN_LIMIT * threshold) {
           newWarned.push(pct);
-          if (threshold >= 0.99) {
-            setTimeout(() => showBanner("SYSTEM: Neural energy depleted. AI functions offline until tomorrow.", "alert"), 0);
-          } else {
-            setTimeout(() => showBanner(`SYSTEM: Neural energy at ${pct}%. ${threshold >= 0.8 ? "Conserve wisely." : ""}`, "warning"), 0);
-          }
         }
       });
       updated.warnedAt = newWarned;
       return { ...s, tokenUsage: updated };
     });
-  }, [setState, showBanner]);
+  }, [setState]);
 
   const trackTokensRef = useRef(trackTokens);
   // trackTokensRef is intentionally updated via the ref so it always holds the latest version without being a dep of other callbacks
@@ -192,123 +181,18 @@ export function useGameEngine({ setState, latestStateRef, showBanner, showToast,
 
       if (didLevelUp) {
         lastLevelUpXpRef.current = newXP;
-        const snapshot = { ...s, xp: newXP };
         setTimeout(() => {
           if (!_engineMountedRef.current) return;
           setLevelUpData((prev) => {
             if (prev && prev.level >= newLevel) return prev;
             return { level: newLevel, rank: getRank(newLevel) };
           });
-          if (typeof navigator === "undefined" || navigator.onLine !== false) {
-            (async () => {
-              const key = await resolveAiApiKeyFromRef(getAiTokenRef);
-              if (!key) return;
-              return updateDynamicCosts(key, snapshot, "level_up", trackTokensRef.current);
-            })()
-              .then((costs) => {
-                if (costs && Object.keys(costs).length && _engineMountedRef.current) {
-                  setState((prev) => ({ ...prev, dynamicCosts: { ...prev.dynamicCosts, ...costs } }));
-                }
-              })
-              .catch((err) => {
-                if (import.meta.env.DEV) {
-                  console.warn("[useGameEngine] updateDynamicCosts (level_up) failed:", err?.message || err);
-                }
-              });
-          }
         }, 300);
       }
       return { ...s, xp: newXP };
     });
+    queueMicrotask(() => { tryStaticAchievementsRef.current(); });
   }, [setState, setLevelUpData]);
-
-  // ── Mission checker ───────────────────────────────────────
-  // [A-3] pendingData object prevents double-toasts in React Strict Mode
-  const checkMissions = useCallback((hintType = null) => {
-    const pendingData = { toasts: [], levelUp: null };
-
-    setState((s) => {
-      const t = localDateFromUTC();
-      if (!s.dailyMissions) return s;
-      const todayLog = s.habitLog[t] || [];
-      let bonusXP = 0;
-      const toastsThisRun = [];
-
-      const updated = s.dailyMissions.map((m) => {
-        if (m.done) return m;
-        if (hintType && m.type !== hintType) return m;
-
-        let progress = 0;
-        if (m.type === "habits")  progress = todayLog.length;
-        if (m.type === "session") progress = (s.sessions || []).filter((ss) => ss.date === t).length;
-        if (m.type === "task")    progress = (s.tasks || []).filter((tk) => tk.doneDate === t).length;
-        if (m.type === "chat") {
-          progress = (s.chatHistory || []).some(
-            (msg) => msg.role === "user" && typeof msg.date === "string" &&
-                     /^\d{4}-\d{2}-\d{2}$/.test(msg.date) && msg.date === t
-          ) ? 1 : 0;
-        }
-
-        if (progress >= m.target) {
-          const missionXp = typeof m.xp === "number" && isFinite(m.xp) && m.xp > 0
-            ? Math.min(m.xp, 2000) : 0;
-          bonusXP += missionXp;
-          toastsThisRun.push({ icon: "◈", title: "Mission Complete", desc: m.desc, xp: missionXp, rarity: "common" });
-          return { ...m, done: true };
-        }
-        return m;
-      });
-
-      const safeBonus = Math.min(bonusXP > 0 && isFinite(bonusXP) ? bonusXP : 0, 10_000);
-      const newXP     = Math.min(s.xp + safeBonus, 10_000_000);
-
-      if (safeBonus > 0) {
-        const xpPl    = getXpPerLevel(s);
-        const effectiveOldXp = lastLevelUpXpRef.current > 0 ? Math.max(s.xp, lastLevelUpXpRef.current) : s.xp;
-        const oldLevel = getLevel(effectiveOldXp, xpPl);
-        const newLevel = getLevel(newXP, xpPl);
-        if (newLevel > oldLevel) {
-          pendingData.levelUp = { level: newLevel, rank: getRank(newLevel), snapshot: { ...s, xp: newXP, dailyMissions: updated } };
-        }
-      }
-      pendingData.toasts = toastsThisRun;
-      return { ...s, dailyMissions: updated, xp: newXP };
-    });
-
-    queueMicrotask(() => {
-      if (!_engineMountedRef.current) return;
-      pendingData.toasts.forEach((t, i) => setTimeout(() => showToast(t), 200 + i * 5500));
-      if (pendingData.levelUp) {
-        const { level, rank, snapshot } = pendingData.levelUp;
-        const newXP = snapshot.xp;
-        lastLevelUpXpRef.current = newXP;
-        setTimeout(() => {
-          if (!_engineMountedRef.current) return;
-          setLevelUpData((prev) => {
-            if (prev && prev.level >= level) return prev;
-            return { level, rank };
-          });
-          if (typeof navigator === "undefined" || navigator.onLine !== false) {
-            (async () => {
-              const key = await resolveAiApiKeyFromRef(getAiTokenRef);
-              if (!key) return;
-              return updateDynamicCosts(key, snapshot, "level_up", trackTokensRef.current);
-            })()
-              .then((costs) => {
-                if (costs && Object.keys(costs).length && _engineMountedRef.current) {
-                  setState((prev) => ({ ...prev, dynamicCosts: { ...prev.dynamicCosts, ...costs } }));
-                }
-              })
-              .catch((err) => {
-                if (import.meta.env.DEV) {
-                  console.warn("[useGameEngine] updateDynamicCosts (mission level_up) failed:", err?.message || err);
-                }
-              });
-          }
-        }, 300);
-      }
-    });
-  }, [setState, showToast, setLevelUpData]);
 
   // ── Achievement unlock ────────────────────────────────────
   const unlockAchievement = useCallback((data, skipXP = false) => {
@@ -321,6 +205,161 @@ export function useGameEngine({ setState, latestStateRef, showBanner, showToast,
     });
     if (!skipXP && data.xp > 0) queueMicrotask(() => awardXP(data.xp, null, false));
   }, [setState, showToast, awardXP]);
+
+  const tryStaticAchievements = useCallback(() => {
+    setTimeout(() => {
+      const s = latestStateRef?.current;
+      if (!s) return;
+      const xpPl = getXpPerLevel(s);
+      const ids = evaluateAchievementCatalog(s, xpPl);
+      for (const id of ids) {
+        if ((s.achievements || []).some((a) => a.id === id)) continue;
+        const def = getAchievementDef(id);
+        if (!def) continue;
+        unlockAchievement({
+          id: def.id,
+          title: def.title,
+          desc: def.desc,
+          flavorText: def.flavorText,
+          icon: def.icon || "◈",
+          xp: def.xp ?? 0,
+          rarity: def.rarity || "common",
+        });
+      }
+      setState((prev) => ({
+        ...prev,
+        gameMeta: {
+          ...(prev.gameMeta || DEFAULT_GAME_META),
+          lastEvaluatedAchievementIds: ids,
+          lastEvaluatedAt: new Date().toISOString(),
+        },
+      }));
+    }, 0);
+  }, [latestStateRef, unlockAchievement, setState]);
+
+  useEffect(() => { tryStaticAchievementsRef.current = tryStaticAchievements; }, [tryStaticAchievements]);
+
+  // ── Mission checker ───────────────────────────────────────
+  // [A-3] pendingData object prevents double-toasts in React Strict Mode
+  const checkMissions = useCallback((hintType = null) => {
+    const pendingData = { toasts: [], levelUp: null };
+
+    setState((s) => {
+      const t = localDateFromUTC();
+      const todayLog = s.habitLog[t] || [];
+      let bonusXP = 0;
+      const toastsThisRun = [];
+
+      let dailyMissions = s.dailyMissions;
+      if (dailyMissions) {
+        dailyMissions = dailyMissions.map((m) => {
+          if (m.done) return m;
+          if (hintType && m.type !== hintType) return m;
+
+          let progress = 0;
+          if (m.type === "habits")  progress = todayLog.length;
+          if (m.type === "session") progress = (s.sessions || []).filter((ss) => ss.date === t).length;
+          if (m.type === "task")    progress = (s.tasks || []).filter((tk) => tk.doneDate === t).length;
+          if (m.type === "chat") {
+            progress = (s.chatHistory || []).some(
+              (msg) => msg.role === "user" && typeof msg.date === "string" &&
+                       /^\d{4}-\d{2}-\d{2}$/.test(msg.date) && msg.date === t
+            ) ? 1 : 0;
+          }
+
+          if (progress >= m.target) {
+            const missionXp = typeof m.xp === "number" && isFinite(m.xp) && m.xp > 0
+              ? Math.min(m.xp, 2000) : 0;
+            bonusXP += missionXp;
+            toastsThisRun.push({ icon: "◈", title: "Mission Complete", desc: m.desc, xp: missionXp, rarity: "common" });
+            return { ...m, done: true };
+          }
+          return m;
+        });
+      }
+
+      const wk = localWeekKey();
+      const wkStart = localWeekStartDateStr();
+      let weeklyMissions = s.weeklyMissions;
+      if (Array.isArray(weeklyMissions) && s.lastWeeklyMissionDate === wk) {
+        weeklyMissions = weeklyMissions.map((m) => {
+          if (m.done) return m;
+          if (hintType && m.type !== hintType) return m;
+          const progress = missionProgressInRange(m, s, wkStart, t);
+          if (progress >= m.target) {
+            const missionXp = typeof m.xp === "number" && isFinite(m.xp) && m.xp > 0
+              ? Math.min(m.xp, 2000) : 0;
+            bonusXP += missionXp;
+            toastsThisRun.push({ icon: "◈", title: "Weekly mission complete", desc: m.desc, xp: missionXp, rarity: "common" });
+            return { ...m, done: true };
+          }
+          return m;
+        });
+      }
+
+      const mo = localMonthKey();
+      const moStart = localMonthStartDateStr();
+      let monthlyMissions = s.monthlyMissions;
+      if (Array.isArray(monthlyMissions) && s.lastMonthlyMissionDate === mo) {
+        monthlyMissions = monthlyMissions.map((m) => {
+          if (m.done) return m;
+          if (hintType && m.type !== hintType) return m;
+          const progress = missionProgressInRange(m, s, moStart, t);
+          if (progress >= m.target) {
+            const missionXp = typeof m.xp === "number" && isFinite(m.xp) && m.xp > 0
+              ? Math.min(m.xp, 2000) : 0;
+            bonusXP += missionXp;
+            toastsThisRun.push({ icon: "◈", title: "Monthly mission complete", desc: m.desc, xp: missionXp, rarity: "common" });
+            return { ...m, done: true };
+          }
+          return m;
+        });
+      }
+
+      const safeBonus = Math.min(bonusXP > 0 && isFinite(bonusXP) ? bonusXP : 0, 10_000);
+      const newXP     = Math.min(s.xp + safeBonus, 10_000_000);
+
+      if (safeBonus > 0) {
+        const xpPl    = getXpPerLevel(s);
+        const effectiveOldXp = lastLevelUpXpRef.current > 0 ? Math.max(s.xp, lastLevelUpXpRef.current) : s.xp;
+        const oldLevel = getLevel(effectiveOldXp, xpPl);
+        const newLevel = getLevel(newXP, xpPl);
+        if (newLevel > oldLevel) {
+          pendingData.levelUp = {
+            level: newLevel,
+            rank: getRank(newLevel),
+            snapshot: { ...s, xp: newXP, dailyMissions, weeklyMissions, monthlyMissions },
+          };
+        }
+      }
+      pendingData.toasts = toastsThisRun;
+      return {
+        ...s,
+        dailyMissions,
+        weeklyMissions,
+        monthlyMissions,
+        xp: newXP,
+      };
+    });
+
+    queueMicrotask(() => {
+      if (!_engineMountedRef.current) return;
+      pendingData.toasts.forEach((toast, i) => setTimeout(() => showToast(toast), 200 + i * 5500));
+      if (pendingData.levelUp) {
+        const { level, rank } = pendingData.levelUp;
+        const newXP = pendingData.levelUp.snapshot.xp;
+        lastLevelUpXpRef.current = newXP;
+        setTimeout(() => {
+          if (!_engineMountedRef.current) return;
+          setLevelUpData((prev) => {
+            if (prev && prev.level >= level) return prev;
+            return { level, rank };
+          });
+        }, 300);
+      }
+      tryStaticAchievements();
+    });
+  }, [setState, showToast, setLevelUpData, tryStaticAchievements]);
 
   // ── Habit logger ──────────────────────────────────────────
   const logHabit = useCallback((habitId) => {

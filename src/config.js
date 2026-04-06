@@ -25,12 +25,12 @@ export const GEMINI_REQUEST_TIMEOUT_MS = 30_000;
 // multi-tab headroom. Update if you upgrade to a paid tier.
 export const GEMINI_RATE_LIMIT_CAP = 12;
 export const GEMINI_RATE_LIMIT_WINDOW_MS = 60_000;
-// GEMINI_DAILY_TOKEN_LIMIT: soft client-side cap for "neural energy".
+// GEMINI_DAILY_TOKEN_LIMIT: soft client-side daily cap for Gemini usage tokens.
 // Counts **Gemini API usage tokens** (sum of usageMetadata totals per UTC day) — the
 // same units Google reports; not a generic cross-provider metric.
 // Google free tier is ~1M TPM / 1500 RPD; raise when you upgrade quotas.
 export const GEMINI_DAILY_TOKEN_LIMIT = 80_000;
-/** Daily budget for neural energy — same value and units as GEMINI_DAILY_TOKEN_LIMIT. */
+/** Same value and units as GEMINI_DAILY_TOKEN_LIMIT (legacy alias). */
 export const AI_DAILY_TOKEN_LIMIT = GEMINI_DAILY_TOKEN_LIMIT;
 export const GEMINI_AI_XP_LIMIT = 5_000;
 // Budget for AI notification generation calls (per call, not per day).
@@ -63,7 +63,7 @@ export const DROPBOX_CREATE_FOLDER_URL = "https://api.dropboxapi.com/2/files/cre
 // Bump SYNC_SCHEMA_VERSION when the ritmol-data.json payload shape changes
 // in a backward-incompatible way. Also update the Zod schema ceiling in
 // schemas.js. Old files with a lower version are rejected on Pull.
-export const SYNC_SCHEMA_VERSION = 2;
+export const SYNC_SCHEMA_VERSION = 3;
 export const SYNC_FILE_MAX_BYTES = 10 * 1024 * 1024; // 10 MB
 
 // ── Notifications ──────────────────────────────────────────────

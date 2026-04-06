@@ -24,7 +24,7 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { storageKey, idbSet, localDateFromUTC } from "../utils/db";
 import { initState } from "../utils/state";
-import { DEFAULT_XP_PER_LEVEL, DEFAULT_GACHA_COST, DEFAULT_STREAK_SHIELD_COST } from "../constants";
+import { DEFAULT_XP_PER_LEVEL, DEFAULT_GACHA_COST, DEFAULT_STREAK_SHIELD_COST, DEFAULT_GAME_META } from "../constants";
 import { WIDGET_UPDATE_DEBOUNCE_MS } from "../config.js";
 import { getLevel, getRank } from "../utils/xp";
 import { RitmolWidget } from "../plugins/RitmolWidget.js";
@@ -83,6 +83,7 @@ function persistState(s) {
     idbSet(storageKey("jv_last_ai_notif_batch"), s.lastAiNotificationBatch ?? null);
     idbSet(storageKey("jv_ai_notif_log"), s.aiNotificationLog ?? {});
     idbSet(storageKey("jv_lecture_quick_log_pending"), s.lectureQuickLogPending ?? {});
+    idbSet(storageKey("jv_game_meta"), s.gameMeta ?? null);
     _persistErrorCount = 0;
   } catch (e) {
     _persistErrorCount += 1;
@@ -161,6 +162,7 @@ export function useAppState() {
             lastAiNotificationBatch: null,
             aiNotificationLog: {},
             lectureQuickLogPending: {},
+            gameMeta: { ...DEFAULT_GAME_META },
           };
           latestStateRef.current = emergency;
           _setState(emergency);

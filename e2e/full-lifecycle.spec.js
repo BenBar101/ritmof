@@ -1,12 +1,8 @@
-/* global process */
 import { test, expect } from '@playwright/test';
 
-test('FULL LIFECYCLE (real persistence + sync + attack)', async ({ page }) => {
-  // Onboarding validates the key format locally (no network ping).
-  // Gemini endpoint is mocked below, so this is only for syntactic validity.
-  const TEST_AI_API_KEY =
-    process.env.AI_TEST_API_KEY || process.env.GEMINI_TEST_API_KEY || `AIza${'A'.repeat(32)}`;
+// Offline-first: no Gemini route mock — the app does not call generativelanguage.googleapis.com in this flow.
 
+test('FULL LIFECYCLE (real persistence + sync + attack)', async ({ page }) => {
   const prohibited429Patterns = [
     /Gemini 429/i,
     /RESOURCE_EXHAUSTED/i,
@@ -36,90 +32,16 @@ test('FULL LIFECYCLE (real persistence + sync + attack)', async ({ page }) => {
     }
   });
 
-  // Mock Gemini API so this E2E is deterministic and does not depend on
-  // your current Gemini quota / RPM settings.
-  await page.route(
-    'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent',
-    async (route) => {
-      const req = route.request();
-
-      let postData = {};
-      try { postData = req.postDataJSON(); } catch { /* ignore */ }
-
-      const contents = Array.isArray(postData?.contents) ? postData.contents : [];
-      const systemInstruction = postData?.systemInstruction?.parts?.[0]?.text ?? '';
-      const userText = contents?.[0]?.parts?.[0]?.text ?? '';
-
-      const mkGeminiResponse = (text) => ({
-        candidates: [
-          {
-            finishReason: 'STOP',
-            content: { role: 'model', parts: [{ text }] },
-          },
-        ],
-        usageMetadata: {
-          totalTokenCount: 123,
-          promptTokenCount: 80,
-          candidatesTokenCount: 43,
-        },
-      });
-
-      // Identify call intent by prompt fragments.
-      // - Missions: contains "Reply JSON array only"
-      // - Dynamic costs: contains "adjusting economy parameters"
-      // - Chat: expects JSON { message, commands: [] }
-      let text;
-      if (
-        userText.includes('Reply JSON array only') ||
-        systemInstruction.includes('Reply JSON array only')
-      ) {
-        const items = Array.from({ length: 8 }).map((_, i) => ({
-          id: `dummy_${i}`,
-          desc: `Mock mission ${i + 1}`,
-          type: ['habits', 'session', 'task', 'streak'][i % 4],
-          target: 1 + (i % 3),
-          xp: [25, 50, 75, 100][i % 4],
-        }));
-        text = JSON.stringify(items);
-      } else if (
-        userText.includes('adjusting economy parameters') ||
-        systemInstruction.includes('adjusting economy parameters')
-      ) {
-        text = JSON.stringify({
-          xpPerLevel: 1000,
-          gachaCost: 100,
-          streakShieldCost: 200,
-        });
-      } else {
-        text = JSON.stringify({
-          message: 'Mock Gemini response (success).',
-          commands: [],
-        });
-      }
-
-      return route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify(mkGeminiResponse(text)),
-      });
-    },
-  );
-
   // ---------- 1. FIRST LAUNCH ----------
   await page.goto('/');
 
   await expect(
-    page.locator('[data-testid="skip-dropbox"], [data-testid="api-key"], [data-testid="name"]'),
+    page.locator('[data-testid="skip-dropbox"], [data-testid="skip-calendar"], [data-testid="name"]'),
   ).toBeVisible({ timeout: 15000 });
 
   // ---------- 2. ONBOARDING ----------
   const skipDropbox = page.locator('[data-testid="skip-dropbox"]');
   if (await skipDropbox.isVisible()) await skipDropbox.click();
-
-  const apiKeyInput = page.locator('[data-testid="api-key"]');
-  await expect(apiKeyInput).toBeVisible({ timeout: 5000 });
-  await apiKeyInput.fill(TEST_AI_API_KEY);
-  await page.locator('[data-testid="save-ai-api-key"]').click();
 
   const skipCalendar = page.locator('[data-testid="skip-calendar"]');
   if (await skipCalendar.isVisible()) await skipCalendar.click();
@@ -138,6 +60,12 @@ test('FULL LIFECYCLE (real persistence + sync + attack)', async ({ page }) => {
 
   // ---------- 3. APP LOADED ----------
   await expect(page.locator('[data-testid="xp"]')).toBeVisible({ timeout: 10000 });
+  // Offline-first: four bottom-nav tabs only (no Chat tab).
+  await expect(page.locator('[data-testid="nav-home"]')).toBeVisible();
+  await expect(page.locator('[data-testid="nav-habits"]')).toBeVisible();
+  await expect(page.locator('[data-testid="nav-tasks"]')).toBeVisible();
+  await expect(page.locator('[data-testid="nav-profile"]')).toBeVisible();
+  await expect(page.locator('[data-testid="nav-chat"]')).toHaveCount(0);
 
   // ---------- 4. EARN XP ----------
   await page.click('[data-testid="nav-tasks"]');
@@ -148,7 +76,6 @@ test('FULL LIFECYCLE (real persistence + sync + attack)', async ({ page }) => {
   const xpBefore = await page.locator('[data-testid="xp"]').textContent();
 
   // ---------- 5. RELOAD (IndexedDB test) ----------
-  // TinyBase persister saves to IndexedDB asynchronously. Wait for flush before reload.
   await page.waitForTimeout(500);
   await page.reload();
 
@@ -168,7 +95,6 @@ test('FULL LIFECYCLE (real persistence + sync + attack)', async ({ page }) => {
   });
 
   await page.click('[data-testid="pull"]');
-  // XP is rendered with a unit suffix (e.g. "999 XP"); match the numeric portion.
   await expect(page.locator('[data-testid="xp"]')).toHaveText(/999/, { timeout: 15000 });
 
   // ---------- 8. MALICIOUS SYNC ----------
@@ -194,44 +120,10 @@ test('FULL LIFECYCLE (real persistence + sync + attack)', async ({ page }) => {
   await page.click('[data-testid="pull"]');
   await expect(page.locator('[data-testid="xp"]')).toBeVisible();
 
-  // ---------- 11. ASSERT NO 429 / API-KEY ERRORS ----------
-  // Trigger one interactive Gemini call so Gemini 429/invalid-key issues
-  // would surface deterministically in the UI (but endpoint is mocked).
-  await page.click('[data-testid="nav-chat"]');
-
-  const gotIt = page.locator('button', { hasText: 'GOT IT' });
-  if (await gotIt.isVisible().catch(() => false)) await gotIt.click();
-
-  const chatTextarea = page.locator('textarea');
-  await expect(chatTextarea).toBeVisible({ timeout: 10000 });
-
-  await chatTextarea.fill('E2E: rate-limit and API-key check');
-  await chatTextarea.press('Enter');
-
-  // Give the UI a moment to react (success, lock state, or error).
-  await page.waitForTimeout(8000);
-
-  const prohibitedUiStrings = [
-    'Gemini 429',
-    'RESOURCE_EXHAUSTED',
-    'RATE_LIMIT_EXCEEDED',
-    'Daily Gemini quota used up',
-    'Daily AI quota used up',
-    'Gemini RPM limit hit',
-    'AI RPM limit hit',
-    'Gemini rate limit hit',
-    'AI rate limit hit',
-    'Rate cap reached',
-    'AI LOCKED',
-    'Invalid API key',
-    'No Gemini API key configured',
-    'No API key. Configure in settings.',
-  ];
-
-  for (const s of prohibitedUiStrings) {
-    await expect(page.locator(`text=${s}`)).toHaveCount(0);
-  }
+  // ---------- 11. SMOKE: PROFILE → GACHA (static chronicle engine, no network) ----------
+  await page.click('[data-testid="nav-profile"]');
+  await page.getByRole('button', { name: 'GACHA' }).click();
+  await expect(page.locator('text=CHRONICLE ENGINE')).toBeVisible({ timeout: 10000 });
 
   expect(observedConsoleOrPageErrors).toEqual([]);
 });
-

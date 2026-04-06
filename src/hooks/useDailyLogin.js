@@ -12,10 +12,7 @@
 import { useEffect, useRef } from "react";
 import { localDateFromUTC, getMaxDateSeen, updateMaxDateSeen } from "../utils/db";
 import { getLevel, getRank, getXpPerLevel } from "../utils/xp";
-import { getAiApiKey } from "../utils/db";
-import { updateDynamicCosts } from "../api/dynamicCosts";
-
-export function useDailyLogin({ profile, setState, setModal, setLevelUpData, showBanner, trackTokens, lastLevelUpXpRef }) {
+export function useDailyLogin({ profile, setState, setModal, setLevelUpData, showBanner, lastLevelUpXpRef }) {
   const loginInProgressRef = useRef(false);
 
   useEffect(() => {
@@ -140,38 +137,8 @@ export function useDailyLogin({ profile, setState, setModal, setLevelUpData, sho
       if (pendingData.banner) showBanner(pendingData.banner, "info");
       if (pendingData.modal) setModal(pendingData.modal);
       if (pendingData.levelUp) {
-        const { level, rank, snapshot } = pendingData.levelUp;
+        const { level, rank } = pendingData.levelUp;
         setLevelUpData((prev) => prev && prev.level >= level ? prev : { level, rank });
-        if (typeof navigator === "undefined" || navigator.onLine !== false) {
-          updateDynamicCosts(getAiApiKey(), snapshot, "level_up", trackTokens)
-            .then((costs) => {
-              if (costs && Object.keys(costs).length) {
-                setState((prev) => ({ ...prev, dynamicCosts: { ...prev.dynamicCosts, ...costs } }));
-              }
-            })
-            .catch((err) => {
-              if (import.meta.env.DEV) {
-                console.warn("[useDailyLogin] updateDynamicCosts failed:", err?.message || err);
-              }
-            });
-        }
-      }
-      if (pendingData.shieldUpdate) {
-        const { newShields, lastShieldUseDate } = pendingData.shieldUpdate;
-        if (typeof navigator === "undefined" || navigator.onLine !== false) {
-          const shieldSnapshot = pendingData.fullSnapshot ?? { streakShields: newShields, lastShieldUseDate };
-          updateDynamicCosts(getAiApiKey(), shieldSnapshot, "streak_shield_use", trackTokens)
-            .then((costs) => {
-              if (costs && Object.keys(costs).length) {
-                setState((prev) => ({ ...prev, dynamicCosts: { ...prev.dynamicCosts, ...costs } }));
-              }
-            })
-            .catch((err) => {
-              if (import.meta.env.DEV) {
-                console.warn("[useDailyLogin] updateDynamicCosts failed:", err?.message || err);
-              }
-            });
-        }
       }
     });
     const resetTimer = setTimeout(() => {

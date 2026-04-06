@@ -11,6 +11,13 @@ export const DEFAULT_XP_PER_LEVEL = 1000;
 export const DEFAULT_GACHA_COST = 100;
 export const DEFAULT_STREAK_SHIELD_COST = 300;
 
+/** Offline mechanics metadata (synced as `jv_game_meta`). */
+export const DEFAULT_GAME_META = Object.freeze({
+  staticContentVersion: 1,
+  lastEvaluatedAchievementIds: [],
+  lastEvaluatedAt: null,
+});
+
 /** Sealed function: weights captured in closure, not patchable via DevTools.
  * Uses crypto.getRandomValues so the roll value is generated atomically — no observable
  * intermediate state for a debugger breakpoint to replay until legendary. */

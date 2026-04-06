@@ -87,7 +87,7 @@ function CalendarPicker({ calendars, initialSelected, onConfirm, onCancel, theme
 
 // ── Main Calendar Overlay ──────────────────────────────────────
 export default function CalendarOverlay({ onClose, theme = "dark" }) {
-  const { state, setState, profile, showBanner, hasAiAuth } = useAppContext();
+  const { state, setState, profile, showBanner } = useAppContext();
 
   const fg = theme === "light" ? "#000" : "#fff";
   const bg = theme === "light" ? "#f0f0f0" : "#000";
@@ -121,9 +121,9 @@ export default function CalendarOverlay({ onClose, theme = "dark" }) {
     const newEvent = { id: `manual_${crypto.randomUUID()}`, title: safeTitle, type: safeType, start: safeStart, end: safeEnd, source: "manual" };
     setState((s) => ({ ...s, calendarEvents: [...(s.calendarEvents || []), newEvent] }));
     showBanner(`Event added: ${safeTitle}`, "success");
-    if (hasAiAuth && safeType === "exam") {
+    if (safeType === "exam") {
       const days = Math.ceil((new Date(safeStart) - Date.now()) / 86400000);
-      showBanner(`Exam detected: ${safeTitle} in ${days} days. RITMOL adapting your plan.`, "alert");
+      showBanner(`Exam added: ${safeTitle} in ${days} days.`, "info");
     }
     setForm({ title: "", type: "exam", start: "", end: "" });
   }

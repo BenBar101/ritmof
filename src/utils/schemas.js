@@ -202,6 +202,12 @@ export const DynamicCostsSchema = z.object({
   streakShieldCost:  z.number().min(100).max(5000).optional(),
 }).nullable()
 
+export const GameMetaSchema = z.object({
+  staticContentVersion: z.number().int().min(1).max(999).optional(),
+  lastEvaluatedAchievementIds: z.array(z.string().max(80)).max(500).optional(),
+  lastEvaluatedAt: z.string().datetime().nullable().optional(),
+}).strip()
+
 // ── Master sync payload schema ─────────────────────────────────
 export const SyncPayloadSchema = z.object({
   _schemaVersion: z.number().int().min(1).max(SYNC_SCHEMA_VERSION),
@@ -259,4 +265,5 @@ export const SyncPayloadSchema = z.object({
     z.array(z.string().max(80)).max(10),
   ).optional(),
   jv_lecture_quick_log_pending: z.record(z.string().max(150), z.boolean()).optional(),
+  jv_game_meta: GameMetaSchema.optional(),
 })

@@ -251,7 +251,7 @@ export async function callGemini(apiKey, messages, systemPrompt, jsonMode = fals
   // Fix #10: guard against null/undefined/empty key so callers get a clear error
   // instead of a cryptic 400 from the API with "x-goog-api-key: null".
   if (!apiKey || typeof apiKey !== "string" || !apiKey.trim()) {
-    throw new Error("AI API key is missing or empty.");
+    throw new Error("Gemini credentials missing or empty.");
   }
   // Always work with the trimmed key so whitespace from paste/storage never causes 403.
   apiKey = apiKey.trim();

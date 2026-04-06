@@ -1,16 +1,13 @@
 import React, { useState, useEffect, useRef } from "react";
 import { useAppContext } from "./context/AppContext";
-import { todayUTC, localDateFromUTC, getAiApiKey } from "./utils/db";
+import { todayUTC, localDateFromUTC } from "./utils/db";
 import { ACHIEVEMENT_RARITIES, STYLE_CSS, RANKS, sampleGachaRarity } from "./constants";
-import { AI_DAILY_TOKEN_LIMIT } from "./config.js";
 import { getLevelProgress } from "./utils/xp";
-import { callGemini, RateLimitedError } from "./api/gemini";
 import { fetchGCalEvents, fetchCalendarList, requestGcalAccessToken } from "./api/gcal";
-import { isSafeSyncValue } from "./sync/SyncManager";
 import GeometricCorners from "./GeometricCorners";
 import { primaryBtn } from "./Onboarding";
-import { updateDynamicCosts } from "./api/dynamicCosts";
 import { sanitizeForPrompt } from "./api/systemPrompt";
+import { GACHA_POOL, gachaPickIndex } from "./data/gachaPool.js";
 
 // Strip control chars, BiDi overrides/zero-width chars from stored gacha fields at render time.
 // Also used by GachaCard to defensively clean up legacy cards saved before stricter sanitizers.
@@ -18,7 +15,7 @@ import { sanitizeForPrompt } from "./api/systemPrompt";
 const SAFE_GACHA_RENDER_REGEX = /[\u0000-\u0009\u000B-\u001F\u007F-\u009F\u200B-\u200D\uFEFF\u202A-\u202E\u2066-\u2069]/g;
 
 export default function ProfileTab() {
-  const { state, setState, latestStateRef, profile, level, rank, xpPerLevel, showBanner, showToast, apiKey, getAiToken, hasAiAuth, streakShieldCost, gachaCost, trackTokens, theme } = useAppContext();
+  const { state, setState, latestStateRef, profile, level, rank, xpPerLevel, showBanner, showToast, streakShieldCost, gachaCost, theme } = useAppContext();
   const fg  = theme === "light" ? "#000" : "#fff";
   const [section, setSection] = useState("overview");
   // showGacha state is reserved for future gacha modal implementation
@@ -66,14 +63,14 @@ export default function ProfileTab() {
         ))}
       </div>
 
-      {section === "overview" && <ProfileOverview theme={theme} state={state} setState={setState} profile={profile} level={level} rank={rank} streakShieldCost={streakShieldCost} hasAiAuth={hasAiAuth} getAiToken={getAiToken} showBanner={showBanner} latestStateRef={latestStateRef} trackTokens={trackTokens} />}
-      {section === "calendar" && <CalendarSection state={state} theme={theme} setState={setState} profile={profile} hasAiAuth={hasAiAuth} showBanner={showBanner} />}
-      {section === "gacha" && <GachaSection theme={theme} state={state} setState={setState} profile={profile} apiKey={apiKey} getAiToken={getAiToken} hasAiAuth={hasAiAuth} gachaCost={gachaCost} showBanner={showBanner} showToast={showToast} trackTokens={trackTokens} latestStateRef={latestStateRef} />}
+      {section === "overview" && <ProfileOverview theme={theme} state={state} setState={setState} profile={profile} level={level} rank={rank} streakShieldCost={streakShieldCost} showBanner={showBanner} />}
+      {section === "calendar" && <CalendarSection state={state} theme={theme} setState={setState} profile={profile} showBanner={showBanner} />}
+      {section === "gacha" && <GachaSection theme={theme} state={state} setState={setState} profile={profile} gachaCost={gachaCost} showBanner={showBanner} showToast={showToast} latestStateRef={latestStateRef} />}
     </div>
   );
 }
 
-function ProfileOverview({ state, setState, profile, level, streakShieldCost, hasAiAuth, getAiToken, showBanner, trackTokens, theme }) {
+function ProfileOverview({ state, setState, profile, level, streakShieldCost, showBanner, theme }) {
   const fg  = theme === "light" ? "#000" : "#fff";
   const bg  = theme === "light" ? "#f0f0f0" : "#000";
 
@@ -92,18 +89,6 @@ function ProfileOverview({ state, setState, profile, level, streakShieldCost, ha
     if (buyShieldInFlightRef.current) return;
     buyShieldInFlightRef.current = true;
     setBuyShieldInFlight(true);
-    if (!hasAiAuth) {
-      buyShieldInFlightRef.current = false;
-      setBuyShieldInFlight(false);
-      return;
-    }
-    if (typeof navigator !== "undefined" && navigator.onLine === false) {
-      buyShieldInFlightRef.current = false;
-      setBuyShieldInFlight(false);
-      showBanner("No network connection. Shield purchase requires connectivity for dynamic pricing.", "alert");
-      return;
-    }
-
     buyShieldSkipReasonRef.current = null;
     let appliedCost = 0;
     setState((s) => {
@@ -154,31 +139,7 @@ function ProfileOverview({ state, setState, profile, level, streakShieldCost, ha
         shieldSnapshotRef.current = null;
         if (!snapshotForApi) return;
         const _displayCost = snapshotForApi?.xp !== undefined ? ((state.xp ?? 0) - (snapshotForApi.xp ?? 0)) : appliedCost;
-        showBanner(`Streak shield purchased. Cost: ${_displayCost > 0 ? _displayCost : appliedCost} XP. Next cost may change.`, "success");
-        if (typeof navigator === "undefined" || navigator.onLine !== false) {
-          let token;
-          try {
-            token = await getAiToken();
-          } catch (e) {
-            if (e?.message === "GOOGLE_AUTH_REFRESH_FAILED" || e?.message === "GOOGLE_AUTH_NO_REFRESH_TOKEN") {
-              showBanner("Google session expired. Reconnect in Settings → AI.", "alert");
-              return;
-            }
-            token = getAiApiKey();
-          }
-          if (!token || !String(token).trim()) return;
-          updateDynamicCosts(token, snapshotForApi, "streak_shield_buy", trackTokens)
-            .then((costs) => {
-              if (costs && Object.keys(costs).length) {
-                setState((prev) => ({ ...prev, dynamicCosts: { ...prev.dynamicCosts, ...costs } }));
-              }
-            })
-            .catch((err) => {
-              if (import.meta.env.DEV) {
-                console.warn("[ProfileTab] updateDynamicCosts failed:", err?.message || err);
-              }
-            });
-        }
+        showBanner(`Streak shield purchased. Cost: ${_displayCost > 0 ? _displayCost : appliedCost} XP.`, "success");
       })();
     });
 
@@ -204,17 +165,17 @@ function ProfileOverview({ state, setState, profile, level, streakShieldCost, ha
         ))}
       </div>
 
-      {/* Buy streak shield — cost set by AI, one use per day when protecting streak */}
+      {/* Buy streak shield — one use per day when protecting streak */}
       <div style={{ border: "2px solid #fff", padding: "14px", fontFamily: "var(--font-system), ui-monospace, monospace" }}>
         <div style={{ fontSize: "16px", color: fg, letterSpacing: "2px", marginBottom: "8px", fontWeight: "bold" }}>[ STREAK SHIELD ]</div>
         <div style={{ fontSize: "16px", color: fg, marginBottom: "8px" }}>COST: {effectiveShieldCost} XP — MAX ONE PER DAY.</div>
         <button
           type="button"
           onClick={buyShield}
-          disabled={!canBuyShield || !hasAiAuth || buyShieldInFlight || (typeof navigator !== "undefined" && navigator.onLine === false)}
+          disabled={!canBuyShield || buyShieldInFlight}
           style={{
-            padding: "12px 16px", border: canBuyShield && hasAiAuth ? "2px solid #fff" : "2px solid #444", background: canBuyShield && hasAiAuth ? "#fff" : bg,
-            color: canBuyShield && hasAiAuth ? "#000" : "#444", fontFamily: "var(--font-system), ui-monospace, monospace", fontSize: "16px", letterSpacing: "2px", cursor: canBuyShield && hasAiAuth ? "pointer" : "default",
+            padding: "12px 16px", border: canBuyShield ? "2px solid #fff" : "2px solid #444", background: canBuyShield ? "#fff" : bg,
+            color: canBuyShield ? "#000" : "#444", fontFamily: "var(--font-system), ui-monospace, monospace", fontSize: "16px", letterSpacing: "2px", cursor: canBuyShield ? "pointer" : "default",
             minHeight: "48px",
           }}
         >
@@ -259,7 +220,7 @@ function ProfileOverview({ state, setState, profile, level, streakShieldCost, ha
   );
 }
 
-function CalendarSection({ state, setState, profile, hasAiAuth, showBanner, theme }) {
+function CalendarSection({ state, setState, profile, showBanner, theme }) {
   const fg  = theme === "light" ? "#000" : "#fff";
   const bg  = theme === "light" ? "#f0f0f0" : "#000";
 
@@ -298,9 +259,9 @@ function CalendarSection({ state, setState, profile, hasAiAuth, showBanner, them
     showBanner(`Event added: ${safeTitle}`, "success");
 
     // Let RITMOL react
-    if (hasAiAuth && safeType === "exam") {
+    if (safeType === "exam") {
       const days = Math.ceil((new Date(safeStart) - Date.now()) / 86400000);
-      showBanner(`Exam detected: ${safeTitle} in ${days} days. RITMOL adapting your plan.`, "alert");
+      showBanner(`Exam added: ${safeTitle} in ${days} days.`, "info");
     }
     setForm({ title: "", type: "exam", start: "", end: "" });
   }
@@ -599,7 +560,7 @@ function CalendarPicker({ calendars, initialSelected, onConfirm, onCancel, theme
   );
 }
 
-function GachaSection({ state, setState, profile, apiKey, getAiToken, hasAiAuth, gachaCost, showBanner, showToast, trackTokens, latestStateRef, theme }) {
+function GachaSection({ state, setState, profile, gachaCost, showBanner, showToast, latestStateRef, theme }) {
   const fg  = theme === "light" ? "#000" : "#fff";
   const bg  = theme === "light" ? "#f0f0f0" : "#000";
 
@@ -618,226 +579,32 @@ function GachaSection({ state, setState, profile, apiKey, getAiToken, hasAiAuth,
       : null,
   }));
   const canAfford = state.xp >= gachaCost;
-  // Check if daily token budget is depleted
-  const tokenUsage = state.tokenUsage;
-  const tokensExhausted = !!(tokenUsage && tokenUsage.date === todayUTC() && tokenUsage.tokens >= AI_DAILY_TOKEN_LIMIT);
-  // Abort controller so unmounting mid-pull cancels the Gemini request and prevents
-  // trackTokens / setState firing against an unmounted component.
-  const gachaAbortRef = useRef(null);
-  // Fix: ref-level guard prevents double-deduction if doPull is called twice
-  // before the first setPulling(true) re-render has flushed (e.g. rapid taps).
   const pullingRef = useRef(false);
   const mountedRef = useRef(true);
 
-  // Cancel any in-flight pull on unmount and mark unmounted.
   useEffect(() => () => {
     mountedRef.current = false;
-    gachaAbortRef.current?.abort();
   }, []);
 
+  const stripGachaStr = (s, max) => typeof s === "string" ? sanitizeForPrompt(s).replace(/[\u200B-\u200D\uFEFF]/g, "").slice(0, max) : null;
+
   async function doPull() {
-    // Re-read xp from latestStateRef for the pre-check so a stale render snapshot
-    // does not cause a false "Insufficient XP" banner when XP was just awarded.
     const liveXp = latestStateRef?.current?.xp ?? state.xp;
     const liveCost = latestStateRef?.current?.dynamicCosts?.gachaCost ?? gachaCost;
     const liveCanAfford = liveXp >= liveCost;
-    if (pullingRef.current || !liveCanAfford || pulling || !hasAiAuth) {
+    if (pullingRef.current || !liveCanAfford || pulling) {
       if (!liveCanAfford) showBanner(`Insufficient XP. Need ${liveCost} XP to pull.`, "alert");
-      if (!hasAiAuth) showBanner("No AI connection. Sign in with Google (Settings → AI) or add an API key.", "alert");
-      return;
-    }
-    const usage = latestStateRef?.current?.tokenUsage ?? state.tokenUsage;
-    if (usage && usage.date === todayUTC() && usage.tokens >= AI_DAILY_TOKEN_LIMIT) {
-      showBanner("SYSTEM: Neural energy depleted. AI functions offline until tomorrow.", "alert");
-      return;
-    }
-    if (typeof navigator !== "undefined" && navigator.onLine === false) {
-      showBanner("SYSTEM: No network connection. Gacha requires connectivity.", "alert");
       return;
     }
 
-    // Set the ref-level guard immediately so rapid taps are blocked even before
-    // setPulling re-renders. No XP deduction happens until the API call succeeds.
     pullingRef.current = true;
     setPulling(true);
 
-    gachaAbortRef.current?.abort();
-    const controller = new AbortController();
-    // SAFETY: assign gachaAbortRef before any await so the useEffect cleanup
-    // (which calls gachaAbortRef.current?.abort()) always sees the latest controller.
-    gachaAbortRef.current = controller;
-
-    let token;
     try {
-      token = await getAiToken();
-    } catch (e) {
-      if (e?.message === "GOOGLE_AUTH_REFRESH_FAILED" || e?.message === "GOOGLE_AUTH_NO_REFRESH_TOKEN") {
-        showBanner("Google session expired. Reconnect in Settings → AI.", "alert");
-        setPulling(false);
-        pullingRef.current = false;
-        return;
-      }
-      token = apiKey;
-    }
-    if (!token || !String(token).trim()) {
-      showBanner("No AI connection configured.", "alert");
-      setPulling(false);
-      pullingRef.current = false;
-      return;
-    }
-
-    try {
-      const sp = (s, max) => sanitizeForPrompt(
-        (s || "").replace(/[<>{}[\]`"'\\]/g, ""), max
-      ).replace(/[`$]/g, "");
-
-      // ── Compute behavioural patterns from real state data ──────────────
-      const now = Date.now();
-
-      // Habit consistency: count completions per habit over the last 30 days
-      const thirtyDaysAgo = new Date(now - 30 * 86400000).toISOString().slice(0, 10);
-      const habitLog = state.habitLog || {};
-      const habitCounts = {}; // habitId → count
-      for (const [date, ids] of Object.entries(habitLog)) {
-        if (date < thirtyDaysAgo) continue;
-        for (const id of (ids || [])) {
-          habitCounts[id] = (habitCounts[id] || 0) + 1;
-        }
-      }
-      const habits = state.habits || [];
-      // Days with any log entry (= days the app was used) for denominator
-      const activeDays = Object.keys(habitLog).filter(d => d >= thirtyDaysAgo).length || 1;
-      const habitSummary = habits
-        .map(h => ({ label: h.label, count: habitCounts[h.id] || 0, category: h.category }))
-        .filter(h => h.count > 0)
-        .sort((a, b) => b.count - a.count)
-        .slice(0, 6)
-        .map(h => {
-          const pct = Math.round((h.count / activeDays) * 100);
-          return sp(`${h.label} (${pct}% consistency)`, 60);
-        });
-
-      // Task patterns: early, on-time, or overdue
-      const tasks = state.tasks || [];
-      const doneTasks = tasks.filter(t => t.done && t.doneDate && t.due);
-      let earlyCount = 0, onTimeCount = 0, overdueCount = 0;
-      for (const t of doneTasks) {
-        if (t.doneDate < t.due) earlyCount++;
-        else if (t.doneDate === t.due) onTimeCount++;
-        else overdueCount++;
-      }
-      const taskStyle = earlyCount > onTimeCount + overdueCount ? "finishes early"
-        : onTimeCount > overdueCount ? "deadline-precise"
-        : overdueCount > 0 ? "battles deadlines"
-        : "no task pattern yet";
-
-      // Recent completed task labels for flavour
-      const recentTaskLabels = tasks
-        .filter(t => t.done && t.doneDate && t.doneDate >= thirtyDaysAgo)
-        .slice(-5)
-        .map(t => sp(t.text, 40));
-
-      // Session stats
-      const sessions = state.sessions || [];
-      const recentSessions = sessions.filter(s => s.date && s.date >= thirtyDaysAgo);
-      const sessionTypeCount = {};
-      let totalFocus = 0, focusCount = 0;
-      for (const s of recentSessions) {
-        if (s.type) sessionTypeCount[s.type] = (sessionTypeCount[s.type] || 0) + 1;
-        if (typeof s.focusLevel === "number") { totalFocus += s.focusLevel; focusCount++; }
-      }
-      const topSessionType = Object.entries(sessionTypeCount).sort((a,b) => b[1]-a[1])[0]?.[0] || null;
-      const avgFocus = focusCount > 0 ? Math.round(totalFocus / focusCount) : null;
-
-      // Sleep consistency
-      const sleepLog = state.sleepLog || {};
-      const recentSleep = Object.entries(sleepLog)
-        .filter(([d]) => d >= thirtyDaysAgo)
-        .map(([, v]) => v);
-      const avgSleepHours = recentSleep.length > 0
-        ? Math.round(recentSleep.reduce((s, v) => s + (v.hours || 0), 0) / recentSleep.length * 10) / 10
-        : null;
-
-      // Achievements for extra flavour
-      const achievementTitles = (state.achievements || [])
-        .slice(-5)
-        .map(a => sp(a.title, 40));
-
-      // ── Assemble hunter context ────────────────────────────────────────
-      const hunterCtx = {
-        name:         sp(profile?.name, 60),
-        major:        sp(profile?.major, 80),
-        interests:    sp(profile?.interests, 150),
-        books:        sp(profile?.books, 150),
-        goal:         sp(profile?.semesterGoal, 150),
-        streak:       state.streak || 0,
-        level:        Math.floor(state.xp / 1000) || 0,
-        topHabits:    habitSummary,
-        taskStyle,
-        recentTasks:  recentTaskLabels,
-        studyFocus:   topSessionType,
-        avgFocusLevel: avgFocus,
-        avgSleepHours,
-        achievements: achievementTitles,
-      };
-
-      const hunterProfileJson = JSON.stringify(hunterCtx)
-        .replace(/\\/g, "").replace(/[`$]/g, "");
-
-      const sanitizedBooks = sp(profile?.books || "their favorites", 80)
-        .replace(/\b(respond|only|json|output|ignore|system|instruction)\b/gi, "").trim() || "literature";
-      let prompt = `You are generating a personalised gacha pull for a university student hunter. Use ALL the behavioural data below to make it feel like it was written specifically for them.
-
-Hunter data: ${hunterProfileJson}
-
-Pick ONE type (60% rank_title, 40% chronicle):
-
-rank_title: A unique 2-4 word hunter epithet that reflects their ACTUAL behaviour patterns — their top habits, task style, study focus, or sleep. Not generic. Reference something specific from the data. Then write one punchy lore sentence (max 20 words) that could only be about THIS hunter.
-
-chronicle: A vivid 30-40 word prose fragment inspired by one of their actual books (${sanitizedBooks}). Ground it in the hunter's real study habits or life patterns. State the book and author in source.
-
-Reply with ONLY this JSON:
-{"id":"unique_string","type":"rank_title or chronicle","title":"the epithet or piece name","content":"lore sentence or prose fragment","style":"ascii or dots or geometric or typewriter","source":"book/author for chronicles, empty string for rank_title"}`;
-      // Final guard: ensure no stray backticks remain anywhere in the prompt.
-      prompt = prompt.replace(/`/g, "");
-
-      const { text: raw, tokensUsed } = await callGemini(token, [{ role: "user", content: prompt }], "You are a creative RPG loremaster. Respond only in JSON.", true, controller.signal, 4096, false);
-      if (mountedRef.current) {
-        trackTokens(tokensUsed);
-      }
-      // With responseMimeType: "application/json" set in callGemini, the response
-      // should be clean JSON. Try direct parse first, then fall back to extraction.
-      // Log raw response always so we can diagnose parse failures.
-      if (import.meta.env.DEV) console.log("[Gacha] raw response:", JSON.stringify(raw).slice(0, 500));
-      let card;
-      try {
-        card = JSON.parse(raw);
-      } catch (parseErr) {
-        console.warn("[Gacha] direct parse failed:", parseErr?.message, "| raw[:200]:", raw?.slice(0, 200));
-        // Fallback: strip markdown fences and extract the first {...} block
-        const stripped = raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```\s*$/, "").trim();
-        const match = stripped.match(/\{[\s\S]*\}/);
-        if (!match) { console.error("[Gacha] no JSON object found in response"); throw new Error("Failed to parse Gacha JSON"); }
-        try {
-          card = JSON.parse(match[0]);
-        } catch (e2) {
-          console.error("[Gacha] fallback parse failed:", e2?.message, "| extracted:", match[0]?.slice(0, 200));
-          throw new Error("Failed to parse Gacha JSON");
-        }
-      }
-      if (import.meta.env.DEV) console.log("[Gacha] parsed card:", card);
-      if (!card || typeof card !== "object" || Array.isArray(card)) {
-        console.error("[Gacha] card is not a plain object:", typeof card);
-        throw new Error("Failed to parse Gacha JSON");
-      }
-      // Prototype-pollution guard before any property access.
-      if (!isSafeSyncValue(card)) {
-        console.error("[Gacha] isSafeSyncValue rejected card:", Object.keys(card));
-        throw new Error("Failed to parse Gacha JSON");
-      }
-
+      const seedKey = `${profile?.id || "anon"}_${todayUTC()}_${Date.now()}_${(state.gachaCollection || []).length}`;
+      const tpl = GACHA_POOL[gachaPickIndex(seedKey, GACHA_POOL.length)];
+      const contentToHash = String(tpl.content || "") + String(tpl.title || "");
       let contentHash = "";
-      const contentToHash = String(card.content || "") + String(card.title || "");
       try {
         if (crypto?.subtle?.digest) {
           const data = new TextEncoder().encode(contentToHash);
@@ -851,29 +618,16 @@ Reply with ONLY this JSON:
         contentHash = "";
       }
 
-      // Fix #11 (security): construct the stored card explicitly — never spread the raw AI
-      // object so unexpected keys cannot pollute the gachaCollection state/localStorage.
-      // Fix: also strip control chars from all string fields before persisting — the AI
-      // response is external input and could contain C0/C1 controls or zero-width chars
-      // that would be silently stored then rendered or re-injected into prompts.
-      const stripGachaStr = (s, max) => typeof s === "string" ? sanitizeForPrompt(s).replace(/[\u200B-\u200D\uFEFF]/g, "").slice(0, max) : null;
       const safeCard = {
         id:       contentHash ? `gacha_${contentHash}` : `gacha_${crypto.randomUUID()}`,
-        type:     ["rank_title","chronicle"].includes(card.type) ? card.type : "rank_title",
-        // rarity is sampled atomically inside the setState updater below
-        title:    stripGachaStr(card.title, 120) ?? "Unknown",
-        content:  stripGachaStr(card.content, 1000) ?? "",
-        style:    ["ascii","dots","geometric","typewriter"].includes(card.style) ? card.style : "ascii",
-        source:   stripGachaStr(card.source, 120),
+        type:     ["rank_title", "chronicle"].includes(tpl.type) ? tpl.type : "rank_title",
+        title:    stripGachaStr(tpl.title, 120) ?? "Unknown",
+        content:  stripGachaStr(tpl.content, 1000) ?? "",
+        style:    ["ascii", "dots", "geometric", "typewriter"].includes(tpl.style) ? tpl.style : "ascii",
+        source:   stripGachaStr(tpl.source || "", 120),
         asciiArt: null,
       };
 
-      // Pre-check affordability synchronously using latestStateRef before setState.
-      // The committed-flag pattern (setting a flag inside a setState updater and reading
-      // it immediately after) does NOT work in async React 18 — React schedules the
-      // updater for the next render cycle, so the flag is always false when checked here.
-      // Instead: validate against latestStateRef.current (always the committed live state),
-      // then call setState unconditionally knowing the guards have already passed.
       const liveState = latestStateRef?.current ?? state;
       const liveCostNow = liveState.dynamicCosts?.gachaCost ?? gachaCost;
       const liveXpNow = typeof liveState.xp === "number" && isFinite(liveState.xp) && liveState.xp >= 0
@@ -895,7 +649,7 @@ Reply with ONLY this JSON:
         pullingRef.current = false;
         return;
       }
-      if ((liveState.gachaCollection || []).find(c => c.id === safeCard.id)) {
+      if ((liveState.gachaCollection || []).find((c) => c.id === safeCard.id)) {
         if (mountedRef.current) {
           showBanner("Duplicate card — no XP consumed.", "info");
           setPulling(false);
@@ -904,27 +658,17 @@ Reply with ONLY this JSON:
         return;
       }
 
-      // All guards passed — deduct XP and store card.
-      // Build the next state snapshot here (synchronously) so we have it for
-      // updateDynamicCosts without relying on snapshotForCosts being set inside
-      // the async updater (which runs in the next render cycle, not right now).
       let sampledRarity = "common";
-      const costsSnapshot = {
-        ...liveState,
-        xp: Math.max(0, liveXpNow - liveCostNow),
-        gachaCollection: [...(liveState.gachaCollection || []), { ...safeCard, rarity: "common", pulledAt: Date.now() }],
-      };
       setState((s) => {
         const cost = s.dynamicCosts?.gachaCost ?? gachaCost;
         const safeXp = typeof s.xp === "number" && isFinite(s.xp) && s.xp >= 0
           ? Math.min(Math.floor(s.xp), 10_000_000) : 0;
-        // Re-check inside updater as a safety net (handles race between two rapid taps).
         if (safeXp < cost) return s;
         if ((s.gachaCollection || []).length >= 2000) return s;
-        if ((s.gachaCollection || []).find(c => c.id === safeCard.id)) return s;
+        if ((s.gachaCollection || []).find((c) => c.id === safeCard.id)) return s;
         const rarity = (() => {
           const r = sampleGachaRarity();
-          return ["common","rare","epic","legendary"].includes(r) ? r : "common";
+          return ["common", "rare", "epic", "legendary"].includes(r) ? r : "common";
         })();
         sampledRarity = rarity;
         return {
@@ -933,17 +677,6 @@ Reply with ONLY this JSON:
           gachaCollection: [...(s.gachaCollection || []), { ...safeCard, rarity, pulledAt: Date.now() }],
         };
       });
-      if (typeof navigator === "undefined" || navigator.onLine !== false) {
-        updateDynamicCosts(token, costsSnapshot, "gacha_pull", trackTokens).then((costs) => {
-          if (costs && Object.keys(costs).length && mountedRef.current) {
-            setState((prev) => ({ ...prev, dynamicCosts: { ...prev.dynamicCosts, ...costs } }));
-          }
-        }).catch((err) => {
-          if (import.meta.env.DEV) {
-            console.warn("[ProfileTab] updateDynamicCosts failed:", err?.message || err);
-          }
-        });
-      }
 
       setCollectionPage(0);
       if (mountedRef.current) {
@@ -954,42 +687,9 @@ Reply with ONLY this JSON:
       }
       pullingRef.current = false;
     } catch (err) {
-      if (err?.name === "AbortError") {
-        if (mountedRef.current) setPulling(false);
-        pullingRef.current = false;
-        return;
-      }
-      if (err instanceof RateLimitedError) {
-        // Client cap hit — no XP consumed, tell user how long to wait
-        const secsLeft = Math.ceil(err.retryAfterMs / 1000);
-        if (mountedRef.current) {
-          showBanner(`Rate cap reached. Wait ${secsLeft}s before pulling again.`, "alert");
-          setPulling(false);
-        }
-        pullingRef.current = false;
-        return;
-      }
-      if (err?.isGemini429) {
-        const secsLeft = err.retryAfterMs ? Math.ceil(err.retryAfterMs / 1000) : 60;
-        const msg = err.message?.includes("RESOURCE_EXHAUSTED")
-          ? "Daily AI quota used up — gacha unavailable until tomorrow."
-          : `AI RPM limit hit. Wait ~${secsLeft}s and try again.`;
-        if (mountedRef.current) {
-          showBanner(msg, "alert");
-          setPulling(false);
-        }
-        pullingRef.current = false;
-        return;
-      }
-      // No XP to refund — deduction only happened inside setState on success.
       console.error("[Gacha] doPull failed:", err?.message ?? err);
       if (mountedRef.current) {
-        let msg = "Gacha pull failed. No XP consumed.";
-        if (err?.message?.includes("MAX_TOKENS") || err?.message?.includes("truncated")) {
-          msg = "Gacha response was cut off — try again in a moment.";
-        }
-        const devMsg = import.meta.env.DEV ? ` (${String(err?.message ?? err).slice(0, 80)})` : "";
-        showBanner(msg + devMsg, "alert");
+        showBanner("Pull failed. No XP consumed.", "alert");
         setPulling(false);
       }
       pullingRef.current = false;
@@ -1008,34 +708,21 @@ Reply with ONLY this JSON:
         <div style={{ fontSize: "16px", color: fg, letterSpacing: "3px", fontFamily: "var(--font-system), ui-monospace, monospace", fontWeight: "bold" }}>[ CHRONICLE ENGINE ]</div>
         <div style={{ fontSize: "40px", margin: "16px 0" }}>◈</div>
         <div style={{ fontSize: "16px", color: fg, marginBottom: "16px", fontFamily: "var(--font-system), ui-monospace, monospace" }}>
-          {tokensExhausted
-            ? "NEURAL ENERGY DEPLETED"
-            : canAfford ? `${gachaCost} XP per pull` : `Need ${gachaCost - state.xp} more XP`}
+          {canAfford ? `${gachaCost} XP per pull` : `Need ${gachaCost - state.xp} more XP`}
         </div>
-        {tokensExhausted && (
-          <div style={{
-            border: "2px solid #fff", padding: "10px 14px", marginBottom: "12px",
-            fontFamily: "var(--font-system), ui-monospace, monospace", fontSize: "14px", color: fg,
-            letterSpacing: "1px", lineHeight: "1.5",
-          }}>
-            ⚡ DAILY TOKEN BUDGET EXHAUSTED<br />
-            AI functions disabled until midnight reset.
-          </div>
-        )}
         <button
           type="button"
           onClick={doPull}
-          disabled={!canAfford || pulling || tokensExhausted || !hasAiAuth}
+          disabled={!canAfford || pulling}
           style={{
             width: "100%", padding: "14px",
-            background: canAfford && !pulling && !tokensExhausted && hasAiAuth ? "#fff" : bg,
-            color: canAfford && !pulling && !tokensExhausted && hasAiAuth ? "#000" : fg,
+            background: canAfford && !pulling ? "#fff" : bg,
+            color: canAfford && !pulling ? "#000" : fg,
             fontFamily: "var(--font-system), ui-monospace, monospace", fontSize: "16px", letterSpacing: "2px",
-            border: "none", cursor: canAfford && !pulling && !tokensExhausted && hasAiAuth ? "pointer" : "default",
-            opacity: tokensExhausted ? 0.5 : 1,
+            border: "none", cursor: canAfford && !pulling ? "pointer" : "default",
           }}
         >
-          {pulling ? "PULLING..." : tokensExhausted ? "NO NEURAL ENERGY" : `PULL — ${gachaCost} XP`}
+          {pulling ? "PULLING..." : `PULL — ${gachaCost} XP`}
         </button>
         <div style={{ fontSize: "16px", color: fg, marginTop: "8px", fontFamily: "var(--font-system), ui-monospace, monospace" }}>
           {collection.length} cards collected

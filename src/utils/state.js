@@ -1,6 +1,18 @@
 import { storageKey, todayUTC } from "./db";
 import { idbGet } from "./db";
-import { DEFAULT_XP_PER_LEVEL, DEFAULT_GACHA_COST, DEFAULT_STREAK_SHIELD_COST, DEFAULT_HABITS } from "../constants";
+import { DEFAULT_XP_PER_LEVEL, DEFAULT_GACHA_COST, DEFAULT_STREAK_SHIELD_COST, DEFAULT_HABITS, DEFAULT_GAME_META } from "../constants";
+
+function mergeGameMeta(raw) {
+  const d = DEFAULT_GAME_META;
+  if (!raw || typeof raw !== "object") return { ...d };
+  return {
+    ...d,
+    ...raw,
+    lastEvaluatedAchievementIds: Array.isArray(raw.lastEvaluatedAchievementIds)
+      ? raw.lastEvaluatedAchievementIds
+      : [...d.lastEvaluatedAchievementIds],
+  };
+}
 
 // ─────────────────────────────────────────────────────────────────
 // Safe numeric read helper
@@ -69,6 +81,7 @@ export function initState() {
     lastAiNotificationBatch: idbGet(storageKey("jv_last_ai_notif_batch"), null),
     aiNotificationLog: idbGet(storageKey("jv_ai_notif_log"), {}),
     lectureQuickLogPending: idbGet(storageKey("jv_lecture_quick_log_pending"), {}),
+    gameMeta: mergeGameMeta(idbGet(storageKey("jv_game_meta"), null)),
   };
 }
 
